@@ -4,7 +4,9 @@ This guide addresses issue #1's maintainability/auditability scope. It is not a
 claim to have reconstructed Siemens' original source or simplified every
 cryptographic transform. Preserve `LICENSE-HarpoS7` and attribution when
 reusing source-derived models. Runtime/generated implementations are unchanged
-by the analysis work.
+by the analysis work, with one exception: Monolith11 was migrated to the
+proven-equivalent `family0/monolith11_compact.py` (see `MONOLITH11_ANALYSIS.md`).
+Its generated source is retained for provenance but is no longer executed.
 
 ## Start at the handwritten boundary
 
@@ -41,7 +43,11 @@ a family guard is not an implementation.
 
 - Outside `_generated/`: handwritten library APIs/orchestration and analysis
   documents. `keys.py` also contains source-inventoried vendored key values.
-- `monolith1..8/11.py`, `nine/part*.py`, `ten/part*.py`: mechanical source output.
+  `family0/monolith11_compact.py` is the one proven-equivalent runtime
+  migration out of `_generated/`; treat it as handwritten, not mechanical.
+- `monolith1..8/11.py`, `nine/part*.py`, `ten/part*.py`: mechanical source
+  output, kept for provenance. `monolith11.py` is no longer executed at
+  runtime — see `family0/monolith11_compact.py` above.
 - `_generated/monolith9.py` and `monolith10.py`: handwritten split-part wrappers.
 - `_generated/data/_constants.py` and `.bin`: extracted source/resource data.
 - `_generated/**/__init__.py`: handwritten package glue; the data loader also
@@ -166,7 +172,7 @@ currently logged at INFO. Prefer sanitized fixtures and metadata-only reports.
 | One verification workflow | `python -m tools.verify_session_auth`, with optional independent source/model checks |
 | Drift fails CI with actionable output | Verifier regression tests, pre-commit hook and explicit quality-job check |
 | Existing vectors/package/V1/TLS behavior retained | Full local suite/build checks; runtime functions and resource bytes unchanged |
-| Representation changes need equivalence before replacement | No runtime replacement; exact model regeneration, known answers and compatibility negative controls |
+| Representation changes need equivalence before replacement | Monolith11 migrated: exhaustive ANF proof, upstream fixture, 100 random vectors against retained generated code, plus full blob/SessionKey vectors through the real pipeline. No other runtime replacement. |
 | Hardware-validated behavior preserved | No wire/algorithm changes; no assertion of new firmware validation |
 
 The maintainability issue does not require every generated transform to become
@@ -174,8 +180,9 @@ an ordinary field/curve formula. Remaining semantic recovery and selective
 runtime migration are follow-up research. A mass rewrite is **not** justified:
 the setup merge has a real carry exception; ordinary modular tail formulas
 fail on arbitrary inputs; reachable scalar/tail invariants remain unproved.
-Monolith11's compact model is a promising separately validated migration;
-the full Monolith7 decision evaluator is larger/slower than generated code.
+Monolith11's compact model has been migrated to runtime (`family0/monolith11_compact.py`);
+the full Monolith7 decision evaluator remains larger/slower than generated
+code and is not a migration candidate yet.
 
 Independent review and Gijs's confirmation are required before closing the
 issue; merge status alone does not establish completion.

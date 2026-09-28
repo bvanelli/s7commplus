@@ -4,7 +4,9 @@ Uses Transform7 with random PRNG buffers, then chains
 Monolith1.Loop -> Monolith2 (zero check) -> Monolith8 ->
 Transform13 -> Monolith11 to produce the final 60-byte output.
 
-Manual port of ``HarpoS7.Family0.Transforms.SeedTransform``.
+Manual port of ``HarpoS7.Family0.Transforms.SeedTransform``. Monolith11 runs
+through the compact, proven-equivalent ``monolith11_compact`` module rather
+than the retired ``_generated.monolith11`` — see that module's docstring.
 """
 
 from __future__ import annotations
@@ -13,8 +15,8 @@ import os
 import struct
 from typing import cast
 
-from ._generated import monolith1, monolith2, monolith8, monolith11
-from . import transform7, transform13
+from ._generated import monolith1, monolith2, monolith8
+from . import monolith11_compact, transform7, transform13
 from ._generated.data import TRANSFORM7_DATA
 from .pre_seed_transform import DESTINATION_SIZE as TRANSFORM1_SIZE
 
@@ -78,6 +80,6 @@ def execute(destination: bytearray | memoryview, public_key: bytes, transform1: 
     # transform1 data → m11_src[0:0x3C]
     m11_src[:0x3C] = transform1[:0x3C]
 
-    monolith11.execute(m8_buf, bytes(m11_src))
+    monolith11_compact.execute(m8_buf, bytes(m11_src))
 
     destination[:0x14] = m8_buf[:0x14]

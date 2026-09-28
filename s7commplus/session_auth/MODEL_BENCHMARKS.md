@@ -79,11 +79,15 @@ compact runtime replacement.
 ## Runtime recommendation
 
 Retain the recovered models as independently checked analysis references in this
-change. A follow-up migration of Monolith11 is worth evaluating with the complete
-Family-0 authentication path, retained known-answer vectors, and byte-for-byte
-differential checks. Its roughly 80 µs local saving per call is not evidence of
-a corresponding connection-speed improvement: transform call counts and network
-or hardware costs determine the application effect.
+change, except Monolith11: it has been migrated to runtime
+(`family0/monolith11_compact.py`), validated against the complete Family-0
+authentication path, retained known-answer vectors, and byte-for-byte
+differential checks against the retained generated implementation. Its
+roughly 80 µs local saving per call is not evidence of a corresponding
+connection-speed improvement: transform call counts and network or hardware
+costs determine the application effect. The size/clarity win — replacing
+1,091 lines of generated permutation-cipher code with ~75 lines of exact
+closed-form arithmetic — is the primary motivation, consistent with issue #1.
 
 For Monolith5 and Monolith7, use the recovered named gates and Boolean functions
 to generate word-level operations before considering runtime replacement.

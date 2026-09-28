@@ -104,7 +104,8 @@ session_auth/
 │   ├── transform13.py       3×24-byte BigInt output via Monolith9/10
 │   ├── big_int_operations.py  192-bit arithmetic (add, sub, mul, square)
 │   ├── big_int_transforms.py  BigInt higher-level ops
-│   └── monolith_wrappers.py  WithCopy adapters for Monolith3-7
+│   ├── monolith_wrappers.py  WithCopy adapters for Monolith3-7
+│   └── monolith11_compact.py  Proven-equivalent Monolith11 (replaces _generated/monolith11.py)
 ```
 
 ### Machine-transpiled (do not edit)
@@ -112,7 +113,7 @@ session_auth/
 ```
 │   └── _generated/
 │       ├── __init__.py
-│       ├── monolith1.py … monolith11.py   Permutation ciphers (~30K lines)
+│       ├── monolith1.py … monolith11.py   Permutation ciphers (~30K lines; monolith11.py kept for provenance only, see below)
 │       ├── nine/part1.py … part11.py      Monolith9 parts (~50K lines)
 │       ├── ten/part1.py … part3.py        Monolith10 parts (~15K lines)
 │       └── data/
@@ -127,9 +128,11 @@ The `_generated/` modules are transpiled from HarpoS7's C# via
 `tools/transpile_harpo_monolith.py`. Each `monolithN.execute(dst, src)` is a
 straight-line uint32 arithmetic function verified byte-for-byte against upstream
 test vectors. These proprietary transforms are intentionally opaque, so any
-simplification needs evidence and equivalence checks. Monolith11 is a concrete
-exception: exhaustive bitwise analysis recovers a compact form below without
-changing the generated implementation.
+simplification needs evidence and equivalence checks. Monolith11 is the first
+migrated exception: exhaustive bitwise analysis recovered a compact, exact
+form, and `seed_transform.py` now runs `family0/monolith11_compact.py` instead
+of `_generated/monolith11.py`. The generated file is kept for provenance and
+is still checksummed by the manifest, but is no longer executed.
 
 ## Artifact provenance and verification
 
@@ -219,10 +222,12 @@ and constants or algebraic cancellation may remove actual influence. Treat
 these results as navigation aids, not cryptographic proofs or replacement tests
 for byte-exact vectors.
 
-For Monolith11, a separate exhaustive bitwise analysis recovers a compact,
+For Monolith11, a separate exhaustive bitwise analysis recovered a compact,
 exact two-kernel form for all five output words. See
 [`MONOLITH11_ANALYSIS.md`](MONOLITH11_ANALYSIS.md) for the formula, proof
-boundary, and reproduction commands. The generated runtime code is unchanged.
+boundary, and reproduction commands. This is the one migrated case: runtime
+now calls `family0/monolith11_compact.py`, and the generated file is retained
+for provenance only — see the review boundary and migration record below.
 
 For Monolith5, fixed shifts make the bitwise-only method inapplicable. A
 symbolic ROBDD/ANF recovery yields an exact, compact analysis-only model with
@@ -245,9 +250,10 @@ for exact coverage and the distinction between tape equivalence and arithmetic
 or curve interpretation.
 
 [`MODEL_BENCHMARKS.md`](MODEL_BENCHMARKS.md) compares the recovered evaluators
-with generated code at the byte interface. Monolith11 is a promising runtime
-candidate; the current Monolith5 and full Monolith7 analysis evaluators are
-slower. The generated runtime is unchanged.
+with generated code at the byte interface. Monolith11 has been migrated to
+runtime (see above); the current Monolith5 and full Monolith7 analysis
+evaluators are slower than their generated counterparts and remain
+analysis-only.
 
 Family 03 (PLCSIM) is also listed in the public-key store and blob metadata,
 but it needs a separate authentication implementation. The Family-0
@@ -261,7 +267,9 @@ acceptance criteria. Start there before navigating generated programs.
 ### Review boundary
 
 - Human-maintained flow and extension points live outside `_generated/`.
-- `monolith*.py`, `nine/part*.py`, and `ten/part*.py` are generated source.
+- `monolith*.py`, `nine/part*.py`, and `ten/part*.py` are generated source,
+  except that `_generated/monolith11.py` is retired at runtime in favor of
+  the human-maintained `family0/monolith11_compact.py` (kept for provenance).
 - `_constants.py` and the four `.bin` files are generated data.
 - Package `__init__.py` files and the binary loaders are human-maintained glue.
 
@@ -284,7 +292,7 @@ RealPlcAuthenticator(key1=random_24B, key2=random_24B)
 │   ├── SeedTransform(key1, public_key)  →  60-byte encrypted seed
 │   │   ├── Transform7 (EC scalar mul)
 │   │   ├── Monolith1.Loop → Monolith2 → Monolith8
-│   │   └── Transform13 → Monolith11
+│   │   └── Transform13 → Monolith11 (monolith11_compact.py)
 │   └── Derive challenge/checksum AES keys and the checksum LUT
 │
 ├── encrypt_full_blocks(dst, challenge)

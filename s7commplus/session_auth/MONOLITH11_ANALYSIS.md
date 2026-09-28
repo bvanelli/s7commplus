@@ -1,9 +1,13 @@
 # Monolith11: recovered bitwise structure
 
-This is a human-readable analysis of the generated Family-0 Monolith11, not a
-runtime replacement. Source and destination words below are zero-based,
-little-endian 32-bit words. The authoritative implementation remains
-`family0/_generated/monolith11.py` from pinned HarpoS7.
+This is a human-readable analysis of Family-0 Monolith11 that has since been
+promoted to the runtime implementation, in `family0/monolith11_compact.py`.
+Source and destination words below are zero-based, little-endian 32-bit
+words. `family0/_generated/monolith11.py` (pinned HarpoS7) is retained for
+provenance and is still checksummed by `artifacts.json`, but is no longer
+called at runtime; `tests/test_session_auth_family0_monoliths.py` and
+`tests/test_session_auth_bitwise_analysis.py` keep validating it directly
+against upstream vectors and the compact model.
 
 ## Exact word-level form
 
@@ -28,8 +32,9 @@ K(a, b, c) = (a AND A) XOR (b AND B) XOR (a AND b AND AB)
 | `K_odd` | `ECB2D69E` | `C6D87455` | `DFDFDF77` | `104A21AB` | `A7773DFB` | `7DEFFE9F` |
 
 These are 32-bit hexadecimal masks. They are coefficients of the algebraic
-normal form (ANF), not additional keys or protocol fields. The readable model
-is in `tools/monolith11_model.py`.
+normal form (ANF), not additional keys or protocol fields. The runtime
+implementation is in `family0/monolith11_compact.py`; `tools/monolith11_model.py`
+re-exports it unchanged for existing analysis tools and tests.
 
 ## How this was established
 

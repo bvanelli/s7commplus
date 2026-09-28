@@ -9,6 +9,13 @@
     "license_file": "s7commplus/session_auth/LICENSE-HarpoS7"
   },
   "python_snap7_import_revision": "1996e82861c211f0ce03aa7440cba3dfdec725c1",
+  "upstream_patches": [
+    {
+      "artifact": "s7commplus/session_auth/family0/_generated/data/fp_data2.bin",
+      "revision": "22b9dc0da3bf4b32f872b0b9ee2c2d30964e7654",
+      "reason": "HarpoS7 v1.1.3 appended the missing final ushort to Data2Collection[1]."
+    }
+  ],
   "artifacts": [
     {
       "path": "s7commplus/session_auth/family0/_generated/data/_constants.py",
@@ -21,16 +28,16 @@
     {
       "path": "s7commplus/session_auth/family0/_generated/data/fp_data1.bin",
       "category": "generated-binary-data",
-      "upstream_source": "HarpoS7.Family0/Fingerprints/Data1Collection",
-      "generation": "Extracted deterministically from HarpoS7 Family-0 constant collections; regeneration tooling is not yet vendored, so checksum verification is authoritative.",
+      "upstream_source": "HarpoS7/Fingerprint/FingerprintConsts.cs:Data1Collection",
+      "generation": "Extracted from the pinned HarpoS7 source; tools/verify_session_auth_upstream.py verifies the output byte-for-byte.",
       "size": 3056,
       "sha256": "f9856ddf5a5390b2428e04c6f99c490a2f469fbe33da56355151a68b1597c04f"
     },
     {
       "path": "s7commplus/session_auth/family0/_generated/data/fp_data2.bin",
       "category": "generated-binary-data",
-      "upstream_source": "HarpoS7.Family0/Fingerprints/Data2Collection",
-      "generation": "Extracted deterministically from HarpoS7 Family-0 constant collections; regeneration tooling is not yet vendored, so checksum verification is authoritative.",
+      "upstream_source": "HarpoS7/Fingerprint/FingerprintConsts.cs:Data2Collection",
+      "generation": "Extracted from the pinned HarpoS7 source with the v1.1.3 fix in upstream_patches; tools/verify_session_auth_upstream.py verifies the output byte-for-byte.",
       "size": 63568,
       "sha256": "752e936b07f962ff6a4cdee7d341514eabee2126a2bfcf704f6693788cb48d56"
     },

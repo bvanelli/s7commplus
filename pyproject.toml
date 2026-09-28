@@ -42,6 +42,8 @@ s7commplus = [
     "py.typed",
     "session_auth/**/*.bin",
     "session_auth/ARCHITECTURE.md",
+    "session_auth/MONOLITH5_ANALYSIS.md",
+    "session_auth/MONOLITH11_ANALYSIS.md",
     "session_auth/LICENSE-HarpoS7",
     "session_auth/artifacts.json",
     "zlib_dicts/*.xml",

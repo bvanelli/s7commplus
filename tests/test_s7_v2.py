@@ -1208,8 +1208,8 @@ class TestProtectionLevel:
         with pytest.raises(S7ConnectionError, match="return_value=4660"):
             _parse_protection_level_response(encode_uint32_vlq(0x1234))
 
-    def test_parse_rejects_missing_response_marker(self) -> None:
-        with pytest.raises(S7ConnectionError, match="missing response marker"):
+    def test_parse_rejects_missing_pvalue(self) -> None:
+        with pytest.raises(S7ConnectionError, match="missing PValue header"):
             _parse_protection_level_response(bytes([0x00]))
 
     def test_parse_rejects_truncated_pvalue_header(self) -> None:

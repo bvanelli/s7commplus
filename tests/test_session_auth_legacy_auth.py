@@ -173,13 +173,13 @@ def test_authenticate_real_plc_vector(
     with ExitStack() as stack:
         stack.enter_context(patch("os.urandom", mock_urandom))
         if implementation == "reference":
-            from s7commplus.session_auth.family0 import transform7
+            from s7commplus.session_auth.family0 import transform7_compact
             from tools.transform7_reference import model
 
             def independent(destination, prng1, prng2, source):
                 destination[:72] = model(bytes(prng1), bytes(prng2), bytes(source)).destination
 
-            stack.enter_context(patch.object(transform7, "execute", independent))
+            stack.enter_context(patch.object(transform7_compact, "execute", independent))
         from s7commplus.session_auth.legacy_auth import authenticate_real_plc
 
         blob, session_key = authenticate_real_plc(challenge, public_key, family)

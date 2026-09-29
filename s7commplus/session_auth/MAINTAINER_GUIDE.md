@@ -4,11 +4,14 @@ This guide addresses issue #1's maintainability/auditability scope. It is not a
 claim to have reconstructed Siemens' original source or simplified every
 cryptographic transform. Preserve `LICENSE-HarpoS7` and attribution when
 reusing source-derived models. Runtime/generated implementations are unchanged
-by the analysis work, with two exceptions: Monolith11 was migrated to the
+by the analysis work, with three exceptions: Monolith11 was migrated to the
 proven-equivalent `family0/monolith11_compact.py` (see `MONOLITH11_ANALYSIS.md`),
-and Monolith5 was migrated to the mechanically compiled, proven-equivalent
-`family0/monolith5_compact.py` (see `MONOLITH5_ANALYSIS.md`). Both generated
-sources are retained for provenance but are no longer executed.
+Monolith5 was migrated to the mechanically compiled, proven-equivalent
+`family0/monolith5_compact.py` (see `MONOLITH5_ANALYSIS.md`), and SeedTransform
+now calls `family0/transform7_compact.py`, whose 23-call monolith setup is
+replaced by the proven integer setup model, so Monolith3 and Monolith5 are no
+longer executed at all. The replaced generated sources and the original
+`family0/transform7.py` are retained for provenance and analysis, not executed.
 
 ## Start at the handwritten boundary
 
@@ -32,7 +35,7 @@ assuming parity from shared arithmetic helpers.
 | `family0.authenticator.RealPlcAuthenticator` | Metadata, seed, challenge/key2 encryption, checksum | Deterministic entropy sequence in the complete blob vectors |
 | `key_derivation.derive_session_key` | HMAC(key2[:24], fingerprint(challenge) + challenge[2:18])[:24] | Complete SessionKey vectors and fingerprint regressions |
 | `legitimate` | Post-setup challenge solution, distinct from initial key derivation | `tests/test_session_auth_legitimate.py`; connection's 303/1846 exchange |
-| `family0.transform7`, `transform12`, `monolith_wrappers` | Proprietary arithmetic/encoding orchestration | Independent full-output reference, source slices, upstream vectors below |
+| `family0.transform7_compact`, `transform12`, `monolith_wrappers` | Proprietary arithmetic/encoding orchestration; `transform7.py` is the retained original the tools instrument | Byte-equivalence tests against `transform7.py`, independent full-output reference, upstream vectors below |
 
 Do not expose generated monoliths as an application API. For a new key within
 an existing supported family, verify its upstream bytes/identifier and add it

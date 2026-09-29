@@ -7,7 +7,7 @@ from unittest.mock import patch
 
 import pytest
 
-from s7commplus.session_auth.family0 import pre_seed_transform, seed_transform, transform7
+from s7commplus.session_auth.family0 import pre_seed_transform, seed_transform, transform7_compact
 from s7commplus.session_auth.family0._generated import monolith1
 from s7commplus.session_auth.keys import KeyFamily
 from s7commplus.session_auth.legacy_auth import authenticate_real_plc
@@ -98,7 +98,7 @@ def test_bundled_key_carry_changes_the_complete_180_byte_authentication_blob() -
     case = boundary.cases()[4]
     recover_all()
     reference_module.tail_program()
-    original_transform = transform7.execute
+    original_transform = transform7_compact.execute
     entropy = (bytes(range(24, 48)), bytes(range(24)), bytes(range(16)), case.prng1.to_bytes(20, "little"), bytes(20))
 
     def run(implementation: boundary.Implementation) -> tuple[bytes, bytes]:
@@ -129,7 +129,7 @@ def test_bundled_key_carry_changes_the_complete_180_byte_authentication_blob() -
         with (
             patch.object(os, "urandom", fixed_entropy),
             patch.object(seed_transform, "_monolith1_loop", normalize),
-            patch.object(transform7, "execute", scalar),
+            patch.object(transform7_compact, "execute", scalar),
         ):
             result = authenticate_real_plc(bytes(range(20)), case.public_key, KeyFamily.S7_1500)
         assert requests == 5
@@ -169,12 +169,12 @@ def test_bundled_key_counterexample_is_constructed_at_the_first_scalar_carry() -
 
 
 def test_normalization_bound_fails_closed_and_restores_patches() -> None:
-    original_transform, original_loop = transform7.execute, seed_transform._monolith1_loop
+    original_transform, original_loop = transform7_compact.execute, seed_transform._monolith1_loop
     with patch.object(monolith1, "execute", return_value=0) as normalized:
         with pytest.raises(ValueError, match="declared bound"):
             boundary.first_nonce(boundary.cases()[1], "original", normalization_limit=2)
         assert normalized.call_count == 2
-    assert transform7.execute is original_transform
+    assert transform7_compact.execute is original_transform
     assert seed_transform._monolith1_loop is original_loop
 
 

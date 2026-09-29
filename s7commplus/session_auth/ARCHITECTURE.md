@@ -99,7 +99,8 @@ session_auth/
 │   ├── key_derivation_transform.py  Pre-seed → 3 AES keys via Monolith9/10
 │   ├── checksum_transform.py  AES-ECB checksum of encrypted blocks
 │   ├── lut_generator.py     Lookup table for harpo_hash
-│   ├── transform7.py        Core EC point multiplication (monolith wrappers)
+│   ├── transform7.py        Original Transform7 (retained reference, not executed)
+│   ├── transform7_compact.py  Runtime Transform7: integer setup + Transform12 dispatch + final monolith chain
 │   ├── transform12.py       Opcode-driven BigInt dispatcher
 │   ├── transform13.py       3×24-byte BigInt output via Monolith9/10
 │   ├── big_int_operations.py  192-bit arithmetic (add, sub, mul, square)
@@ -279,6 +280,13 @@ acceptance criteria. Start there before navigating generated programs.
   retired at runtime in favor of `family0/monolith5_compact.py` (mechanically
   compiled from the recovered model — do not hand-edit) and the human-written
   `family0/monolith11_compact.py`. Both retired files are kept for provenance.
+- `family0/transform7.py` is the original Transform7 orchestration. Runtime
+  calls `family0/transform7_compact.py` instead, which writes the four setup
+  context slots with the proven integer model (`tools/transform7_setup_integer.py`
+  composes the same carry-save steps) and then runs the unchanged Transform12
+  dispatch and final Monolith7/4/6 chain; tests pin byte equality with the
+  original. The analysis tools and proof records keep instrumenting and pinning
+  the original file.
 - `_constants.py` and the four `.bin` files are generated data.
 - Package `__init__.py` files and the binary loaders are human-maintained glue.
 
@@ -299,7 +307,7 @@ RealPlcAuthenticator(key1=random_24B, key2=random_24B)
 │   ├── PreSeedTransform(key1)           →  60-byte pre-seed
 │   ├── KeyDerivationTransform(pre-seed) →  3 × 16-byte keys
 │   ├── SeedTransform(key1, public_key)  →  60-byte encrypted seed
-│   │   ├── Transform7 (EC scalar mul)
+│   │   ├── Transform7 (EC scalar mul; transform7_compact.py)
 │   │   ├── Monolith1.Loop → Monolith2 → Monolith8
 │   │   └── Transform13 → Monolith11 (monolith11_compact.py)
 │   └── Derive challenge/checksum AES keys and the checksum LUT

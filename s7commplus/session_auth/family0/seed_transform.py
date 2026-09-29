@@ -4,9 +4,9 @@ Uses Transform7 with random PRNG buffers, then chains
 Monolith1.Loop -> Monolith2 (zero check) -> Monolith8 ->
 Transform13 -> Monolith11 to produce the final 60-byte output.
 
-Manual port of ``HarpoS7.Family0.Transforms.SeedTransform``. Monolith11 runs
-through the compact, proven-equivalent ``monolith11_compact`` module rather
-than the retired ``_generated.monolith11`` — see that module's docstring.
+Manual port of ``HarpoS7.Family0.Transforms.SeedTransform``. Transform7 and
+Monolith11 run through the byte-equivalent ``transform7_compact`` and
+``monolith11_compact`` modules; see their docstrings.
 """
 
 from __future__ import annotations
@@ -16,7 +16,7 @@ import struct
 from typing import cast
 
 from ._generated import monolith1, monolith2, monolith8
-from . import monolith11_compact, transform7, transform13
+from . import monolith11_compact, transform7_compact, transform13
 from ._generated.data import TRANSFORM7_DATA
 from .pre_seed_transform import DESTINATION_SIZE as TRANSFORM1_SIZE
 
@@ -43,13 +43,13 @@ def execute(destination: bytearray | memoryview, public_key: bytes, transform1: 
 
     prng1 = bytearray(os.urandom(0x14))
     prng2 = bytearray(0x14)
-    t7_dst = bytearray(transform7.DESTINATION_SIZE)
+    t7_dst = bytearray(transform7_compact.DESTINATION_SIZE)
     work = bytearray(5 * 4)
 
     t7_loop = 0
     while t7_loop == 0:
         prng2 = bytearray(os.urandom(0x14))
-        transform7.execute(t7_dst, prng1, prng2, TRANSFORM7_DATA[0xD8:])
+        transform7_compact.execute(t7_dst, prng1, prng2, TRANSFORM7_DATA[0xD8:])
 
         _monolith1_loop(t7_dst)
         monolith2.execute(work, bytes(t7_dst))
@@ -61,7 +61,7 @@ def execute(destination: bytearray | memoryview, public_key: bytes, transform1: 
     destination[0x14:0x28] = work[:0x14]
     destination[0x28:0x3C] = prng1[:0x14]
 
-    transform7.execute(t7_dst, prng1, prng2, public_key)
+    transform7_compact.execute(t7_dst, prng1, prng2, public_key)
     _monolith1_loop(t7_dst)
 
     # Monolith8: src=72 bytes (t7_dst), dst=60 bytes

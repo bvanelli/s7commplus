@@ -18,7 +18,7 @@ from dataclasses import dataclass
 from typing import Literal
 from unittest.mock import patch
 
-from s7commplus.session_auth.family0 import seed_transform, transform7
+from s7commplus.session_auth.family0 import seed_transform, transform7_compact
 from s7commplus.session_auth.family0._generated import monolith1
 from s7commplus.session_auth.family0._generated.data import TRANSFORM7_DATA
 from s7commplus.session_auth.keys import get_public_key
@@ -94,7 +94,7 @@ def first_nonce(case: Case, implementation: Implementation, normalization_limit:
     if implementation == "modular":
         recover_all()
         reference.tail_program()
-    original = transform7.execute
+    original = transform7_compact.execute
     entropy = (case.prng1.to_bytes(20, "little"), case.selector.to_bytes(20, "little"))
     requests = 0
     transforms: list[bytes] = []
@@ -129,7 +129,7 @@ def first_nonce(case: Case, implementation: Implementation, normalization_limit:
     with (
         patch.object(os, "urandom", fixed_entropy),
         patch.object(seed_transform, "_monolith1_loop", normalize),
-        patch.object(transform7, "execute", observed_transform),
+        patch.object(transform7_compact, "execute", observed_transform),
     ):
         try:
             seed_transform.execute(destination, case.public_key, case.transform1)

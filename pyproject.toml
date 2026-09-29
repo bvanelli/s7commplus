@@ -67,6 +67,7 @@ pythonpath = ["."]
 asyncio_mode = "auto"
 markers = [
     "conformance: protocol conformance tests",
+    "slow: re-derives a recovered SessionKey proof via Z3; skipped by default, pass --slow to run",
     "e2e: end-to-end tests requiring a real PLC connection",
     "real_plc: versioned real-PLC acceptance scenario",
     "smoke: read-only real-PLC acceptance scenario",

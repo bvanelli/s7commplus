@@ -14,6 +14,7 @@ from tools.transform7_reference import tail_program
 P = macros.P
 
 
+@pytest.mark.slow
 def test_composed_actual_source_ast_proof_and_negative_controls() -> None:
     pytest.importorskip("z3")
     result = prove()

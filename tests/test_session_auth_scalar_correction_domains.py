@@ -97,6 +97,7 @@ def test_nonmultilinear_read_cannot_hide_an_unresolved_correction() -> None:
         checker.verify(broken, source, boolean_corrections=True)
 
 
+@pytest.mark.slow
 @pytest.mark.parametrize("cap", [2, 8, 64, 256])
 def test_all_321_programs_have_checked_multilinear_correction_plans(cap: int) -> None:
     sources = [p for s in recover() for p in s.choices] + [tail_program()]
@@ -115,6 +116,7 @@ def test_all_321_programs_have_checked_multilinear_correction_plans(cap: int) ->
     assert (field_identities, guard_identities) == (58486, 62361)
 
 
+@pytest.mark.slow
 def test_all_scalar_branches_preserve_exact_outputs_and_carry_events() -> None:
     rng = random.Random(20047)
     for stage in recover():
@@ -127,6 +129,7 @@ def test_all_scalar_branches_preserve_exact_outputs_and_carry_events() -> None:
                 assert result.outputs == expected and result.defects == events, (stage.index, bit, value)
 
 
+@pytest.mark.slow
 @pytest.mark.parametrize("cap", [2, 8, 64, 256])
 def test_complete_byte_and_boundary_controls_with_constrained_proofs(cap: int) -> None:
     x, y = (int.from_bytes(TRANSFORM7_DATA[o : o + 20], "little") for o in (0xD8, 0xEC))

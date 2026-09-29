@@ -67,6 +67,7 @@ def test_graph_folds_are_exhaustively_equal_to_transfer_functions() -> None:
                 assert graph.evaluate(root, (x,), {}) == graph.transfer(op, x, c)
 
 
+@pytest.mark.slow
 def test_all_316_branches_have_compact_positive_bound_polynomials() -> None:
     graph = Graph()
     records = []
@@ -93,6 +94,7 @@ def test_all_316_branches_have_compact_positive_bound_polynomials() -> None:
             assert catalogue.evaluate(catalogue.roots[node], raw) == facts.lower_bounds[value]
 
 
+@pytest.mark.slow
 def test_entry_bounds_first_defect_matches_all_intermediate_branches() -> None:
     catalogue = prefix.compile_catalogue(structural_guards=True, entry_bounds=True)
     summary = catalogue.summary()

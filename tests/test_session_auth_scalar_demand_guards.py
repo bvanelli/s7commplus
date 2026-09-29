@@ -80,6 +80,7 @@ def test_demand_mode_rejects_an_undefined_correction() -> None:
         compiler.evaluate(broken, {0: 1, 1: 1, 2: 1}, demand_guards=True)
 
 
+@pytest.mark.slow
 @pytest.mark.parametrize("boolean_domain", [False, True])
 def test_every_scalar_branch_matches_outputs_and_has_only_source_carry_events(boolean_domain: bool) -> None:
     rng = random.Random(6302)
@@ -102,6 +103,7 @@ def test_every_scalar_branch_matches_outputs_and_has_only_source_carry_events(bo
     assert skipped > 0
 
 
+@pytest.mark.slow
 @pytest.mark.parametrize("cap", [2, 8, 64, 256])
 def test_complete_output_boundaries_and_reference_at_each_bound(cap: int) -> None:
     x, y = (int.from_bytes(TRANSFORM7_DATA[o : o + 20], "little") for o in (0xD8, 0xEC))
@@ -120,6 +122,7 @@ def test_complete_output_boundaries_and_reference_at_each_bound(cap: int) -> Non
         assert all(event in complete[i].defects for i, row in enumerate(needed) for event in row.defects)
 
 
+@pytest.mark.slow
 def test_public_scalar_zero_skips_guards_but_is_explicitly_not_a_full_trace() -> None:
     x, y = (int.from_bytes(TRANSFORM7_DATA[o : o + 20], "little") for o in (0xD8, 0xEC))
     actual, needed = compiler.full_output(x, y, 0, scalar_xor_mask(), boolean_corrections=True, demand_guards=True)
@@ -131,6 +134,7 @@ def test_public_scalar_zero_skips_guards_but_is_explicitly_not_a_full_trace() ->
     assert sum(len(r.defects) for r in needed) == 2 < sum(len(r.defects) for r in complete) == 3
 
 
+@pytest.mark.slow
 def test_arbitrary_complete_inputs_keep_exact_bytes() -> None:
     rng = random.Random(4098)
     cases = [(0, 0, 0, 0), (exact.MASK,) * 4, (P, P, P, exact.MASK)]

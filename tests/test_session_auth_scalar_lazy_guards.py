@@ -157,6 +157,7 @@ def test_recovered_stage_guard_pruning_preserves_outputs_and_events(cap: int) ->
     assert result.guard_lift_queries == 8 and result.settled_potential_guards == 2
 
 
+@pytest.mark.slow
 def test_actual_guard_ast_source_obligations_and_negative_control() -> None:
     pytest.importorskip("z3")
     from tools.prove_scalar_lazy_guards import prove
@@ -170,6 +171,7 @@ def test_actual_guard_ast_source_obligations_and_negative_control() -> None:
     assert not wrong["full_proof"] and wrong["obligations"][0]["cases"][2]["result"] == "sat"
 
 
+@pytest.mark.slow
 def test_solver_unknown_is_not_a_proof() -> None:
     z3 = pytest.importorskip("z3")
     from tools.prove_scalar_lazy_guards import prove
@@ -178,6 +180,7 @@ def test_solver_unknown_is_not_a_proof() -> None:
         assert not prove()["full_proof"]
 
 
+@pytest.mark.slow
 @pytest.mark.parametrize("timeout", [0, -1])
 def test_nonpositive_solver_timeout_fails_closed(timeout: int) -> None:
     pytest.importorskip("z3")

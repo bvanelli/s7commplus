@@ -45,6 +45,7 @@ def modular_phase(x: int, y: int, r: int, scalar: int) -> tuple[int, int]:
     return state[5], state[87]
 
 
+@pytest.mark.slow
 def test_all_158_encodings_have_inverse_and_direct_source_identities() -> None:
     rows = encoding.recover_all()
     assert len(rows) == 158
@@ -60,6 +61,7 @@ def test_all_158_encodings_have_inverse_and_direct_source_identities() -> None:
     assert report["whole_runtime_equivalence"] is False
 
 
+@pytest.mark.slow
 def test_first_stage_initialization_matches_generic_ladder_symbolically() -> None:
     x, y, r = curve.variables(3)
     incoming = (curve.product(x, y), y, curve.square(r), {}, x)
@@ -194,6 +196,7 @@ def test_correct_affine_point_and_zero_lift_do_not_restore_complete_output_bytes
         assert (finalize(outputs) == finalize(lifted)) == (n == 0)
 
 
+@pytest.mark.slow
 def test_optional_source_ast_defect_proofs_and_translation_controls() -> None:
     z3 = pytest.importorskip("z3")
     from tools.prove_transform12_residue_defects import WIDTH, compile_source, prove

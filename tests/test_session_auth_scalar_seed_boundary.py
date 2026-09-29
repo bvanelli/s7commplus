@@ -23,6 +23,7 @@ from tools.scalar_stage_plan import constant
 from tools.transform7_setup_integer import model as setup
 
 
+@pytest.mark.slow
 @pytest.mark.parametrize("case", boundary.cases(), ids=lambda case: case.name)
 def test_first_nonce_acceptance_and_all_60_bytes_against_original(case: boundary.Case) -> None:
     original = boundary.first_nonce(case, "original")
@@ -63,6 +64,7 @@ def test_first_nonce_acceptance_and_all_60_bytes_against_original(case: boundary
         assert original.entropy_requests == 3  # Observed retry, not a fabricated success.
 
 
+@pytest.mark.slow
 def test_caller_difference_is_not_specific_to_zero_transform1() -> None:
     case = replace(boundary.cases()[2], transform1=bytes(range(60)))
     original = boundary.first_nonce(case, "original")
@@ -75,6 +77,7 @@ def test_caller_difference_is_not_specific_to_zero_transform1() -> None:
     assert original.seed[20:] == candidate.seed[20:]
 
 
+@pytest.mark.slow
 def test_bundled_key_difference_survives_actual_preseed_transform() -> None:
     transform1 = bytearray(60)
     pre_seed_transform.execute(transform1, bytes(range(24)))
@@ -90,6 +93,7 @@ def test_bundled_key_difference_survives_actual_preseed_transform() -> None:
     assert hashlib.sha256(candidate.seed).hexdigest() == "55d4fe6a138671c909403571138d5fbef3a28581fb0c84facf558f22e0190ba2"
 
 
+@pytest.mark.slow
 def test_bundled_key_carry_changes_the_complete_180_byte_authentication_blob() -> None:
     case = boundary.cases()[4]
     recover_all()

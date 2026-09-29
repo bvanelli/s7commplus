@@ -13,6 +13,7 @@ from tools.trace_scalar_defects import evaluate_stage
 P = model.P
 
 
+@pytest.mark.slow
 def test_all_intermediate_branches_match_independent_fold_oracle() -> None:
     catalogue = model.compile_catalogue()
     rng = random.Random(946128)

@@ -132,6 +132,7 @@ def test_catalogue_counts_are_source_specific_and_not_poly_aliases() -> None:
     assert 9 in facts.dominated[24]
 
 
+@pytest.mark.slow
 def test_structural_prefix_matches_all_intermediate_source_branches() -> None:
     catalogue = prefix.compile_catalogue(structural_guards=True)
     assert catalogue.summary()["structural_guards"] is True
@@ -150,6 +151,7 @@ def test_structural_prefix_matches_all_intermediate_source_branches() -> None:
             prefix.compile_catalogue(structural_guards=invalid)
 
 
+@pytest.mark.slow
 @pytest.mark.parametrize("cap", [2, 8, 64, 256])
 def test_all_source_branches_and_prior_defects_match_the_independent_oracle(cap: int) -> None:
     rng = random.Random(34159672)
@@ -167,6 +169,7 @@ def test_all_source_branches_and_prior_defects_match_the_independent_oracle(cap:
                 assert not any(a in active and b in active for a, b in model.analyze(source, compiler.constant).exclusive)
 
 
+@pytest.mark.slow
 @pytest.mark.parametrize("cofactors", [False, True])
 def test_complete_bytes_all_boundaries_and_point_changing_control(cofactors: bool) -> None:
     public = tuple(int.from_bytes(TRANSFORM7_DATA[o : o + 20], "little") for o in (0xD8, 0xEC))
@@ -182,6 +185,7 @@ def test_complete_bytes_all_boundaries_and_point_changing_control(cofactors: boo
         assert sum(row.structurally_settled_guards for row in new) > 0
 
 
+@pytest.mark.slow
 def test_actual_source_lemmas_and_negative_controls() -> None:
     pytest.importorskip("z3")
     from tools.prove_scalar_structural_guards import prove
@@ -192,6 +196,7 @@ def test_actual_source_lemmas_and_negative_controls() -> None:
     assert sum(row["result"] == "sat" for row in report["obligations"]) == 2
 
 
+@pytest.mark.slow
 def test_unknown_and_bad_timeout_do_not_count_as_proof() -> None:
     z3 = pytest.importorskip("z3")
     from tools.prove_scalar_structural_guards import prove

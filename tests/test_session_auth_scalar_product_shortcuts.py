@@ -175,6 +175,7 @@ def test_suppressing_the_product_threshold_changes_a_stage_output() -> None:
     assert expected.outputs[3] == MODULUS + 3 and incorrect.outputs[3] == 3
 
 
+@pytest.mark.slow
 def test_actual_callback_rule_ast_and_all_seven_solver_obligations() -> None:
     z3 = pytest.importorskip("z3")
     from tools.prove_scalar_predicate_guards import compile_guard
@@ -205,6 +206,7 @@ def callback_with_argument(callback: Callable[[int], bool]) -> bool:
     return callback(1)
 
 
+@pytest.mark.slow
 def test_guard_compiler_rejects_undeclared_non_boolean_and_argument_callbacks() -> None:
     z3 = pytest.importorskip("z3")
     from tools.prove_scalar_predicate_guards import compile_guard
@@ -223,6 +225,7 @@ def test_guard_compiler_rejects_undeclared_non_boolean_and_argument_callbacks() 
         compile_guard(z3, "callback_with_argument", {"callback": z3.BoolVal(True, ctx=context)}, module=module)
 
 
+@pytest.mark.slow
 @pytest.mark.parametrize("timeout", [0, -1])
 def test_nonpositive_solver_timeouts_fail_closed(timeout: int) -> None:
     pytest.importorskip("z3")
@@ -232,6 +235,7 @@ def test_nonpositive_solver_timeouts_fail_closed(timeout: int) -> None:
         prove(timeout)
 
 
+@pytest.mark.slow
 def test_solver_unknown_is_not_a_proof() -> None:
     z3 = pytest.importorskip("z3")
     from tools.prove_scalar_product_shortcuts import prove

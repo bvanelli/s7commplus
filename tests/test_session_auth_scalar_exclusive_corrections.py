@@ -100,6 +100,7 @@ def test_constraints_require_explicit_matching_modes() -> None:
         compiler.reduce_correction_powers(reduced)
 
 
+@pytest.mark.slow
 @pytest.mark.parametrize("cap", [2, 8, 64, 256])
 def test_every_program_has_independent_joint_domain_certificates(cap: int) -> None:
     certificates = []
@@ -114,6 +115,7 @@ def test_every_program_has_independent_joint_domain_certificates(cap: int) -> No
     assert sum(len(c.exclusive_correction_pairs) for c in certificates) == 8353
 
 
+@pytest.mark.slow
 @pytest.mark.parametrize("cap", [2, 8, 64, 256])
 def test_both_branches_at_every_stage_retain_exact_defects(cap: int) -> None:
     rng = random.Random(976328)
@@ -129,6 +131,7 @@ def test_both_branches_at_every_stage_retain_exact_defects(cap: int) -> None:
                 assert actual.outputs == outputs and actual.defects == events
 
 
+@pytest.mark.slow
 @pytest.mark.parametrize("cofactors", [False, True])
 def test_full_bytes_boundaries_and_point_changing_control(cofactors: bool) -> None:
     public = tuple(int.from_bytes(TRANSFORM7_DATA[o : o + 20], "little") for o in (0xD8, 0xEC))

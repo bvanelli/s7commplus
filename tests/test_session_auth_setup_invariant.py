@@ -85,6 +85,7 @@ def test_local_dependency_rejects_invalid_records(mutation: str) -> None:
             setup_invariant_dependency()
 
 
+@pytest.mark.slow
 def test_all_local_source_theorems_replay_and_hypotheses_are_satisfiable() -> None:
     z3 = pytest.importorskip("z3")
     for number in (3, 4, 5, 6):
@@ -98,6 +99,7 @@ def test_all_local_source_theorems_replay_and_hypotheses_are_satisfiable() -> No
     assert len(report["stages"]) == 73
 
 
+@pytest.mark.slow
 def test_compositional_induction_never_expands_global_outputs() -> None:
     pytest.importorskip("z3")
     with patch("tools.prove_transform7_setup_ranges.verify_translation") as controls:
@@ -129,6 +131,7 @@ def test_compositional_induction_never_expands_global_outputs() -> None:
             assert type(row["maximum_payload"]) is int and 0 <= row["maximum_payload"] < 1 << 166
 
 
+@pytest.mark.slow
 @pytest.mark.parametrize("number", (3, 6))
 def test_first_hidden_condition_alone_is_not_closed(number: int) -> None:
     z3 = pytest.importorskip("z3")
@@ -146,6 +149,7 @@ def test_first_hidden_condition_alone_is_not_closed(number: int) -> None:
     assert solver.check() == z3.sat
 
 
+@pytest.mark.slow
 def test_invalid_proof_inputs_fail_closed() -> None:
     with pytest.raises(ValueError, match="positive"):
         prove(0)

@@ -44,6 +44,7 @@ def test_multiple_defects_and_mixed_terms_survive_factoring() -> None:
     assert not lowered.equations.sites and not any(lowered.equations.fields)
 
 
+@pytest.mark.slow
 @pytest.mark.parametrize("cap", [2, 256])
 def test_all_320_factored_branches_keep_post_defect_outputs_and_events(cap: int) -> None:
     rng = random.Random(169427)
@@ -83,6 +84,7 @@ def test_factored_runtime_has_no_polynomial_source_or_helper_replay() -> None:
         assert actual.outputs == expected and actual.defects == events
 
 
+@pytest.mark.slow
 def test_factored_finalizer_keeps_iterative_cap_two_anchor_scheduling() -> None:
     stage = original.compile_stage(tail_program(), 2, exclusive_corrections=True)
     lowered = model.factor_stage(stage)
@@ -135,6 +137,7 @@ def test_shared_predicate_projection_is_checked_without_the_sharing_builder() ->
         model.verify(replace(lowered, predicates=replace(lowered.predicates, data_sha256="0" * 64)), stage)
 
 
+@pytest.mark.slow
 @pytest.mark.parametrize("cap,field_count", [(2, 87_191), (256, 66_432)])
 def test_globally_shared_circuit_keeps_all_bytes_boundaries_and_full_defect_traces(cap: int, field_count: int) -> None:
     catalogue = original.compile_catalogue(cap, exclusive_corrections=True, verify_data=True)

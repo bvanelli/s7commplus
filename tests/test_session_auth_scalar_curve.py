@@ -63,6 +63,7 @@ def test_catalogue_is_complete_and_deterministic() -> None:
     assert report == shadow.catalogue()
 
 
+@pytest.mark.slow
 def test_first_two_stages_are_full_polynomial_identities_without_probes() -> None:
     with patch("tools.recover_transform7_setup.capture_setup", side_effect=AssertionError("no interpolation allowed")):
         assert curve.first_stage() == curve.expected_first_stage()
@@ -70,6 +71,7 @@ def test_first_two_stages_are_full_polynomial_identities_without_probes() -> Non
         assert curve.first_stage_relation()
 
 
+@pytest.mark.slow
 def test_wrong_curve_constant_breaks_both_stage_identities(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(curve, "CURVE_B", curve.CURVE_B + 1)
     assert curve.first_stage() != curve.expected_first_stage()
@@ -77,6 +79,7 @@ def test_wrong_curve_constant_breaks_both_stage_identities(monkeypatch: pytest.M
     assert not curve.first_stage_relation()
 
 
+@pytest.mark.slow
 def test_wrong_doubling_coefficient_breaks_identity(monkeypatch: pytest.MonkeyPatch) -> None:
     original = curve.doubling
 
@@ -155,6 +158,7 @@ def test_setup_carry_exception_still_blocks_unconditional_first_stage_formula() 
     assert predicted != {slot: value % shadow.MODULUS for slot, value in actual.items()}
 
 
+@pytest.mark.slow
 def test_report_pins_sources_and_does_not_claim_runtime_equivalence() -> None:
     report = curve.report()
     assert report["first_stage_matches"] and report["second_stage_matches"]

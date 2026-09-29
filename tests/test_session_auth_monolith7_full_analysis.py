@@ -17,6 +17,7 @@ _ROOT = Path(__file__).resolve().parents[1]
 _FIXTURES = _ROOT / "tests/fixtures/family0/monoliths"
 
 
+@pytest.mark.slow
 def test_full_model_is_exactly_regenerated_from_generated_source() -> None:
     saved = json.loads((_ROOT / "tools/monolith7_full_model.json").read_text(encoding="utf-8"))
     assert saved == json.loads(json.dumps(recover_model()))

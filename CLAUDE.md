@@ -151,6 +151,21 @@ pytest --e2e --plc-ip 192.168.1.10 --plc-port 102 \
   --plc-rack 0 --plc-slot 1 --plc-db-read 1 --plc-db-write 2
 ```
 
+Tests that re-derive a recovered SessionKey proof (Z3 SAT/UNSAT replay, or
+exhaustive per-branch/per-byte verification over hundreds of generated-source
+cases) are marked `slow` and skipped by default; a plain `pytest` run
+completes in a few minutes instead of roughly half an hour. Pass `--slow` to
+run them:
+
+```bash
+pytest --slow
+```
+
+Run with `--slow` when changing anything under `tools/prove_*.py`,
+`tools/recover_*.py`, the generated `family0/_generated` monoliths, or any
+checked-in proof/model JSON — the fast default only checks that code exists
+and imports, not that its proofs still hold.
+
 The write DB supplied to E2E tests must be disposable and safe to modify. Never
 run E2E tests against an unknown, production, or safety-related PLC. Do not turn
 an E2E failure into a unit-test skip; reproduce protocol behavior with the

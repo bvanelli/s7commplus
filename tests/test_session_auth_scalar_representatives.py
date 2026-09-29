@@ -80,6 +80,7 @@ def test_every_small_residue_and_lift_pair() -> None:
                     assert rules.multiply(a, b).integer() == exact.multiply(a.integer(), b.integer())
 
 
+@pytest.mark.slow
 def test_all_source_stages_use_the_standalone_rules_exactly() -> None:
     rng = random.Random(320160)
     pool = (0, 1, 46, arithmetic.P, arithmetic.P + 46, exact.MASK)
@@ -117,6 +118,7 @@ def test_on_curve_point_changing_carries_and_original_packed_full_output() -> No
     assert output == bytes(destination)
 
 
+@pytest.mark.slow
 def test_arbitrary_complete_inputs_match_independent_integer_reference() -> None:
     from tools.transform7_reference import model as reference
 
@@ -151,6 +153,7 @@ def test_new_rules_never_call_old_primitive_or_polynomial_executors() -> None:
         assert program_rules.full_output(x, y, 0, selector)[0] == expected
 
 
+@pytest.mark.slow
 def test_source_ast_smt_rules_and_translation_controls() -> None:
     z3 = pytest.importorskip("z3")
     from tools.prove_scalar_predicate_guards import compile_guard

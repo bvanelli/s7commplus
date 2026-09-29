@@ -31,6 +31,7 @@ def shifted(poly: compiler.Polynomial) -> compiler.Polynomial:
     return result
 
 
+@pytest.mark.slow
 def test_all_320_alternatives_and_fixed_tail_have_exact_coefficient_certificates() -> None:
     programs = [program for stage in recover() for program in stage.choices] + [tail_program()]
     certificates = [checker.verify(compiler.compile_plan(source), source) for source in programs]
@@ -43,6 +44,7 @@ def test_all_320_alternatives_and_fixed_tail_have_exact_coefficient_certificates
     assert all(len(c.source_sha256) == len(c.plan_sha256) == 64 for c in certificates)
 
 
+@pytest.mark.slow
 @pytest.mark.parametrize("cap", [2, 8, 64, 256])
 def test_difficult_initial_and_tail_groups_at_each_anchor_bound(cap: int) -> None:
     for source in (recover()[0].choices[0], tail_program()):
@@ -51,6 +53,7 @@ def test_difficult_initial_and_tail_groups_at_each_anchor_bound(cap: int) -> Non
         assert certificate.anchors == len(plan.anchors) > 0
 
 
+@pytest.mark.slow
 def test_reused_operand_anchor_is_not_treated_as_an_independent_symbol() -> None:
     # Tail SSA74 reuses an old anchor equal to the first operand; that
     # symbol also occurs inside the second operand. Treating all operand
@@ -194,6 +197,7 @@ def test_resource_exhaustion_is_not_a_probabilistic_success() -> None:
         checker._power({frozenset(((0, 1),)): 1}, 1 << 4096)
 
 
+@pytest.mark.slow
 def test_optional_verification_checks_every_selected_plan_before_evaluation() -> None:
     x, y = (int.from_bytes(TRANSFORM7_DATA[o : o + 20], "little") for o in (0xD8, 0xEC))
     scalar = scalar_xor_mask()

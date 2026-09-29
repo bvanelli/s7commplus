@@ -34,6 +34,7 @@ def primitive(operation: str) -> Program:
     return Program(0, 1, 3, 0, (instruction,), ((2, Operand("value", 0)),))
 
 
+@pytest.mark.slow
 def test_all_320_branches_with_boundaries_random_inputs_and_exact_carry_events() -> None:
     rng = random.Random(320256)
     pool = (0, 1, 46, 47, arithmetic.P, arithmetic.P + 46, exact.MASK)
@@ -70,6 +71,7 @@ def test_primitive_plans_cover_uint160_boundaries(operation: str) -> None:
             assert tuple(zip(result.defect_values, (e.correction for e in result.defects))) == expected.corrections
 
 
+@pytest.mark.slow
 @pytest.mark.parametrize("n", [0, 1, 2, 16, (1 << 79) - 1, (1 << 159) + 123])
 def test_full_72_bytes_and_all_boundaries_match_separate_evaluator(n: int) -> None:
     x, y = base_point()
@@ -87,6 +89,7 @@ def test_full_72_bytes_and_all_boundaries_match_separate_evaluator(n: int) -> No
         assert sum(row.guards for row in rows) < sum(row.instructions for row in expected_rows)
 
 
+@pytest.mark.slow
 @pytest.mark.parametrize("cap", [2, 8, 64, 256])
 def test_polynomial_anchor_limits_do_not_change_complete_results(cap: int) -> None:
     x, y = base_point()
@@ -103,6 +106,7 @@ def test_polynomial_anchor_limits_do_not_change_complete_results(cap: int) -> No
         assert all(len(poly) <= cap for poly in (*plan.fields.values(), *plan.anchors))
 
 
+@pytest.mark.slow
 def test_arbitrary_complete_inputs_and_on_curve_point_changing_carries() -> None:
     rng = random.Random(72256)
     cases = [(0, 0, 0, 0), (exact.MASK,) * 4, (arithmetic.P, arithmetic.P, arithmetic.P, exact.MASK)]
@@ -139,6 +143,7 @@ def test_nonlinear_corrections_and_cached_plans_need_no_repairs() -> None:
     )
 
 
+@pytest.mark.slow
 def test_runtime_never_replays_numeric_instructions_or_repairs_polynomials() -> None:
     x, y = base_point()
     selector = scalar_xor_mask()

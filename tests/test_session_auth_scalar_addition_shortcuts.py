@@ -159,6 +159,7 @@ def test_recovered_stage_one_prunes_tags_at_each_formula_bound(cap: int) -> None
     assert (result.addition_lift_queries, baseline.addition_lift_queries) == (5, 16)
 
 
+@pytest.mark.slow
 def test_actual_lazy_rule_ast_and_all_twenty_one_source_cases() -> None:
     z3 = pytest.importorskip("z3")
     from tools.prove_scalar_addition_shortcuts import prove
@@ -184,6 +185,7 @@ def test_actual_lazy_rule_ast_and_all_twenty_one_source_cases() -> None:
     assert not wrong["full_proof"] and wrong["obligations"][0]["cases"][0]["result"] == "sat"
 
 
+@pytest.mark.slow
 def test_solver_unknown_is_not_a_proof() -> None:
     z3 = pytest.importorskip("z3")
     from tools.prove_scalar_addition_shortcuts import prove
@@ -193,6 +195,7 @@ def test_solver_unknown_is_not_a_proof() -> None:
     assert not report["full_proof"] and all(not row["proved"] for row in report["obligations"])
 
 
+@pytest.mark.slow
 @pytest.mark.parametrize("timeout", [0, -1])
 def test_nonpositive_solver_timeouts_fail_closed(timeout: int) -> None:
     pytest.importorskip("z3")

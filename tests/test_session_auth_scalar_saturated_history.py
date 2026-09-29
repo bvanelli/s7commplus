@@ -29,6 +29,7 @@ def catalogue(request: pytest.FixtureRequest) -> model.Catalogue:
     return model.catalogue(request.param)
 
 
+@pytest.mark.slow
 def test_actual_source_ast_exact_saturation_obligations() -> None:
     pytest.importorskip("z3")
     result = prove()
@@ -78,6 +79,7 @@ def test_exact_saturation_is_not_the_old_lower_bound() -> None:
     assert model.saturation_value(stage.nodes, stage.outputs[0][2], (48, 47), lambda _: 1, {}) == 1
 
 
+@pytest.mark.slow
 def test_complete_catalogue_has_no_boolean_or_source_history(catalogue: model.Catalogue) -> None:
     assert len(catalogue.certificates) == 321
     assert sum(c.source_values for c in catalogue.certificates) == 58486
@@ -87,6 +89,7 @@ def test_complete_catalogue_has_no_boolean_or_source_history(catalogue: model.Ca
         assert not hasattr(stage, "predicates") and not hasattr(stage, "program")
 
 
+@pytest.mark.slow
 def test_all_320_branches_match_raw_outputs_and_complete_events(catalogue: model.Catalogue) -> None:
     rng = random.Random(470160)
     for row, pair in zip(recover(), catalogue.choices):
@@ -100,6 +103,7 @@ def test_all_320_branches_match_raw_outputs_and_complete_events(catalogue: model
                 assert actual.outputs == expected and actual.defects == events
 
 
+@pytest.mark.slow
 def test_every_source_site_saturation_is_exact_not_just_a_bound() -> None:
     rng = random.Random(470321)
     for row in recover():
@@ -140,6 +144,7 @@ def test_every_source_site_saturation_is_exact_not_just_a_bound() -> None:
                     assert model.saturation_value(stage.nodes, root, raw, fields.__getitem__, cache) == min(values[i.value], 47)
 
 
+@pytest.mark.slow
 def test_full_72_bytes_all_161_boundaries_and_point_changing_errors(catalogue: model.Catalogue) -> None:
     public = tuple(int.from_bytes(TRANSFORM7_DATA[o : o + 20], "little") for o in (0xD8, 0xEC))
     changing = ((1 << 128) + 48, 917984300236617229462155822449362250189314875415)
@@ -154,6 +159,7 @@ def test_full_72_bytes_all_161_boundaries_and_point_changing_errors(catalogue: m
         assert sum(len(r.defects) for r in new_rows) == (3 if (x, y) == public else 30)
 
 
+@pytest.mark.slow
 def test_saturation_model_preserves_bundled_key_caller_counterexample(catalogue: model.Catalogue) -> None:
     case = seed_boundary.cases()[4]
     original_reference = reference_module.model

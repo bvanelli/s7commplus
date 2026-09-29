@@ -53,6 +53,7 @@ def test_zero_square_retains_p_lift_and_negative_control_loses_it() -> None:
         assert compiler.evaluate(plan, {0: P}, square_shortcuts=True).outputs == {1: 0}
 
 
+@pytest.mark.slow
 @pytest.mark.parametrize("cap", [2, 8, 64, 256])
 def test_all_source_branches_preserve_outputs_and_carry_trace(cap: int) -> None:
     rng = random.Random(747160)
@@ -68,6 +69,7 @@ def test_all_source_branches_preserve_outputs_and_carry_trace(cap: int) -> None:
                 assert result.defects == events
 
 
+@pytest.mark.slow
 @pytest.mark.parametrize("cap", [2, 8, 64, 256])
 def test_complete_output_and_every_boundary_are_preserved(cap: int) -> None:
     x, y = (int.from_bytes(TRANSFORM7_DATA[o : o + 20], "little") for o in (0xD8, 0xEC))
@@ -84,6 +86,7 @@ def test_complete_output_and_every_boundary_are_preserved(cap: int) -> None:
     assert tuple(r.outputs for r in new) == tuple(r.outputs for r in old)
 
 
+@pytest.mark.slow
 def test_actual_square_rule_ast_has_four_unsat_source_obligations() -> None:
     pytest.importorskip("z3")
     from tools.prove_scalar_square_shortcuts import prove
@@ -96,6 +99,7 @@ def test_actual_square_rule_ast_has_four_unsat_source_obligations() -> None:
     assert not wrong["full_proof"] and any(row["result"] == "sat" for row in wrong["obligations"])
 
 
+@pytest.mark.slow
 def test_unknown_and_invalid_timeout_are_not_proofs() -> None:
     z3 = pytest.importorskip("z3")
     from tools.prove_scalar_square_shortcuts import prove

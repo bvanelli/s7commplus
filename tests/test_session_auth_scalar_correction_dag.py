@@ -129,6 +129,7 @@ def test_excessive_exponents_fail_closed() -> None:
         dag.build({((0, 1 << 4096),): 1}, {0: 47})
 
 
+@pytest.mark.slow
 def test_all_scalar_branches_match_source_under_cofactor_evaluation() -> None:
     rng = random.Random(6131)
     for stage in recover():
@@ -141,6 +142,7 @@ def test_all_scalar_branches_match_source_under_cofactor_evaluation() -> None:
                 assert result.outputs == expected and all(event in events for event in result.defects)
 
 
+@pytest.mark.slow
 @pytest.mark.parametrize("cap", [2, 8, 64, 256])
 def test_full_boundaries_and_bytes_match_before_factoring(cap: int) -> None:
     x, y = (int.from_bytes(TRANSFORM7_DATA[o : o + 20], "little") for o in (0xD8, 0xEC))

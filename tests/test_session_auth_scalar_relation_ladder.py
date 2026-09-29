@@ -14,6 +14,7 @@ from tools.trace_scalar_defects import evaluate_stage
 P = model.P
 
 
+@pytest.mark.slow
 def test_all_1268_source_coefficient_identities_select_two_variants() -> None:
     report = model.report()
     assert report["unreduced_coordinate_identities"] == 1268

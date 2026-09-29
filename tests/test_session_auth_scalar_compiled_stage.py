@@ -118,6 +118,7 @@ def test_compiler_interval_metadata_is_not_trusted_by_data_verifier() -> None:
         checker.verify(stage, source)
 
 
+@pytest.mark.slow
 @pytest.mark.parametrize("cap", [2, 8, 64, 256])
 def test_all_321_equation_data_sets_have_independent_translation_validation(cap: int) -> None:
     verifications = []
@@ -130,6 +131,7 @@ def test_all_321_equation_data_sets_have_independent_translation_validation(cap:
     assert sum(v.lift_contracts for v in verifications) == 58486
 
 
+@pytest.mark.slow
 @pytest.mark.parametrize("cap", [2, 8, 64, 256])
 def test_all_320_source_branches_have_exact_post_defect_outputs_and_events(cap: int) -> None:
     rng = random.Random(124736)
@@ -145,6 +147,7 @@ def test_all_320_source_branches_have_exact_post_defect_outputs_and_events(cap: 
                 assert actual.outputs == expected and actual.defects == events
 
 
+@pytest.mark.slow
 def test_cap_two_tail_needs_no_recursive_anchor_or_tag_history() -> None:
     source = tail_program()
     stage = model.compile_stage(source, 2, exclusive_corrections=True)
@@ -168,6 +171,7 @@ def test_all_supported_field_domain_modes_have_identical_stage_semantics(domains
     assert actual.outputs == expected and actual.defects == events
 
 
+@pytest.mark.slow
 def test_full_output_bytes_and_boundaries_after_source_free_compilation() -> None:
     catalogue = model.compile_catalogue(exclusive_corrections=True, verify_data=True)
     assert len(catalogue.verifications) == 321

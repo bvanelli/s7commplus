@@ -79,6 +79,7 @@ def test_short_circuit_never_queries_an_unneeded_field() -> None:
     assert backend.evaluate(root.index, field, (), {}) is False
 
 
+@pytest.mark.slow
 def test_all_nine_frontend_obligations_prove_and_detect_bad_folding() -> None:
     pytest.importorskip("z3")
     from tools.prove_scalar_predicate_dag import prove
@@ -99,6 +100,7 @@ def test_integer_complements_share_category_comparisons() -> None:
     assert backend.Not(a >= 7).index == (a <= 6).index
 
 
+@pytest.mark.slow
 def test_frontend_unknown_or_invalid_timeout_fails_closed() -> None:
     z3 = pytest.importorskip("z3")
     from tools.prove_scalar_predicate_dag import prove

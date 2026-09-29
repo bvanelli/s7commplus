@@ -60,6 +60,7 @@ def test_random_polynomials_are_verified_as_formal_coefficients_not_samples() ->
         assert model.evaluate(circuit, root, values.__getitem__, cache) == numerical(terms, values)
 
 
+@pytest.mark.slow
 @pytest.mark.parametrize("cap", [2, 256])
 def test_all_321_stage_field_pools_have_independently_verified_circuits(cap: int) -> None:
     builder = model.Builder()

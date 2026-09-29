@@ -31,6 +31,7 @@ def primitive_program(operation: str) -> Program:
     return Program(0, 1, 3, 0, (instruction,), ((2, Operand("value", 0)),))
 
 
+@pytest.mark.slow
 def test_all_320_source_branches_with_boundary_and_random_layouts() -> None:
     rng = random.Random(32047)
     p = arithmetic.P
@@ -88,6 +89,7 @@ def test_predicted_full_output_matches_exact_reference_and_all_boundaries(n: int
         assert rows[159].outputs[5] == arithmetic.P
 
 
+@pytest.mark.slow
 def test_arbitrary_synthetic_sources_include_setup_carry_and_small_tags() -> None:
     rng = random.Random(7147)
     p = arithmetic.P
@@ -125,6 +127,7 @@ def test_on_curve_carry_defects_change_the_final_point_not_only_its_scale() -> N
     assert output == bytes(destination)
 
 
+@pytest.mark.slow
 def test_full_output_matches_original_for_all_three_bundled_public_sources() -> None:
     from tools.trace_transform7_tail import cases
 
@@ -179,6 +182,7 @@ def test_false_guard_and_canonical_only_tag_have_observable_negative_controls() 
         assert exact.multiply(*state.values()) == arithmetic.P + 1
 
 
+@pytest.mark.slow
 def test_source_ast_guard_and_tag_proofs_with_translation_controls() -> None:
     z3 = pytest.importorskip("z3")
     from tools.prove_scalar_predicate_guards import WIDTH, compile_guard, prove
@@ -193,6 +197,7 @@ def test_source_ast_guard_and_tag_proofs_with_translation_controls() -> None:
     assert len(report["obligations"]) == 11
 
 
+@pytest.mark.slow
 def test_generalized_ladder_has_complete_unreduced_source_identities() -> None:
     from tools.recover_scalar_encodings import recover_all
 
@@ -259,6 +264,7 @@ def poisoned_guard(residue):
     return residue >= 0
 
 
+@pytest.mark.slow
 def test_guard_ast_compiler_rejects_ignored_statements() -> None:
     z3 = pytest.importorskip("z3")
     from tools.prove_scalar_predicate_guards import WIDTH, compile_guard

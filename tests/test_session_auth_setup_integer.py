@@ -180,6 +180,7 @@ def test_individual_bit_record_is_complete_current_and_independently_replayable(
     assert sum(row["monolith"] == 5 for row in report["stages"]) == 336
 
 
+@pytest.mark.slow
 def test_source_topology_and_saved_compositional_record_regenerate_exactly() -> None:
     pytest.importorskip("z3")
     expected = json.loads((FOLDER / "transform7_setup_integer_proof.json").read_text())
@@ -187,6 +188,7 @@ def test_source_topology_and_saved_compositional_record_regenerate_exactly() -> 
     assert expected["full_setup_model_established"] and expected["final_carry_correction_retained"]
 
 
+@pytest.mark.slow
 def test_symbolic_recipe_detects_wrong_inputs_plain_expression_and_merge_pair() -> None:
     pytest.importorskip("z3")
     original = integer._compose
@@ -235,6 +237,7 @@ def test_individual_bit_dependency_rejects_false_or_mismatched_records(mutation:
             carry_save_dependency()
 
 
+@pytest.mark.slow
 def test_all_1012_individual_source_equations_replay_with_optional_solver() -> None:
     pytest.importorskip("z3")
     assert prove_bits(timeout_ms=10000)["full_proof"]
@@ -274,6 +277,7 @@ def test_invalid_primitive_inputs_and_source_references_fail_closed() -> None:
         source_reference((bits[1], *bits[1:]))
 
 
+@pytest.mark.slow
 @pytest.mark.parametrize("mutation", ("duplicate", "range", "unproved"))
 def test_setup_dependency_rejects_unproved_or_unsound_accounting(mutation: str) -> None:
     pytest.importorskip("z3")

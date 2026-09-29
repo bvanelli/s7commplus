@@ -70,6 +70,7 @@ def test_unreachable_defect_outputs_are_rejected_instead_of_certified() -> None:
         categories.transition("add", 1, 7, 1)
 
 
+@pytest.mark.slow
 @pytest.mark.parametrize("cap", [2, 8, 64, 256])
 def test_all_320_source_branches_use_the_category_rules_exactly(cap: int) -> None:
     rng = random.Random(76320128)
@@ -85,6 +86,7 @@ def test_all_320_source_branches_use_the_category_rules_exactly(cap: int) -> Non
                 assert actual.defects == events
 
 
+@pytest.mark.slow
 @pytest.mark.parametrize("cap", [2, 8, 64, 256])
 def test_complete_reference_bytes_and_all_boundaries_with_categories(cap: int) -> None:
     x, y = (int.from_bytes(TRANSFORM7_DATA[o : o + 20], "little") for o in (0xD8, 0xEC))
@@ -96,6 +98,7 @@ def test_complete_reference_bytes_and_all_boundaries_with_categories(cap: int) -
     assert tuple(row.outputs for row in new) == tuple(row.outputs for row in old)
 
 
+@pytest.mark.slow
 def test_category_cofactors_preserve_the_on_curve_point_changing_control() -> None:
     x, y = (1 << 128) + 48, 917984300236617229462155822449362250189314875415
     kwargs = {"boolean_corrections": True, "demand_guards": True, "cofactor_fields": True}
@@ -107,6 +110,7 @@ def test_category_cofactors_preserve_the_on_curve_point_changing_control() -> No
     assert sum(len(row.defects) for row in new) == 30
 
 
+@pytest.mark.slow
 def test_all_34_actual_category_ast_obligations_and_negative_control() -> None:
     pytest.importorskip("z3")
     from tools.prove_scalar_lift_categories import prove
@@ -119,6 +123,7 @@ def test_all_34_actual_category_ast_obligations_and_negative_control() -> None:
     assert not wrong["full_proof"] and any(row["result"] == "sat" for row in wrong["obligations"])
 
 
+@pytest.mark.slow
 def test_category_unknown_or_nonpositive_timeout_is_not_proof() -> None:
     z3 = pytest.importorskip("z3")
     from tools.prove_scalar_lift_categories import prove

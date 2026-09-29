@@ -50,6 +50,7 @@ def test_constant_cut_queries_a_lift_only_below_the_threshold() -> None:
         assert not rules.lift(cutoff - 1, cutoff, lambda: False)
 
 
+@pytest.mark.slow
 def test_all_actual_ast_obligations_and_mutated_cutoff() -> None:
     pytest.importorskip("z3")
     from tools.prove_scalar_constant_lifts import prove
@@ -63,6 +64,7 @@ def test_all_actual_ast_obligations_and_mutated_cutoff() -> None:
     assert any(row["result"] == "sat" for row in wrong["obligations"])
 
 
+@pytest.mark.slow
 def test_unknown_and_bad_timeout_cannot_be_proof() -> None:
     z3 = pytest.importorskip("z3")
     from tools.prove_scalar_constant_lifts import prove

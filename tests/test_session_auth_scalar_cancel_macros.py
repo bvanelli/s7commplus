@@ -15,6 +15,7 @@ from tools.scalar_stage_plan import constant
 from tools.transform7_reference import tail_program
 
 
+@pytest.mark.slow
 def test_composed_source_and_actual_predicate_ast_proofs() -> None:
     pytest.importorskip("z3")
     result = prove()

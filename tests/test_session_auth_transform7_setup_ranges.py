@@ -74,6 +74,7 @@ def test_raw_output_bit_compiler_matches_every_generated_word(number: int) -> No
         assert modeled == struct.unpack(f"<{output_count}I", output)
 
 
+@pytest.mark.slow
 def test_monolith5_independent_fixed_width_source_compiler() -> None:
     pytest.importorskip("z3")
     z3, source, output = symbolic_source(5)
@@ -128,11 +129,13 @@ def test_kernel_dependencies_require_complete_pinned_source_theorems(number: int
             kernel_dependency(number)
 
 
+@pytest.mark.slow
 def test_lazy_setup_replays_actual_hidden_high_bits() -> None:
     pytest.importorskip("z3")
     verify_translation(1)
 
 
+@pytest.mark.slow
 def test_lazy_setup_rejects_changed_initialization() -> None:
     pytest.importorskip("z3")
     source = inspect.getsource(transform7.execute)
@@ -143,6 +146,7 @@ def test_lazy_setup_rejects_changed_initialization() -> None:
             SetupDAG()
 
 
+@pytest.mark.slow
 @pytest.mark.parametrize("mutation", ("context_reset", "strided_pointer"))
 def test_setup_specialization_rejects_unmodeled_state_changes(mutation: str) -> None:
     pytest.importorskip("z3")
@@ -175,6 +179,7 @@ def test_proof_budget_and_raw_output_indices_fail_closed() -> None:
             output_bit_diagram(word, bit, None, number)
 
 
+@pytest.mark.slow
 def test_lazy_ancestry_keeps_unrelated_carry_networks_out_of_queries() -> None:
     pytest.importorskip("z3")
     dag = SetupDAG()
@@ -185,6 +190,7 @@ def test_lazy_ancestry_keeps_unrelated_carry_networks_out_of_queries() -> None:
     assert dag.ancestors(22) == {21}
 
 
+@pytest.mark.slow
 def test_slot94_integer_identity_has_independent_source_queries() -> None:
     pytest.importorskip("z3")
     dag = SetupDAG()

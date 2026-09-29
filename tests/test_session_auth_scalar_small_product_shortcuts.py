@@ -43,6 +43,7 @@ def test_large_factor_skips_both_callbacks_and_small_factors_keep_lazy_or() -> N
     assert not rules.small_nonzero_product_lift(1, 2, lambda: False, lambda: False)
 
 
+@pytest.mark.slow
 @pytest.mark.parametrize("cap", [2, 8, 64, 256])
 def test_every_source_branch_preserves_outputs_and_full_carry_events(cap: int) -> None:
     rng = random.Random(4746320)
@@ -58,6 +59,7 @@ def test_every_source_branch_preserves_outputs_and_full_carry_events(cap: int) -
                 assert actual.defects == events
 
 
+@pytest.mark.slow
 @pytest.mark.parametrize("point_changing", [False, True])
 def test_complete_bytes_and_all_boundaries_preserve_both_lift_cuts(point_changing: bool) -> None:
     if point_changing:
@@ -74,6 +76,7 @@ def test_complete_bytes_and_all_boundaries_preserve_both_lift_cuts(point_changin
     assert tuple(r.defects for r in revised) == tuple(r.defects for r in baseline)
 
 
+@pytest.mark.slow
 def test_eight_actual_ast_obligations_and_missing_lift_mutation() -> None:
     pytest.importorskip("z3")
     from tools.prove_scalar_small_product_shortcuts import prove
@@ -86,6 +89,7 @@ def test_eight_actual_ast_obligations_and_missing_lift_mutation() -> None:
     assert not wrong["full_proof"] and any(row["result"] == "sat" for row in wrong["obligations"])
 
 
+@pytest.mark.slow
 def test_solver_unknown_and_invalid_timeout_fail_closed() -> None:
     z3 = pytest.importorskip("z3")
     from tools.prove_scalar_small_product_shortcuts import prove

@@ -114,3 +114,23 @@ final complete implementation at the byte interface rather than selecting a
 representation on formula count or source size alone: this benchmark's
 Monolith5 result shows a slower interpreter can still compile into a faster
 runtime implementation.
+
+## Transform7 and whole-authentication timing
+
+`family0/transform7_compact.py` runs Transform7's setup as the proven integer
+arithmetic and interprets the Transform12 tape over plain integers
+(`family0/transform12_compact.py`) instead of packed 24-byte lanes. The
+original `transform7.py` is retained, unexecuted, as the reference. Median
+timings on the machine above (CPython 3.13, macOS ARM64):
+
+| Measurement | Before | After |
+| --- | ---: | ---: |
+| `Transform7.execute` (one call, 12 random cases byte-identical) | 193 ms | 9.8 ms |
+| `legacy_auth.authenticate_real_plc` (S7-1500 key) | 446 ms | 75 ms |
+
+"Before" is the `master` checkout without any compact migration. Unlike the
+single-transform microbenchmarks above, the second row *is* a whole-authentication
+measurement, but still excludes network and PLC time. After this change,
+roughly 57% of the remaining authentication time is spent in the generated
+Monolith9 (the `nine` package, called 12 times per authentication), which is
+the next candidate for recovery.

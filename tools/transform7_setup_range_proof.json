@@ -3,11 +3,11 @@
   "source_sha256": {
     "transform7.py": "c9331525e8b0fe3a9e8d0edaad0c933a231907a8019054d52101afca1cfab28a",
     "big_int_operations.py": "e3d52aaac624a6b4158dde9c2ab2b6e7aadbfc036595c468f2ae0ff661024ab5",
+    "monolith_wrappers.py": "02205c2749f2ebe522b228fed6d8136ed74bf46902f2405339748cc0981fdf31",
     "monolith3.py": "abce73deb408a12e2a3b86f6a83a37ebd9be1cb31cd8fe8b20366fffe0e6c3ad",
     "monolith4.py": "fbf5ff95a92e887cf4d73b129826a7405bbc779fa1bef0f4eafd5e44bfec267a",
     "monolith5.py": "a302ea9a3fa83684d6bace727af36471fe58ec3ca33f4ae41ae52398bc0fd2da",
-    "monolith6.py": "f68e729e3d4e51b23243b741a9db1203072c8598f35b794866eeac5bfc81f154",
-    "monolith_wrappers.py": "4afa64f5d5183ca7fbc31f770dba7f3f6562da13162f61fd798fec8c45d9b1c8"
+    "monolith6.py": "f68e729e3d4e51b23243b741a9db1203072c8598f35b794866eeac5bfc81f154"
   },
   "data_sha256": "cebe9d5f0c1cb8238a6d7d4ef11559157554991eb2e49f22feec1f88ae129ec4",
   "z3_version": "4.16.0",
@@ -60,14 +60,14 @@
       "stage": "call_0_plain_below_2_162",
       "result": "unsat",
       "proved": true,
-      "elapsed_seconds": 0.001572,
+      "elapsed_seconds": 0.001803,
       "method": "generated-source SAT query"
     },
     {
       "stage": "call_0_top_payload_bit_zero",
       "result": "unsat",
       "proved": true,
-      "elapsed_seconds": 0.000615,
+      "elapsed_seconds": 0.000648,
       "method": "generated-source SAT query",
       "maximum_payload": 970426534199370720937031119634798939104288093260,
       "zero_wrap_derived": true
@@ -76,14 +76,14 @@
       "stage": "call_1_plain_below_2_162",
       "result": "unsat",
       "proved": true,
-      "elapsed_seconds": 0.000496,
+      "elapsed_seconds": 0.000502,
       "method": "generated-source SAT query"
     },
     {
       "stage": "call_1_top_payload_bit_zero",
       "result": "unsat",
       "proved": true,
-      "elapsed_seconds": 0.000613,
+      "elapsed_seconds": 0.000616,
       "method": "generated-source SAT query",
       "maximum_payload": 970426534199370720937031119634798939104288093260,
       "zero_wrap_derived": true
@@ -92,14 +92,14 @@
       "stage": "call_2_plain_below_2_162",
       "result": "unsat",
       "proved": true,
-      "elapsed_seconds": 0.00083,
+      "elapsed_seconds": 0.00081,
       "method": "generated-source SAT query"
     },
     {
       "stage": "call_2_top_payload_bit_zero",
       "result": "unsat",
       "proved": true,
-      "elapsed_seconds": 0.003461,
+      "elapsed_seconds": 0.003291,
       "method": "generated-source SAT query",
       "maximum_payload": 1215964085765136819570357976175540979380110318106,
       "zero_wrap_derived": true
@@ -108,14 +108,14 @@
       "stage": "call_3_plain_below_2_162",
       "result": "unsat",
       "proved": true,
-      "elapsed_seconds": 0.00313,
+      "elapsed_seconds": 0.003078,
       "method": "generated-source SAT query"
     },
     {
       "stage": "call_3_top_payload_bit_zero",
       "result": "unsat",
       "proved": true,
-      "elapsed_seconds": 0.057266,
+      "elapsed_seconds": 0.054577,
       "method": "generated-source SAT query",
       "maximum_payload": 1338732861548019868887021404445911999518021430529,
       "zero_wrap_derived": true
@@ -124,7 +124,7 @@
       "stage": "call_4_decoded_addition_bound",
       "result": "derived",
       "proved": true,
-      "elapsed_seconds": 0.000291,
+      "elapsed_seconds": 0.000275,
       "method": "integer bound via complete Monolith4 decoded-addition theorem",
       "maximum_payload": 1338732861548019868887021404445911999518021430530,
       "zero_wrap_derived": true
@@ -133,7 +133,7 @@
       "stage": "call_5_packed_streams_below_2_167",
       "result": "unsat",
       "proved": true,
-      "elapsed_seconds": 1.683864,
+      "elapsed_seconds": 1.55259,
       "method": "generated-source SAT query",
       "maximum_payload": 3408216541761491196875885225249965508864009132525,
       "zero_wrap_derived": true
@@ -142,14 +142,14 @@
       "stage": "call_6_plain_below_2_162",
       "result": "unsat",
       "proved": true,
-      "elapsed_seconds": 0.036726,
+      "elapsed_seconds": 0.035043,
       "method": "generated-source SAT query"
     },
     {
       "stage": "call_6_top_payload_bit_zero",
       "result": "unsat",
       "proved": true,
-      "elapsed_seconds": 0.239212,
+      "elapsed_seconds": 0.216905,
       "method": "generated-source SAT query",
       "maximum_payload": 1400117249439461393545353118581097509586976986741,
       "zero_wrap_derived": true
@@ -158,7 +158,7 @@
       "stage": "call_7_decoded_addition_bound",
       "result": "derived",
       "proved": true,
-      "elapsed_seconds": 0.000236,
+      "elapsed_seconds": 0.00023,
       "method": "integer bound via complete Monolith4 decoded-addition theorem",
       "maximum_payload": 479351431067838523670377406553314858552643643569,
       "zero_wrap_derived": true
@@ -167,7 +167,7 @@
       "stage": "call_8_top_payload_bit_zero",
       "result": "unsat",
       "proved": true,
-      "elapsed_seconds": 0.023774,
+      "elapsed_seconds": 0.019694,
       "method": "generated-source SAT query",
       "maximum_payload": 1090264391966330351854625471273127653742449004147,
       "zero_wrap_derived": true
@@ -176,7 +176,7 @@
       "stage": "call_9_decoded_addition_bound",
       "result": "derived",
       "proved": true,
-      "elapsed_seconds": 0.000287,
+      "elapsed_seconds": 0.000304,
       "method": "integer bound via complete Monolith4 decoded-addition theorem",
       "maximum_payload": 1400117249439461393545353118581097509586976986742,
       "zero_wrap_derived": true
@@ -185,7 +185,7 @@
       "stage": "call_10_top_payload_bit_zero",
       "result": "unknown",
       "proved": false,
-      "elapsed_seconds": 31.903716,
+      "elapsed_seconds": 30.052412,
       "method": "generated-source SAT query",
       "reason": "timeout"
     },
@@ -193,7 +193,7 @@
       "stage": "call_11_decoded_addition_bound",
       "result": "derived",
       "proved": true,
-      "elapsed_seconds": 0.000289,
+      "elapsed_seconds": 0.000276,
       "method": "integer bound via complete Monolith4 decoded-addition theorem",
       "maximum_payload": 970426534199370720937031119634798939104288093261,
       "zero_wrap_derived": true
@@ -202,7 +202,7 @@
       "stage": "call_12_top_payload_bit_zero",
       "result": "unsat",
       "proved": true,
-      "elapsed_seconds": 5.840674,
+      "elapsed_seconds": 4.615175,
       "method": "generated-source SAT query",
       "maximum_payload": 1458570719314979499804615756084240714156182341416,
       "zero_wrap_derived": true
@@ -211,7 +211,7 @@
       "stage": "call_13_decoded_addition_bound",
       "result": "derived",
       "proved": true,
-      "elapsed_seconds": 0.000293,
+      "elapsed_seconds": 0.000282,
       "method": "integer bound via complete Monolith4 decoded-addition theorem",
       "maximum_payload": 1458570719314979499804615756084240714156182341417,
       "zero_wrap_derived": true
@@ -220,7 +220,7 @@
       "stage": "call_14_top_payload_bit_zero",
       "result": "unknown",
       "proved": false,
-      "elapsed_seconds": 30.105036,
+      "elapsed_seconds": 30.104206,
       "method": "generated-source SAT query",
       "reason": "timeout"
     },
@@ -264,14 +264,14 @@
       "stage": "call_21_plain_below_2_162",
       "result": "unsat",
       "proved": true,
-      "elapsed_seconds": 0.092904,
+      "elapsed_seconds": 0.066297,
       "method": "generated-source SAT query"
     },
     {
       "stage": "call_21_top_payload_bit_zero",
       "result": "unsat",
       "proved": true,
-      "elapsed_seconds": 0.075649,
+      "elapsed_seconds": 0.050751,
       "method": "generated-source SAT query",
       "maximum_payload": 1826877046663628647754606040895353774569915678708,
       "zero_wrap_derived": true
@@ -280,7 +280,7 @@
       "stage": "call_22_packed_streams_below_2_167",
       "result": "unsat",
       "proved": true,
-      "elapsed_seconds": 0.079923,
+      "elapsed_seconds": 0.051117,
       "method": "generated-source SAT query",
       "maximum_payload": 2557627865329080106856448457253495284397881950174,
       "zero_wrap_derived": true

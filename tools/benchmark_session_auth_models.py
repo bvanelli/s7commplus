@@ -75,6 +75,13 @@ def implementations() -> list[Implementation]:
         [
             Implementation("monolith5_lut", "tools.monolith5_model", 5, 54, tuple(range(12))),
             Implementation("monolith5_gates", "tools.monolith5_gate_model", 5, 54, tuple(range(12))),
+            Implementation(
+                "monolith5_compiled",
+                "s7commplus.session_auth.family0.monolith5_compact",
+                5,
+                54,
+                tuple(range(12)),
+            ),
             Implementation("monolith7_middle", "tools.monolith7_middle_model", 7, 24, (3, 4, 5)),
             Implementation("monolith7_tail", "tools.monolith7_tail_model", 7, 24, (15, 16, 17)),
             Implementation("monolith7_full", "tools.monolith7_full_model", 7, 24, tuple(range(36))),

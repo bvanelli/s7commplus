@@ -45,54 +45,72 @@ before relying on small differences.
 The measured run used CPython 3.13.14 on macOS 26.7 ARM64,
 nine samples, twenty iterations, eight deterministic random sources, two warmup
 passes, and three fresh-process imports. These are microbenchmarks of individual
-transforms, not connection or whole-authentication measurements. Other research
-processes were active on the same machine; the Monolith5 generated maximum was
-548.44 µs versus its 240.33 µs median. The broad differences below are useful
-directional evidence, but rerun on an idle machine before a runtime migration.
+transforms, not connection or whole-authentication measurements. Rerun on an
+idle machine and treat small differences with caution before relying on them.
 
 | Implementation | Output words | Median µs | MAD µs | Source and data bytes | Cold import ms |
 | --- | --- | ---: | ---: | ---: | ---: |
-| Monolith5 generated | all 12 | 240.33 | 10.08 | 154,417 | 59.01 |
-| Monolith5 LUT model | all 12 | 592.57 | 1.49 | 14,956 | 2.13 |
-| Monolith5 named gates | all 12 | 541.24 | 3.02 | 17,810 | 2.16 |
-| Monolith7 generated | all 36 | 163.98 | 1.00 | 101,505 | 30.24 |
-| Monolith7 middle gates | 3–5 | 214.97 | 1.15 | 15,645 | 2.36 |
-| Monolith7 tail LUTs | 15–17 | 44.43 | 0.32 | 13,584 | 2.05 |
-| Monolith7 full BDD model | all 36 | 956.49 | 5.87 | 910,657 | 8.75 |
-| Monolith11 generated | all 5 | 83.91 | 0.41 | 51,078 | 30.08 |
-| Monolith11 formula | all 5 | 3.83 | 0.06 | 1,771 | 0.18 |
+| Monolith5 generated | all 12 | 228.42 | 4.89 | 154,417 | 32.11 |
+| Monolith5 LUT model | all 12 | 559.73 | 0.53 | 14,956 | 1.80 |
+| Monolith5 named gates | all 12 | 509.29 | 0.87 | 17,810 | 1.83 |
+| Monolith5 compiled | all 12 | 103.36 | 0.58 | 94,288 | 28.82 |
+| Monolith7 generated | all 36 | 148.68 | 1.58 | 101,505 | 25.54 |
+| Monolith7 middle gates | 3–5 | 206.28 | 0.64 | 15,645 | 2.28 |
+| Monolith7 tail LUTs | 15–17 | 43.44 | 0.50 | 13,584 | 2.00 |
+| Monolith7 full BDD model | all 36 | 882.45 | 15.14 | 910,657 | 8.35 |
+| Monolith11 generated | all 5 | 79.80 | 0.68 | 51,078 | 25.34 |
+| Monolith11 formula | all 5 | 3.39 | 0.16 | 767 | 28.26 |
 
-The Monolith11 formula is about 21.9 times faster in this run and its source
-is about 29 times smaller. It is the strongest candidate for a separately
-validated runtime migration. The Monolith5 LUT interpreter is about 2.5 times
-slower despite its smaller artifact. Named gates improve on its latency by about
-9%, but still take about 2.3 times as long as the generated implementation;
-readable recovery alone does not imply
-runtime improvement. The Monolith7 middle evaluator takes longer for three
-words than the generated implementation takes for all 36, so interpreting its
-Boolean cores is currently a readability tool rather than a speed optimization.
-The complete Monolith7 BDD evaluator is about 5.8 times slower and its source/data
-artifact is about nine times larger than generated code. Exact coverage is useful
-for reverse engineering and verification, but this representation is not a
-compact runtime replacement.
+(Reproduce with `python -m tools.benchmark_session_auth_models --samples 9
+--iterations 20 --source-count 8`. The Monolith11 formula's cold-import cost
+now reflects that `tools/monolith11_model.py` re-exports the runtime
+`family0/monolith11_compact.py`, which imports the `s7commplus` package.)
+
+The Monolith11 formula is about 23.5 times faster than generated and its
+source is about 67 times smaller; it is migrated to runtime
+(`family0/monolith11_compact.py`). The Monolith5 LUT and named-gate
+interpreters are each about 2.2-2.5 times *slower* than generated despite
+their much smaller artifacts — per-position interpretation overhead (a
+runtime loop, dict cache lookups, subset enumeration), not the underlying
+arithmetic, dominates their cost. Compiling the same named-gate formula into
+flat, straight-line Python (`tools/compile_monolith5.py`, "Monolith5
+compiled" above) removes that overhead: it is about 2.2 times *faster* than
+generated and about 1.6 times smaller, and is now also migrated to runtime
+(`family0/monolith5_compact.py`). This confirms the prior recommendation
+below — generate word-level operations before judging a representation by
+formula count or source size alone. The Monolith7 middle evaluator takes
+longer for three words than the generated implementation takes for all 36,
+so interpreting its Boolean cores is currently a readability tool rather
+than a speed optimization. The complete Monolith7 BDD evaluator is about 5.9
+times slower and its source/data artifact is about nine times larger than
+generated code; unlike Monolith5, there is no full-coverage factored form to
+compile it from — only 6 of its 36 output words have one. Exact coverage is
+useful for reverse engineering and verification, but this representation is
+not a compact runtime replacement.
 
 ## Runtime recommendation
 
-Retain the recovered models as independently checked analysis references in this
-change, except Monolith11: it has been migrated to runtime
-(`family0/monolith11_compact.py`), validated against the complete Family-0
-authentication path, retained known-answer vectors, and byte-for-byte
-differential checks against the retained generated implementation. Its
-roughly 80 µs local saving per call is not evidence of a corresponding
-connection-speed improvement: transform call counts and network or hardware
-costs determine the application effect. The size/clarity win — replacing
-1,091 lines of generated permutation-cipher code with ~75 lines of exact
-closed-form arithmetic — is the primary motivation, consistent with issue #1.
+Retain the recovered models as independently checked analysis references in
+this change, except Monolith11 and Monolith5: both are migrated to runtime
+(`family0/monolith11_compact.py`, `family0/monolith5_compact.py`), validated
+against the complete Family-0 authentication path, retained known-answer
+vectors, and byte-for-byte differential checks against their retained
+generated implementations. Their local per-call savings (roughly 80 µs for
+Monolith11, roughly 125 µs for Monolith5) are not evidence of a
+corresponding connection-speed improvement: transform call counts and
+network or hardware costs determine the application effect — Monolith5 also
+runs up to four times per `Transform7.execute()` call, so its savings
+compound somewhat more than Monolith11's single call site. The size/clarity
+win — retiring two generated permutation-cipher modules in favor of proven,
+regenerable implementations — is the primary motivation, consistent with
+issue #1.
 
-For Monolith5 and Monolith7, use the recovered named gates and Boolean functions
-to generate word-level operations before considering runtime replacement.
-Per-bit interpretation, source-bit extraction, and output packing dominate these
-analysis evaluators. A larger Boolean representation can improve coverage and
-understanding while increasing load cost and execution time. Measure the final
-complete implementation at the byte interface rather than selecting it on
-formula count or source size alone.
+For Monolith7, extending the shared-core factoring approach used for words
+3-5 and 15-17 to the remaining 30 output words — the prerequisite for a
+compilable full-coverage model, the same way Monolith5's named-gate model
+enabled its compilation — is unproven further research, not a scoped
+migration task; there is currently nothing complete to compile. Measure the
+final complete implementation at the byte interface rather than selecting a
+representation on formula count or source size alone: this benchmark's
+Monolith5 result shows a slower interpreter can still compile into a faster
+runtime implementation.

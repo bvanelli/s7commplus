@@ -105,6 +105,7 @@ session_auth/
 │   ├── big_int_operations.py  192-bit arithmetic (add, sub, mul, square)
 │   ├── big_int_transforms.py  BigInt higher-level ops
 │   ├── monolith_wrappers.py  WithCopy adapters for Monolith3-7
+│   ├── monolith5_compact.py  Compiled, proven-equivalent Monolith5 (replaces _generated/monolith5.py)
 │   └── monolith11_compact.py  Proven-equivalent Monolith11 (replaces _generated/monolith11.py)
 ```
 
@@ -113,7 +114,7 @@ session_auth/
 ```
 │   └── _generated/
 │       ├── __init__.py
-│       ├── monolith1.py … monolith11.py   Permutation ciphers (~30K lines; monolith11.py kept for provenance only, see below)
+│       ├── monolith1.py … monolith11.py   Permutation ciphers (~30K lines; monolith5.py and monolith11.py kept for provenance only, see below)
 │       ├── nine/part1.py … part11.py      Monolith9 parts (~50K lines)
 │       ├── ten/part1.py … part3.py        Monolith10 parts (~15K lines)
 │       └── data/
@@ -225,17 +226,19 @@ for byte-exact vectors.
 For Monolith11, a separate exhaustive bitwise analysis recovered a compact,
 exact two-kernel form for all five output words. See
 [`MONOLITH11_ANALYSIS.md`](MONOLITH11_ANALYSIS.md) for the formula, proof
-boundary, and reproduction commands. This is the one migrated case: runtime
+boundary, and reproduction commands. This is a migrated case: runtime
 now calls `family0/monolith11_compact.py`, and the generated file is retained
 for provenance only — see the review boundary and migration record below.
 
 For Monolith5, fixed shifts make the bitwise-only method inapplicable. A
-symbolic ROBDD/ANF recovery yields an exact, compact analysis-only model with
-32 nine-input lane functions and a two-stream combination formula. Every lane
-function further separates into three identical choose/majority span gates
-and one symmetric combine. See
-[`MONOLITH5_ANALYSIS.md`](MONOLITH5_ANALYSIS.md) for the formula, proof boundary,
-and reproduction command. The generated runtime code is unchanged.
+symbolic ROBDD/ANF recovery yields an exact, compact model with 32 nine-input
+lane functions and a two-stream combination formula. Every lane function
+further separates into three identical choose/majority span gates and one
+symmetric combine. See [`MONOLITH5_ANALYSIS.md`](MONOLITH5_ANALYSIS.md) for
+the formula, proof boundary, and reproduction command. This is also migrated:
+`tools/compile_monolith5.py` unrolls the interpreted formula into the flat,
+mechanically generated `family0/monolith5_compact.py`, which runtime now
+calls. The generated file is retained for provenance only.
 
 The same per-bit symbolic approach also recovers an exact decision model for
 all 1,152 Monolith7 output bits, alongside smaller readable models for words
@@ -250,10 +253,14 @@ for exact coverage and the distinction between tape equivalence and arithmetic
 or curve interpretation.
 
 [`MODEL_BENCHMARKS.md`](MODEL_BENCHMARKS.md) compares the recovered evaluators
-with generated code at the byte interface. Monolith11 has been migrated to
-runtime (see above); the current Monolith5 and full Monolith7 analysis
-evaluators are slower than their generated counterparts and remain
-analysis-only.
+with generated code at the byte interface. Monolith11 and Monolith5 have both
+been migrated to runtime (see above); the interpreted Monolith5 evaluator
+itself was slower than generated code, but compiling it into flat,
+straight-line Python (`tools/compile_monolith5.py`) removed the
+interpretation overhead and made it faster and smaller than generated — see
+MODEL_BENCHMARKS.md for the measurements. The full Monolith7 analysis
+evaluator remains slower/larger than generated and analysis-only; no
+complete compact model exists yet for all 36 of its output words.
 
 Family 03 (PLCSIM) is also listed in the public-key store and blob metadata,
 but it needs a separate authentication implementation. The Family-0
@@ -268,8 +275,10 @@ acceptance criteria. Start there before navigating generated programs.
 
 - Human-maintained flow and extension points live outside `_generated/`.
 - `monolith*.py`, `nine/part*.py`, and `ten/part*.py` are generated source,
-  except that `_generated/monolith11.py` is retired at runtime in favor of
-  the human-maintained `family0/monolith11_compact.py` (kept for provenance).
+  except that `_generated/monolith5.py` and `_generated/monolith11.py` are
+  retired at runtime in favor of `family0/monolith5_compact.py` (mechanically
+  compiled from the recovered model — do not hand-edit) and the human-written
+  `family0/monolith11_compact.py`. Both retired files are kept for provenance.
 - `_constants.py` and the four `.bin` files are generated data.
 - Package `__init__.py` files and the binary loaders are human-maintained glue.
 

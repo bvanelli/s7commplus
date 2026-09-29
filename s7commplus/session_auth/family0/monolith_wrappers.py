@@ -5,12 +5,16 @@ The ``with_copy`` variants concatenate multiple input spans into the
 monolith's source buffer, run Execute, then split the destination
 into multiple output spans. These are used by Transform7.
 
-Ported from ``HarpoS7.Family0.Monoliths.Monolith{3..7}.WithCopy``.
+Ported from ``HarpoS7.Family0.Monoliths.Monolith{3..7}.WithCopy``. Monolith5
+runs through the compact, proven-equivalent ``monolith5_compact`` module
+rather than the retired ``_generated.monolith5`` — see that module's
+docstring and MONOLITH5_ANALYSIS.md.
 """
 
 from __future__ import annotations
 
-from ._generated import monolith3, monolith4, monolith5, monolith6, monolith7
+from . import monolith5_compact
+from ._generated import monolith3, monolith4, monolith6, monolith7
 
 ReadableBuffer = bytes | bytearray | memoryview
 WritableBuffer = bytearray | memoryview
@@ -62,7 +66,7 @@ def monolith5_with_copy(
     mono_src[0x90:0xD8] = src3[:0x48]
 
     mono_dst = bytearray(48)
-    monolith5.execute(mono_dst, bytes(mono_src))
+    monolith5_compact.execute(mono_dst, bytes(mono_src))
 
     dst1[:0x18] = mono_dst[:0x18]
     dst2[:0x18] = mono_dst[0x18:0x30]

@@ -1,8 +1,13 @@
 # Monolith5: recovered compact Boolean model
 
-This is an exact compact model of the pinned, generated Family-0 Monolith5,
-not a runtime replacement or a claim about every proprietary DLL version.
-Source and destination are little-endian 32-bit words, numbered from zero.
+This is an exact compact model of the pinned, generated Family-0 Monolith5.
+It is not a claim about every proprietary DLL version, but the "Named gates
+and span structure" formula below *has* been promoted to the runtime
+implementation: `tools/compile_monolith5.py` mechanically unrolls it into
+`family0/monolith5_compact.py`, which `monolith_wrappers.py` now calls
+instead of `_generated/monolith5.py` (kept for provenance only). See
+"Runtime migration" below. Source and destination are little-endian 32-bit
+words, numbered from zero.
 
 Monolith5 consumes 54 source words and produces 12 output words. Its generated
 body is mostly bitwise logic, but unlike Monolith11 it contains fixed shifts
@@ -89,6 +94,31 @@ the generated implementation on structured, single-bit, and random inputs.
 python -m tools.recover_monolith5_gates --formula 0
 python -m tools.recover_monolith5_gates --verify tools/monolith5_gate_model.json
 ```
+
+## Runtime migration
+
+`tools/monolith5_gate_model.py`'s interpreter — looping over the 168 position
+records, caching each unique (chunk, function) lane result in a dict, and
+enumerating subsets for the second stream at runtime — measured about 2.3-2.5x
+*slower* than the generated implementation despite an 8-9x smaller source (see
+MODEL_BENCHMARKS.md's original run). That is Python interpretation overhead,
+not the underlying arithmetic: `tools/compile_monolith5.py` mechanically
+unrolls the same formula (same gate/position records, no new cryptanalysis)
+into straight-line Python — one local variable per unique lane evaluation,
+and one statement per position, with the per-position subset enumeration
+resolved at generation time — producing `family0/monolith5_compact.py`. That
+compiled form measured about 2.2x *faster* than generated and about 1.6x
+smaller, with no runtime JSON loading. `monolith_wrappers.py` now calls it
+instead of `_generated/monolith5.py`.
+
+`family0/monolith5_compact.py` is mechanically generated and must not be
+hand-edited; regenerate it with `python -m tools.compile_monolith5 --write`
+after any change to `monolith5_gate_model.json` or `monolith5_model.json`.
+`tests/test_session_auth_monolith5_compact.py` fails if the checked-in file
+and the generator disagree, and separately proves the compiled byte-level
+`execute(destination, source)` entry point against the upstream fixture and
+200 random vectors compared to the retained generated implementation,
+including that bytes beyond the 12 written words are left untouched.
 
 ## Exact additive span identity
 

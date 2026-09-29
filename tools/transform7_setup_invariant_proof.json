@@ -3,7 +3,7 @@
   "source_sha256": {
     "transform7.py": "c9331525e8b0fe3a9e8d0edaad0c933a231907a8019054d52101afca1cfab28a",
     "big_int_operations.py": "e3d52aaac624a6b4158dde9c2ab2b6e7aadbfc036595c468f2ae0ff661024ab5",
-    "monolith_wrappers.py": "4afa64f5d5183ca7fbc31f770dba7f3f6562da13162f61fd798fec8c45d9b1c8",
+    "monolith_wrappers.py": "02205c2749f2ebe522b228fed6d8136ed74bf46902f2405339748cc0981fdf31",
     "monolith3.py": "abce73deb408a12e2a3b86f6a83a37ebd9be1cb31cd8fe8b20366fffe0e6c3ad",
     "monolith4.py": "fbf5ff95a92e887cf4d73b129826a7405bbc779fa1bef0f4eafd5e44bfec267a",
     "monolith5.py": "a302ea9a3fa83684d6bace727af36471fe58ec3ca33f4ae41ae52398bc0fd2da",

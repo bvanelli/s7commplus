@@ -1,4 +1,4 @@
-"""Transform7 with its 23-call monolith setup replaced by exact integer arithmetic.
+"""Transform7 on plain integers: proven setup arithmetic, then the Transform12 tape.
 
 Byte-for-byte equivalent to ``transform7.execute``, which is kept, unexecuted,
 as the reference the analysis tools instrument; see ARCHITECTURE.md.
@@ -9,7 +9,7 @@ from __future__ import annotations
 import struct
 from typing import NamedTuple
 
-from . import big_int_operations, transform12
+from . import transform12_compact
 from ._generated.data import TRANSFORM7_DATA
 from ._generated.data._constants import TRANSFORM7_COUNTS_INTS, TRANSFORM7_INDEXES_INTS
 from .big_int_transforms import big_int_addition
@@ -66,13 +66,15 @@ def _lanes(value: int) -> bytes:
     return struct.pack("<6I", *(((value >> (28 * lane)) & 0x0FFFFFFF) << 2 for lane in range(6)))
 
 
-def _merge(context: bytearray, slot: int, single: Span, pair: Pair) -> None:
+def _merge(context: list[int], slot: int, single: Span, pair: Pair) -> None:
     """Monolith5's two carry-save streams, merged into a context slot by BigIntAddition."""
     total, carry = _carry_save(single, *pair)
-    big_int_addition(memoryview(context)[slot * 24 :], _lanes(total & _PAYLOAD_MASK), _lanes((carry << 1) & _PAYLOAD_MASK))
+    merged = bytearray(24)
+    big_int_addition(merged, _lanes(total & _PAYLOAD_MASK), _lanes((carry << 1) & _PAYLOAD_MASK))
+    context[slot] = transform12_compact.decode(merged)
 
 
-def _setup(context: bytearray, x: int, y: int, r: int) -> None:
+def _setup(context: list[int], x: int, y: int, r: int) -> None:
     """Write context slots 46, 70, 48 and 94, following the original call order."""
     y, r = y | 4, r | 4
     bundled = (_ZERO, Span(_BUNDLED_PAYLOAD))
@@ -112,7 +114,7 @@ def _monolith4(pair: tuple[ReadableBuffer, ReadableBuffer]) -> bytearray:
 def execute(destination: bytearray, prng1: bytearray, prng2: bytearray, source: bytes) -> None:
     x, y = int.from_bytes(source[:20], "little"), int.from_bytes(source[20:40], "little")
     r = int.from_bytes(prng1[:20], "little")
-    context = bytearray(transform12.CONTEXT_SIZE)
+    context = [0] * transform12_compact.SLOTS
     _setup(context, x, y, r)
 
     # 160 stages select on the scalar prng2 from its top bit down; 89 more on (prng1 | 4) from bit 0.
@@ -120,13 +122,10 @@ def execute(destination: bytearray, prng1: bytearray, prng2: bytearray, source: 
     for stage in range(249):
         bit = (scalar >> (159 - stage)) & 1 if stage < 160 else (tail_bits >> (stage - 160)) & 1
         index = 2 * stage + bit
-        transform12.execute(context, TRANSFORM7_INDEXES_INTS[index], TRANSFORM7_COUNTS_INTS[index])
-
-    for slot in (97, 61, 27):
-        big_int_operations.prepare_finalize(memoryview(context)[slot * 24 :])
+        transform12_compact.execute(context, TRANSFORM7_INDEXES_INTS[index], TRANSFORM7_COUNTS_INTS[index])
 
     def packed(number: int) -> bytes:
-        return bytes(context[number * 24 : (number + 1) * 24])
+        return transform12_compact.encode(context[number])
 
     base = _monolith4(_monolith7(packed(27), _FINAL_SPAN))
     c, d = _monolith7(packed(27), base)

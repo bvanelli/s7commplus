@@ -1,7 +1,9 @@
-"""Independent integer semantics for canonical Transform12 packed operands.
+"""Integer semantics for canonical Transform12 packed operands.
 
 These are compatibility equations, not a replacement field implementation.
-No Prepare/Finalize or runtime arithmetic helpers are used here.
+The four primitives are the runtime ``family0/transform12_compact`` ones,
+re-exported so analysis and runtime cannot drift; no Prepare/Finalize or
+packed BigInt helper is used here.
 """
 
 from __future__ import annotations
@@ -10,6 +12,7 @@ import struct
 from typing import TYPE_CHECKING
 
 from s7commplus.session_auth.family0._generated.data import TRANSFORM12_BIG_INT_DATA
+from s7commplus.session_auth.family0.transform12_compact import add, multiply, subtract
 
 if TYPE_CHECKING:
     from tools.decompile_transform12 import Operand, Program
@@ -37,36 +40,6 @@ def decode(packed: bytes) -> int:
     if any(word & ~0x3FFFFFFC for word in words[:5]) or words[5] & ~0x3FFFFC:
         raise ValueError("operand is not canonical lane packing")
     return sum((word >> 2) << (28 * lane) for lane, word in enumerate(words))
-
-
-def add(a: int, b: int) -> int:
-    """Match the four-word overflow correction, including its lost upper carry."""
-    total = a + b
-    if total < LIMIT:
-        return total
-    low_mask = (1 << 128) - 1
-    corrected = (total & low_mask) + FOLD
-    low = corrected & low_mask
-    if corrected >> 128:
-        low = (low & ~WORD_MASK) | ((low + 2 * FOLD) & WORD_MASK)
-    return (total & MASK & ~low_mask) | low
-
-
-def subtract(a: int, b: int) -> int:
-    """Match negative-result adjustment and 160-bit two's-complement truncation."""
-    difference = a - b
-    return (difference - (FOLD if difference < 0 else 0)) & MASK
-
-
-def multiply(a: int, b: int) -> int:
-    """Match two overflow folds and the optional low-word-only final correction."""
-    product = a * b
-    for _ in range(2):
-        if product >= LIMIT:
-            product = (product & MASK) + (product >> BITS) * FOLD
-    if product >= LIMIT:
-        product = (product & ~WORD_MASK) | ((product + FOLD) & WORD_MASK)
-    return product & MASK
 
 
 def square(a: int) -> int:

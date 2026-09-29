@@ -21,7 +21,7 @@
     "integer_model": "07a5d6ef84244a67f037fe3a6b4a786c9ee6693143819d9e3aaf027318ad0c8a",
     "merge_wrapper": "19b4dfe5f11f175add7626cf5f527fe70e91108cbd4ccf96455fce95004d7eea",
     "span_decoder": "fb0692dd4e45339ac3866547a2df53366d5f606c13503915308fe3083e0c6f18",
-    "shared_integer_model": "a450c74e99068a00768e992a69562ce0b5da80f642a31b5e6475d6a45139d82e"
+    "shared_integer_model": "95f3d808c7a3fb4218f118bef3fd99cd70e83645953ffe721fa92718d95f9458"
   },
   "merge_model_sha256": "ed129fb2f49f89b08fdc57d0a81e2aadc1d67d3e58a683b7a81ac7b6c482becc",
   "method": "individual generated-source bit theorems, inherited reachable premises, symbolic recipe provenance, and source-derived exact prepare/merge equations",

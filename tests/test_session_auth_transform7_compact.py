@@ -9,7 +9,7 @@ from unittest.mock import patch
 import pytest
 
 from s7commplus.session_auth import keys
-from s7commplus.session_auth.family0 import seed_transform, transform7, transform7_compact, transform12
+from s7commplus.session_auth.family0 import seed_transform, transform7, transform7_compact, transform12, transform12_compact
 from s7commplus.session_auth.family0._generated.data import TRANSFORM7_DATA
 from tools import transform12_integer_model as arithmetic
 from tools.recover_monolith4_span_identity import normalized_span
@@ -38,10 +38,10 @@ def _original_setup_context(prng1: bytes, source: bytes) -> bytes:
 
 
 def _compact_setup_context(prng1: bytes, source: bytes) -> bytes:
-    context = bytearray(transform12.CONTEXT_SIZE)
+    context = [0] * transform12_compact.SLOTS
     x, y = (int.from_bytes(source[offset : offset + 20], "little") for offset in (0, 20))
     transform7_compact._setup(context, x, y, int.from_bytes(prng1, "little"))
-    return bytes(context)
+    return b"".join(transform12_compact.encode(value) for value in context)
 
 
 def _setup_cases() -> list[tuple[bytes, bytes]]:

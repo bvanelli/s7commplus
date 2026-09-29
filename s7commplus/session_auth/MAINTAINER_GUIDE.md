@@ -9,8 +9,9 @@ proven-equivalent `family0/monolith11_compact.py` (see `MONOLITH11_ANALYSIS.md`)
 Monolith5 was migrated to the mechanically compiled, proven-equivalent
 `family0/monolith5_compact.py` (see `MONOLITH5_ANALYSIS.md`), and SeedTransform
 now calls `family0/transform7_compact.py`, whose 23-call monolith setup is
-replaced by the proven integer setup model, so Monolith3 and Monolith5 are no
-longer executed at all. The replaced generated sources and the original
+replaced by the proven integer setup model (so Monolith3 and Monolith5 are no
+longer executed at all) and whose Transform12 tape runs on plain integers via
+`family0/transform12_compact.py`. The replaced generated sources and the original
 `family0/transform7.py` are retained for provenance and analysis, not executed.
 
 ## Start at the handwritten boundary

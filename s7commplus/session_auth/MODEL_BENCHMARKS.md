@@ -165,4 +165,44 @@ encoded authentication chain.
 
 The authentication rows are medians of 15 runs in one session. The remaining
 time is dominated by the Transform7 span computation (Monolith1, Monolith2 and
-Monolith4).
+Monolith4), which the next section removes.
+
+## SeedTransform as x-only ECDH
+
+Transform7 followed by the Monolith1 loop and Monolith2 decodes to
+`x(k * Q)` on the curve `y^2 = x^3 - x + B` over `GF(2^160 - 47)`, whose group
+has the prime order `0x100000000000000000000F368CDA5CDB2EBFC69C7`:
+
+- `Q` is the source's first 20 bytes read as a little-endian x-coordinate
+  (the generator in `TRANSFORM7_DATA[0xD8:]`, or the PLC public key);
+- `k = prng2 ^ SCALAR_MASK`, where the mask is the one
+  `tools/recover_scalar_encodings.py` derives from the Transform12 branches;
+- `B` is Transform12's doubling constant `_CONSTANTS[58] mod p`;
+- the source's second 20 bytes and `prng1` only blind the packed
+  representation; Monolith1 re-randomizes it and Monolith2 serializes the
+  decoded value; infinity decodes to 0.
+
+SeedTransform is therefore an ECDH: the blob carries `x(k*G)` and `prng1`,
+and the seed is `pre_seed ^ Transform13(x(k*PK))`. `family0/curve.py`
+computes both with an x-only Montgomery ladder, which also handles the
+catalogue keys whose x-coordinate lies on the quadratic twist (about half of
+them; no stored y-coordinate satisfies the curve equation).
+
+The generated arithmetic is not quite modular: BigIntSubtraction drops a
+carry when a value below 47 meets a non-canonical representative just below
+`2^160`. Random intermediates reach that with probability around `2^-150`
+per operation, so seeded tests over random entropy and every catalogue key
+are byte-identical, but structured inputs (for example `x = 5`, or the
+constructed cases in `tools/trace_scalar_seed_boundary.py`) make the original
+return a point that is not the true multiple and that depends on the blinding
+inputs. The ladder always returns the true multiple; tests record those cases
+and keep the original chain as `seed_transform.reference_execute_value`.
+
+| Measurement | Before | After |
+| --- | ---: | ---: |
+| `seed_transform.execute_value` (seeded cases byte-identical) | 21.5 ms | 1.2 ms |
+| `legacy_auth.authenticate_real_plc` (S7-1500 key) | 23.3 ms | 2.0 ms |
+
+Authentication now executes no generated monolith; its remaining time is
+split between the two ladders, the challenge fingerprint and the PRESENT-80
+encryptions.

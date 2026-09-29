@@ -16,9 +16,15 @@ variant (`family0/monolith9_compact.py`), so the authenticator passes 160-bit
 integers between PreSeedTransform, SeedTransform (via
 `family0/transform13_compact.py`) and KeyDerivationTransform instead of
 encoded buffers, and Monolith8, Monolith9, Monolith10 and Transform13 are no
-longer executed.
-The replaced generated sources and the original `family0/transform7.py` are
-retained for provenance and analysis, not executed.
+longer executed. SeedTransform's Transform7/Monolith1/Monolith2 chain is an
+x-only ECDH on a 160-bit prime-order curve (`family0/curve.py`), so the
+runtime no longer executes Transform7, Transform12 or any of Monolith1–Monolith7
+either; authentication runs no `_generated` monolith at all. The ladder
+differs from the original only where Transform7's arithmetic is not modular,
+which needs structured inputs (see `curve.py`).
+The replaced generated sources, `family0/transform7_compact.py` and the
+original `family0/transform7.py` are retained for provenance and analysis,
+not executed.
 
 ## Start at the handwritten boundary
 
@@ -42,7 +48,8 @@ assuming parity from shared arithmetic helpers.
 | `family0.authenticator.RealPlcAuthenticator` | Metadata, seed, challenge/key2 encryption, checksum | Deterministic entropy sequence in the complete blob vectors |
 | `key_derivation.derive_session_key` | HMAC(key2[:24], fingerprint(challenge) + challenge[2:18])[:24] | Complete SessionKey vectors and fingerprint regressions |
 | `legitimate` | Post-setup challenge solution, distinct from initial key derivation | `tests/test_session_auth_legitimate.py`; connection's 303/1846 exchange |
-| `family0.transform7_compact`, `transform12`, `monolith_wrappers` | Proprietary arithmetic/encoding orchestration; `transform7.py` is the retained original the tools instrument | Byte-equivalence tests against `transform7.py`, independent full-output reference, upstream vectors below |
+| `family0.curve`, `seed_transform.execute_value` | SeedTransform as x-only ECDH | `tests/test_session_auth_curve.py`: domain parameters, ladder vs Transform7 on every catalogue key, upstream Transform7 vectors, seeded equality with `reference_execute_value` |
+| `family0.transform7_compact`, `transform12`, `monolith_wrappers` | Reference Transform7 arithmetic/encoding orchestration (not executed); `transform7.py` is the retained original the tools instrument | Byte-equivalence tests against `transform7.py`, independent full-output reference, upstream vectors below |
 
 Do not expose generated monoliths as an application API. For a new key within
 an existing supported family, verify its upstream bytes/identifier and add it

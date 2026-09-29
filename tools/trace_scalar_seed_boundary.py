@@ -18,7 +18,7 @@ from dataclasses import dataclass
 from typing import Literal
 from unittest.mock import patch
 
-from s7commplus.session_auth.family0 import seed_transform, transform7_compact
+from s7commplus.session_auth.family0 import monolith9_compact, seed_transform, transform7_compact
 from s7commplus.session_auth.family0._generated import monolith1
 from s7commplus.session_auth.family0._generated.data import TRANSFORM7_DATA
 from s7commplus.session_auth.keys import get_public_key
@@ -132,7 +132,8 @@ def first_nonce(case: Case, implementation: Implementation, normalization_limit:
         patch.object(transform7_compact, "execute", observed_transform),
     ):
         try:
-            seed_transform.execute(destination, case.public_key, case.transform1)
+            pre_seed = monolith9_compact.decode(case.transform1)
+            seed_transform.reference_execute_value(destination, case.public_key, pre_seed)
         except _NonceRejected:
             return Result(False, None, tuple(transforms), tuple(normalizations), requests)
     return Result(True, bytes(destination), tuple(transforms), tuple(normalizations), requests)

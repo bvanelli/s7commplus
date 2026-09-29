@@ -94,13 +94,14 @@ session_auth/
 │   ├── __init__.py
 │   ├── authenticator.py     RealPlcAuthenticator — top-level blob builder
 │   ├── fingerprint.py       8-byte challenge fingerprint (LUT + mutation chain)
-│   ├── seed_transform.py    Encrypted seed generation (monolith chain)
+│   ├── seed_transform.py    Encrypted seed generation (runtime: x-only ECDH; Transform7 chain retained as reference)
+│   ├── curve.py             SeedTransform's 160-bit prime-order curve and x-only Montgomery ladder (runtime)
 │   ├── pre_seed_transform.py  Random key → pre-seed (runtime: PRESENT-80 value; encoded port retained)
 │   ├── key_derivation_transform.py  Pre-seed → 3 AES keys (runtime: PRESENT-80 value; encoded port retained)
 │   ├── checksum_transform.py  AES-ECB checksum of encrypted blocks
 │   ├── lut_generator.py     Lookup table for harpo_hash
 │   ├── transform7.py        Original Transform7 (retained reference, not executed)
-│   ├── transform7_compact.py  Runtime Transform7: integer setup + integer Transform12 dispatch + final monolith chain
+│   ├── transform7_compact.py  Transform7: integer setup + integer Transform12 dispatch + final monolith chain (reference for curve.py, not executed)
 │   ├── transform12_compact.py  Transform12 tape interpreter over plain 160-bit integers
 │   ├── transform12.py       Opcode-driven BigInt dispatcher
 │   ├── transform13.py       3×24-byte BigInt output via Monolith9/10 (retained reference, not executed)
@@ -283,8 +284,8 @@ acceptance criteria. Start there before navigating generated programs.
   retired at runtime in favor of `family0/monolith5_compact.py` (mechanically
   compiled from the recovered model — do not hand-edit) and the human-written
   `family0/monolith11_compact.py`. Both retired files are kept for provenance.
-- `family0/transform7.py` is the original Transform7 orchestration. Runtime
-  calls `family0/transform7_compact.py` instead, which writes the four setup
+- `family0/transform7.py` is the original Transform7 orchestration.
+  `family0/transform7_compact.py`, which writes the four setup
   context slots with the proven integer model (`tools/transform7_setup_integer.py`
   composes the same carry-save steps), runs the Transform12 tape on plain
   integers (`family0/transform12_compact.py`: every slot and constant row is a
@@ -292,7 +293,10 @@ acceptance criteria. Start there before navigating generated programs.
   keeps the final Monolith7/4/6 chain. Tests pin byte equality with the
   original, every tape dispatch and every primitive branch; Transform7 runs
   about 19x faster. The analysis tools and proof records keep instrumenting and
-  pinning the original file.
+  pinning the original file. SeedTransform itself no longer runs either: the
+  whole Transform7/Monolith1/Monolith2 chain decodes to an x-only scalar
+  multiplication on the curve in `family0/curve.py`, which the runtime computes
+  with a Montgomery ladder (see `MODEL_BENCHMARKS.md`).
 - `_constants.py` and the four `.bin` files are generated data.
 - Package `__init__.py` files and the binary loaders are human-maintained glue.
 
@@ -313,9 +317,9 @@ RealPlcAuthenticator(key1=random_24B, key2=random_24B)
 │   ├── PreSeedTransform(key1)           →  60-byte pre-seed
 │   ├── KeyDerivationTransform(pre-seed) →  3 × 16-byte keys
 │   ├── SeedTransform(key1, public_key)  →  60-byte encrypted seed
-│   │   ├── Transform7 (EC scalar mul; transform7_compact.py)
-│   │   ├── Monolith1.Loop → Monolith2 → Monolith8
-│   │   └── Transform13 → Monolith11 (monolith11_compact.py)
+│   │   ├── ECDH: k = prng2 ^ SCALAR_MASK, ephemeral x(k·G), shared x(k·PK) (curve.py)
+│   │   │   (originally Transform7 → Monolith1.Loop → Monolith2)
+│   │   └── seed = pre-seed ^ Transform13(shared) (transform13_compact.py)
 │   └── Derive challenge/checksum AES keys and the checksum LUT
 │
 ├── encrypt_full_blocks(dst, challenge)

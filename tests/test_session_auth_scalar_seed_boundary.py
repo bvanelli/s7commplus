@@ -130,6 +130,7 @@ def test_bundled_key_carry_changes_the_complete_180_byte_authentication_blob() -
             patch.object(os, "urandom", fixed_entropy),
             patch.object(seed_transform, "_monolith1_loop", normalize),
             patch.object(transform7_compact, "execute", scalar),
+            patch.object(seed_transform, "execute_value", seed_transform.reference_execute_value),
         ):
             result = authenticate_real_plc(bytes(range(20)), case.public_key, KeyFamily.S7_1500)
         assert requests == 5

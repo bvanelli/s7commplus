@@ -206,3 +206,42 @@ and keep the original chain as `seed_transform.reference_execute_value`.
 Authentication now executes no generated monolith; its remaining time is
 split between the two ladders, the challenge fingerprint and the PRESENT-80
 encryptions.
+
+## Challenge fingerprint as a gate network
+
+HarpoFingerprint's per-step formulas combine a FP_DATA2 nibble with a nibble
+of a context that ContextMutator changes between rounds, but that context
+never depends on the challenge. Each step is therefore a fixed gate
+`state[dst] = table[state[a] << 4 | state[b]]` over a 544-nibble state whose
+first 32 nibbles are `challenge[2:18]`. `family0/fingerprint.py` builds the
+496 tables once (about 19 ms on first use) and then evaluates the network.
+The fingerprint is 16 nibbles of the final state. The network has depth 29,
+and every output nibble depends on all 32 challenge nibbles. The tables are
+balanced and use all bits of both inputs, but none is XOR- or
+addition-separable; 240 of them have only four distinct rows and columns.
+This looks like white-box encodings, and the underlying primitive is not
+identified. `tests/test_session_auth_fingerprint.py` keeps the direct HarpoS7
+port verbatim and pins the network against it.
+
+| Measurement | Before | After |
+| --- | ---: | ---: |
+| `fingerprint_challenge` (after the one-time table build) | 0.51 ms | 0.017 ms |
+| `legacy_auth.authenticate_real_plc` (S7-1500 key) | 2.0 ms | 1.6 ms |
+
+## The blob checksum and HarpoAesCtr
+
+LutGenerator and ChecksumTransform are one GF(2^128) multiplication: the
+table holds the multiples of `H`, and the checksum of `X` is `X * H`
+modulo the irreducible `x^128 + x^32 + x^15 + x^2 + 1`, on little-endian
+blocks. The authenticator therefore keeps `H` and the running checksum as
+integers and calls `checksum_transform.multiply`. The blob checksum is
+GHASH-shaped (`c = (c ^ block) * H`, then the length and one more multiply,
+encrypted under the checksum key), but in a different field and bit order
+from GCM. The table-driven ports remain as references, pinned to `multiply`
+and the upstream Transform3/Transform4 fixtures.
+
+HarpoHash and HarpoAesCtr, which the SessionKey handshake does not use,
+are standard: HarpoHash is GCM's GHASH multiplication with Shoup's 8-bit
+tables, and HarpoAesCtr is AES-GCM without associated data, apart from a
+24-bit counter increment. Tests match both against a textbook GHASH and
+`cryptography`'s AES-GCM.

@@ -236,8 +236,11 @@ def _encoded_write_seed(self: authenticator.RealPlcAuthenticator, blob: bytearra
     key_derivation_transform.execute(derived, bytes(transform1))
     self._challenge_key[:] = derived[:16]
     self._checksum_key[:] = derived[16:32]
-    lut_generator.execute(self._lookup_table, bytes(derived[32:]))
-    checksum_transform.execute(self._checksum, bytes(self._iv), bytes(self._lookup_table))
+    lookup_table, checksum = bytearray(lut_generator.DESTINATION_SIZE), bytearray(16)
+    lut_generator.execute(lookup_table, bytes(derived[32:]))
+    checksum_transform.execute(checksum, bytes(self._iv), bytes(lookup_table))
+    self._hash_key = int.from_bytes(derived[32:48], "little")
+    self._checksum = int.from_bytes(checksum, "little")
     return seed_transform.DESTINATION_SIZE
 
 

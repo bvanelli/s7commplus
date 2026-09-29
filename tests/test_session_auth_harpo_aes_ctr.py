@@ -1,18 +1,18 @@
 """Tests for the custom AES-CTR-with-MAC primitive.
 
-Vectors reproduced from ``HarpoS7.Tests/Aes/HarpoAesCtrTests.cs`` —
-``TestInit`` and ``TestEncrypt2Times``. ``CalculateChecksumTest``
-arrives in a follow-up slice.
+Vectors reproduced from ``HarpoS7.Tests/Aes/HarpoAesCtrTests.cs``, plus
+differential tests against ``cryptography``'s AES-GCM.
 """
 
 from __future__ import annotations
 
+import random
 import pytest
 
 from s7commplus.session_auth.harpo_aes_ctr import HarpoAesCtr
 
 try:
-    import cryptography  # noqa: F401
+    from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
 
     _has_cryptography = True
 except ImportError:
@@ -115,3 +115,31 @@ class TestInitGuardClauses:
         cipher = HarpoAesCtr(_KEY)
         with pytest.raises(NotImplementedError, match="non-multiple-of-16"):
             cipher.init(b"\x00" * 17)
+
+
+@pytest.mark.skipif(not _has_cryptography, reason="requires cryptography package")
+class TestIsAesGcm:
+    """HarpoAesCtr is AES-GCM without associated data, except for its 24-bit counter."""
+
+    def test_ciphertext_and_tag_match_aes_gcm(self) -> None:
+        rng = random.Random(4802)
+        for _ in range(30):
+            key, iv = rng.randbytes(16), rng.randbytes(16 * rng.randint(1, 3))
+            parts = [rng.randbytes(rng.randint(0, 40)) for _ in range(rng.randint(1, 3))]
+            cipher = HarpoAesCtr(key)
+            cipher.init(iv)
+            ciphertext = b"".join(cipher.encrypt_ctr(part) for part in parts)
+            reference = Cipher(algorithms.AES(key), modes.GCM(iv)).encryptor()
+            assert ciphertext == reference.update(b"".join(parts))
+            reference.finalize()
+            assert cipher.calculate_checksum() == reference.tag
+
+    def test_counter_increment_wraps_at_24_bits_unlike_gcm(self) -> None:
+        # GCM's inc32 would carry into byte 12; HarpoS7 (and this port) only increment bytes 13..15.
+        cipher = HarpoAesCtr(_KEY)
+        cipher.init(bytes(16))
+        cipher._counter[12:16] = b"\x00\xff\xff\xff"
+        keystream = cipher.encrypt_ctr(bytes(16))
+        counter = cipher.counter[:12] + b"\x00\x00\x00\x00"
+        ecb = Cipher(algorithms.AES(_KEY), modes.ECB()).encryptor()
+        assert keystream == ecb.update(counter)

@@ -1,11 +1,15 @@
-"""GF(2¹²⁸)-based checksum / GHASH-style integrity transform.
+"""GF(2¹²⁸) multiplication for the blob's GHASH-style checksum.
 
-Manual port of ``HarpoS7.Family0.Transforms.ChecksumTransform``. Takes
-a 16-byte key and a 4 KB lookup table (from ``lut_generator``) and
-produces a 16-byte checksum. The work buffer is a uint32[8] and the
-algorithm walks through key bytes from MSB to LSB, XORing in
-``lut[byte * 16 .. byte * 16 + 16]`` and rotating after every 4-byte
-block.
+``execute`` is a manual port of ``HarpoS7.Family0.Transforms.ChecksumTransform``:
+with ``lookup_table`` from ``lut_generator.execute(table, h)`` it computes
+``key * h`` in GF(2)[x] modulo ``POLYNOMIAL`` (x^128 + x^32 + x^15 + x^2 + 1,
+irreducible), with 16-byte values read little endian and bit i as the
+coefficient of x^i. That is not the AES-GCM field or bit order. The work
+buffer is a uint32[8] 256-bit product that the port walks one key byte at a
+time and reduces in its final mixing step.
+
+The authenticator uses ``multiply`` directly; ``execute`` and
+``lut_generator`` remain as the table-driven references.
 """
 
 from __future__ import annotations
@@ -17,6 +21,21 @@ DESTINATION_SIZE = 0x10
 LOOKUP_TABLE_SIZE = 0x1000
 
 _U32 = 0xFFFFFFFF
+
+POLYNOMIAL = (1 << 128) | (1 << 32) | (1 << 15) | (1 << 2) | 1
+
+
+def multiply(a: int, b: int) -> int:
+    """``a * b`` in GF(2)[x] modulo ``POLYNOMIAL``, for 128-bit ``a`` and ``b``."""
+    product = 0
+    while b:
+        if b & 1:
+            product ^= a
+        b >>= 1
+        a <<= 1
+        if a >> 128:
+            a ^= POLYNOMIAL
+    return product
 
 
 def _xor_128(work: list[int], offset: int, lut: list[int], lut_index: int) -> None:

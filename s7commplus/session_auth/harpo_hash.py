@@ -1,21 +1,19 @@
-"""HarpoHash — the proprietary 128-bit transform underpinning HarpoAesCtr.
+"""HarpoHash — GCM's GHASH multiplication, as used by HarpoAesCtr.
 
-Despite the name, this is **not** a cryptographic hash. It's a custom
-pseudo-AES round function Siemens layered on top of standard AES-ECB
-in ``OMSp_core_managed.dll``. Its purpose is twofold: produce the
-ciphertext for the encrypted random seed in the SessionKey blob, and
-chain into the integrity-MAC computation that ``HarpoAesCtr`` builds
-on top.
+This is the GF(2^128) multiplication of AES-GCM (NIST SP 800-38D), with
+16-byte blocks read big endian in GCM's reflected bit order, implemented
+with Shoup's 8-bit tables:
 
-Three primitives:
+- ``lut1`` multiplies a block by x, using the reduction table ``LUT_SEED``.
+- ``generate_lookup_table`` derives the 4 KB table of ``i * key`` for
+  every byte ``i`` from a 16-byte key: repeated ``lut1`` gives the powers
+  of x, and XORs fill the rest.
+- ``hash_block`` computes ``data * key`` from that table, one byte at a
+  time. Equivalent to ``HarpoHash.Hash``.
 
-- ``lut1`` — one round of the transform. Updates a 16-byte state
-  using a 512-byte fixed table (``LUT_SEED``).
-- ``generate_lookup_table`` — derives a 4 KB working table from a
-  16-byte key. Calls ``lut1`` six times, then xors-and-replicates the
-  resulting state across the rest of the table.
-- ``hash_block`` — runs the working table over a 16-byte input,
-  producing a 16-byte output. Equivalent to ``HarpoHash.Hash``.
+``LUT_SEED`` is the standard reduction table: entry ``i`` is the 16-bit
+reduction of the byte ``i`` shifted out of the block. Tests pin all three
+against a textbook GHASH multiply.
 
 Ported from HarpoS7 (MIT) — ``HarpoS7.Aes.HarpoHash`` and
 ``HarpoS7.Aes.AesConsts``. The 512-byte ``LUT_SEED`` constant doubles

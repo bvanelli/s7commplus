@@ -1,20 +1,22 @@
-"""Custom CTR-mode block cipher used to encrypt the SessionKey blob's
-random seed and challenge.
+"""HarpoAesCtr — AES-GCM encryption with a 24-bit counter.
 
-This is **not** standard AES-CTR. HarpoS7 layers a proprietary 128-bit
-transform (``HarpoHash``) on top of AES-128-ECB to produce both
-ciphertext and a running integrity MAC in a single pass:
+This is AES-GCM (NIST SP 800-38D) without associated data:
 
-- Init derives a 4 KB working table from ``AES-ECB(key, 0)`` and folds
-  the IV into a 16-byte counter through ``HarpoHash`` rounds.
+- Init takes H = ``AES-ECB(key, 0)`` for the GHASH table (``HarpoHash``)
+  and derives the pre-counter block J0 from the IV the way GCM does for
+  IVs that are not 96 bits long.
 - EncryptCtr increments the counter, AES-encrypts it to produce a
   keystream block, XORs that with plaintext to make ciphertext, and
-  feeds the ciphertext into a running ``HarpoHash`` accumulator.
+  feeds the ciphertext into the running GHASH.
+- CalculateChecksum folds in the lengths and returns the GCM tag
+  ``GHASH ^ AES(J0)``.
 
-Ported from HarpoS7 (MIT) — ``HarpoS7.Aes.HarpoAesCtr``. CalculateChecksum
-is intentionally deferred to a follow-up slice; this slice covers the
-``Init`` + ``EncryptCtr`` paths exercised by ``TestInit`` and
-``TestEncrypt2Times`` upstream.
+Tests match ciphertexts and tags against ``cryptography``'s AES-GCM. The one
+difference is the counter: HarpoS7 increments only bytes 13..15, while GCM's
+inc32 also carries into byte 12, so the two diverge after the low 24 bits of
+the counter wrap.
+
+Ported from HarpoS7 (MIT) — ``HarpoS7.Aes.HarpoAesCtr``.
 """
 
 from __future__ import annotations

@@ -86,20 +86,20 @@ session_auth/
 ├── legitimate.py            Post-auth challenge solver (DEADBEEF blob builder)
 ├── blob_metadata.py         SecurityKeyEncryptedKey blob header/metadata
 ├── harpo_aes.py             AES-ECB primitives (used by checksum + seed encryption)
-├── harpo_aes_ctr.py         Custom AES-CTR mode (non-standard counter increment)
-├── harpo_hash.py            SHA-256-based hash with LUT mixing
+├── harpo_aes_ctr.py         AES-GCM without associated data, with a 24-bit counter increment
+├── harpo_hash.py            GCM's GHASH multiplication (Shoup 8-bit tables)
 ├── utils.py                 Key-ID derivation (SHA-256 → 8 bytes)
 │
 ├── family0/
 │   ├── __init__.py
 │   ├── authenticator.py     RealPlcAuthenticator — top-level blob builder
-│   ├── fingerprint.py       8-byte challenge fingerprint (LUT + mutation chain)
+│   ├── fingerprint.py       8-byte challenge fingerprint (fixed network of 496 nibble lookup gates)
 │   ├── seed_transform.py    Encrypted seed generation (runtime: x-only ECDH; Transform7 chain retained as reference)
 │   ├── curve.py             SeedTransform's 160-bit prime-order curve and x-only Montgomery ladder (runtime)
 │   ├── pre_seed_transform.py  Random key → pre-seed (runtime: PRESENT-80 value; encoded port retained)
 │   ├── key_derivation_transform.py  Pre-seed → 3 AES keys (runtime: PRESENT-80 value; encoded port retained)
-│   ├── checksum_transform.py  AES-ECB checksum of encrypted blocks
-│   ├── lut_generator.py     Lookup table for harpo_hash
+│   ├── checksum_transform.py  GF(2^128) multiply mod x^128+x^32+x^15+x^2+1 for the blob's GHASH-style checksum
+│   ├── lut_generator.py     Multiples table for checksum_transform.execute (reference, not executed)
 │   ├── transform7.py        Original Transform7 (retained reference, not executed)
 │   ├── transform7_compact.py  Transform7: integer setup + integer Transform12 dispatch + final monolith chain (reference for curve.py, not executed)
 │   ├── transform12_compact.py  Transform12 tape interpreter over plain 160-bit integers
@@ -320,14 +320,14 @@ RealPlcAuthenticator(key1=random_24B, key2=random_24B)
 │   │   ├── ECDH: k = prng2 ^ SCALAR_MASK, ephemeral x(k·G), shared x(k·PK) (curve.py)
 │   │   │   (originally Transform7 → Monolith1.Loop → Monolith2)
 │   │   └── seed = pre-seed ^ Transform13(shared) (transform13_compact.py)
-│   └── Derive challenge/checksum AES keys and the checksum LUT
+│   └── Derive challenge/checksum AES keys and the checksum hash key H
 │
 ├── encrypt_full_blocks(dst, challenge)
 │   └── AES-ECB(challenge_key, IV) XOR challenge[2:18], then key2 blocks
-│       └── RotateLeft31 counter update and checksum accumulation
+│       └── RotateLeft31 counter update; checksum c = (c ^ block) * H (checksum_transform.multiply)
 │
 └── encrypt_final_block(dst)
-    └── Encrypt key2 leftover, zero-pad only for checksum, append encrypted checksum
+    └── Encrypt key2 leftover, zero-pad only for checksum, fold in the length, append AES(checksum_key, c * H)
 ```
 
 ## References

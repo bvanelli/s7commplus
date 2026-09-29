@@ -1,8 +1,13 @@
 """RealPlcAuthenticator — builds the 180-byte SecurityKeyEncryptedKey blob.
 
 Orchestrates PreSeedTransform, SeedTransform, KeyDerivationTransform,
-LutGenerator, ChecksumTransform, BigIntOperations, and AES-ECB to
-produce the encrypted authentication blob for S7-1200/1500 PLCs.
+ChecksumTransform, BigIntOperations, and AES-ECB to produce the encrypted
+authentication blob for S7-1200/1500 PLCs.
+
+The blob encryption is GCM-like: AES-ECB of a counter (the IV rotated left
+by 31 bits per block) masks the challenge and key2, and a GHASH-style
+checksum over the ciphertext, ``c = (c ^ block) * H`` in
+``checksum_transform``'s field, is encrypted under a second key.
 
 Manual port of ``HarpoS7.Family0.Auth.RealPlcAuthenticator``.
 """
@@ -10,7 +15,6 @@ Manual port of ``HarpoS7.Family0.Auth.RealPlcAuthenticator``.
 from __future__ import annotations
 
 import os
-import struct
 from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
 
 from ..blob_metadata import write_metadata
@@ -18,7 +22,6 @@ from ..keys import KeyFamily
 from . import (
     checksum_transform,
     key_derivation_transform,
-    lut_generator,
     pre_seed_transform,
     seed_transform,
 )
@@ -40,8 +43,8 @@ class RealPlcAuthenticator:
         self._key1 = bytearray(key1 if key1 is not None else os.urandom(24))
         self._iv = bytearray(os.urandom(16))
 
-        self._lookup_table = bytearray(lut_generator.DESTINATION_SIZE)
-        self._checksum = bytearray(16)
+        self._hash_key = 0
+        self._checksum = 0
         self._challenge_key = bytearray(16)
         self._checksum_key = bytearray(16)
         self._encrypted_bytes = 0
@@ -65,9 +68,8 @@ class RealPlcAuthenticator:
         seed_transform.execute_value(blob, public_key, pre_seed)
         offset = seed_transform.DESTINATION_SIZE
 
-        self._derive_keys_and_lut(pre_seed)
-
-        checksum_transform.execute(self._checksum, bytes(self._iv), bytes(self._lookup_table))
+        self._derive_keys(pre_seed)
+        self._checksum = checksum_transform.multiply(int.from_bytes(self._iv, "little"), self._hash_key)
 
         return offset
 
@@ -120,17 +122,13 @@ class RealPlcAuthenticator:
 
         self._update_checksum(bytes(ct_padded))
 
-        # Final checksum calculation
-        chk_dwords = list(struct.unpack("<4I", self._checksum))
-        chk_dwords[3] ^= self._encrypted_bytes
-        struct.pack_into("<4I", self._checksum, 0, *chk_dwords)
-
-        checksum_transform.execute(self._checksum, bytes(self._checksum), bytes(self._lookup_table))
+        # Final checksum calculation: fold in the length (little-endian dword 3)
+        checksum = checksum_transform.multiply(self._checksum ^ self._encrypted_bytes << 96, self._hash_key)
 
         # Encrypt checksum with checksum encryption key
         cipher = Cipher(algorithms.AES(bytes(self._checksum_key)), modes.ECB())
         enc = cipher.encryptor()
-        encrypted_checksum = enc.update(bytes(self._checksum)) + enc.finalize()
+        encrypted_checksum = enc.update(checksum.to_bytes(16, "little")) + enc.finalize()
 
         blob[offset : offset + 16] = encrypted_checksum
         offset += 16
@@ -140,7 +138,7 @@ class RealPlcAuthenticator:
     def extract_key2(self) -> bytes:
         return bytes(self._key2)
 
-    def _derive_keys_and_lut(self, pre_seed: int) -> None:
+    def _derive_keys(self, pre_seed: int) -> None:
         kd_buf = key_derivation_transform.execute_value(pre_seed)
 
         # First 16 bytes: challenge encryption key
@@ -149,8 +147,8 @@ class RealPlcAuthenticator:
         # Next 16 bytes: checksum encryption key
         self._checksum_key[:] = kd_buf[16:32]
 
-        # Last 16 bytes: LUT seed
-        lut_generator.execute(self._lookup_table, bytes(kd_buf[32:]))
+        # Last 16 bytes: the checksum's hash key H
+        self._hash_key = int.from_bytes(kd_buf[32:48], "little")
 
     def _aes_ecb_encrypt(self, plaintext: bytes) -> bytes:
         cipher = Cipher(algorithms.AES(bytes(self._challenge_key)), modes.ECB())
@@ -158,8 +156,8 @@ class RealPlcAuthenticator:
         return bytes(enc.update(plaintext[:16]) + enc.finalize())
 
     def _update_checksum(self, ct_block: bytes) -> None:
-        self._checksum = bytearray(_xor_bytes(bytes(self._checksum), ct_block[:16]))
-        checksum_transform.execute(self._checksum, bytes(self._checksum), bytes(self._lookup_table))
+        block = int.from_bytes(ct_block[:16], "little")
+        self._checksum = checksum_transform.multiply(self._checksum ^ block, self._hash_key)
 
 
 def _xor_bytes(a: bytes, b: bytes) -> bytes:

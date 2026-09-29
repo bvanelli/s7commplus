@@ -1,10 +1,11 @@
 """Lookup-table generator used by ``ChecksumTransform`` (HarpoHash variant).
 
 Builds a 4 KB table of 256 ``UInt128`` entries from a 16-byte seed
-key. Each entry is the seed multiplied by ``i`` over GF(2¹²⁸) under
-the polynomial ``x^128 + x^7 + x^2 + x + 1`` (canonical AES-GCM
-field). The construction doubles iteratively and cross-XORs to fill
-the rest of the rows.
+key. Entry ``i`` is the seed times the polynomial whose coefficients are
+the bits of ``i``, in GF(2¹²⁸) modulo ``checksum_transform.POLYNOMIAL``
+(x^128 + x^32 + x^15 + x^2 + 1, not the AES-GCM field). The construction
+doubles iteratively and cross-XORs to fill the rest of the rows. The
+authenticator no longer builds the table; see ``checksum_transform.multiply``.
 
 Manual port of ``HarpoS7.Family0.Transforms.LutGenerator``.
 """
@@ -17,7 +18,7 @@ SOURCE_SIZE = 0x10
 DESTINATION_SIZE = 0x1000
 
 _U128 = (1 << 128) - 1
-_REDUCTION = 0x010000_8005  # x^128 + x^7 + x^2 + x + 1, low 33 bits
+_REDUCTION = 0x010000_8005  # x^32 + x^15 + x^2 + 1: POLYNOMIAL without x^128
 
 
 def _to_u128_list(buf: bytes, count: int) -> list[int]:

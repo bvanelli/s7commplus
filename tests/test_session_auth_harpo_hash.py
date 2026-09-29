@@ -6,6 +6,7 @@ Ground-truth bytes reproduced from
 
 from __future__ import annotations
 
+import random
 import pytest
 
 from s7commplus.session_auth.harpo_hash import (
@@ -129,3 +130,40 @@ class TestHashBlock:
     def test_wrong_lut_size(self) -> None:
         with pytest.raises(ValueError, match="lut must be 4096 bytes"):
             hash_block(b"\x00" * 16, b"\x00" * 100)
+
+
+def _ghash_multiply(x: int, y: int) -> int:
+    """GCM's GF(2^128) product (NIST SP 800-38D, Algorithm 1) on big-endian blocks."""
+    product, v = 0, y
+    for bit in range(127, -1, -1):
+        if x >> bit & 1:
+            product ^= v
+        v = (v >> 1) ^ (0xE1 << 120) if v & 1 else v >> 1
+    return product
+
+
+class TestIsGhash:
+    """HarpoHash is GCM's GHASH multiplication with Shoup's 8-bit tables."""
+
+    def test_hash_block_multiplies_by_the_table_key(self) -> None:
+        rng = random.Random(4800)
+        for _ in range(40):
+            key, data = rng.randbytes(16), rng.randbytes(16)
+            expected = _ghash_multiply(int.from_bytes(data, "big"), int.from_bytes(key, "big"))
+            assert hash_block(data, generate_lookup_table(key)) == expected.to_bytes(16, "big")
+
+    def test_lut1_multiplies_by_x(self) -> None:
+        rng = random.Random(4801)
+        for _ in range(40):
+            state = rng.randbytes(16)
+            expected = _ghash_multiply(int.from_bytes(state, "big"), 1 << 126)
+            assert lut1(state) == expected.to_bytes(16, "big")
+
+    def test_lut_seed_is_the_ghash_reduction_table(self) -> None:
+        # Entry i reduces the byte i shifted out below x^0: i * (0xE1 << 1) spread over 16 bits.
+        for i in range(256):
+            reduction = 0
+            for bit in range(8):
+                if i >> bit & 1:
+                    reduction ^= 0xE100 >> (7 - bit)
+            assert int.from_bytes(LUT_SEED[2 * i : 2 * i + 2], "big") == reduction

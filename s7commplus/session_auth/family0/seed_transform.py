@@ -6,17 +6,17 @@ Transform13 -> Monolith11 to produce the final 60-byte output.
 
 Manual port of ``HarpoS7.Family0.Transforms.SeedTransform``. Transform7 and
 Monolith11 run through the byte-equivalent ``transform7_compact`` and
-``monolith11_compact`` modules; see their docstrings.
+``monolith11_compact`` modules, and Monolith8 -> Transform13 through
+``transform13_compact``; see their docstrings.
 """
 
 from __future__ import annotations
 
 import os
 import struct
-from typing import cast
 
-from ._generated import monolith1, monolith2, monolith8
-from . import monolith11_compact, transform7_compact, transform13
+from ._generated import monolith1, monolith2
+from . import monolith11_compact, transform7_compact, transform13_compact
 from ._generated.data import TRANSFORM7_DATA
 from .pre_seed_transform import DESTINATION_SIZE as TRANSFORM1_SIZE
 
@@ -64,22 +64,8 @@ def execute(destination: bytearray | memoryview, public_key: bytes, transform1: 
     transform7_compact.execute(t7_dst, prng1, prng2, public_key)
     _monolith1_loop(t7_dst)
 
-    # Monolith8: src=72 bytes (t7_dst), dst=60 bytes
-    # We allocate 92 bytes so it can also serve as Monolith11 destination
-    m8_buf = bytearray(20 + 72)
-    m8v = memoryview(m8_buf)
-    monolith8.execute(cast(bytearray, m8v[20:]), bytes(t7_dst))
-
-    # Monolith11: src=120 bytes, dst=20 bytes
-    m11_src = bytearray(0x1E * 4)
-    m11v = memoryview(m11_src)
-
-    # Transform13 output → m11_src[0x3C:]
-    transform13.execute(cast(bytearray, m11v[0x3C:]), bytes(m8_buf[20:]))
-
-    # transform1 data → m11_src[0:0x3C]
-    m11_src[:0x3C] = transform1[:0x3C]
-
-    monolith11_compact.execute(m8_buf, bytes(m11_src))
-
-    destination[:0x14] = m8_buf[:0x14]
+    # Monolith8 -> Transform13 -> Monolith11: Monolith11 XORs its decode of
+    # transform1 with Transform13's PRESENT-80 output under the span's value.
+    mask = transform13_compact.mask(transform13_compact.span_value(t7_dst))
+    decoded = monolith11_compact.execute_words(struct.unpack("<15I", transform1[:0x3C]) + (0,) * 15)
+    destination[:0x14] = struct.pack("<5I", *(word ^ ((mask >> (32 * index)) & 0xFFFFFFFF) for index, word in enumerate(decoded)))

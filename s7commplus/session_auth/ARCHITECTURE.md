@@ -103,7 +103,8 @@ session_auth/
 │   ├── transform7_compact.py  Runtime Transform7: integer setup + integer Transform12 dispatch + final monolith chain
 │   ├── transform12_compact.py  Transform12 tape interpreter over plain 160-bit integers
 │   ├── transform12.py       Opcode-driven BigInt dispatcher
-│   ├── transform13.py       3×24-byte BigInt output via Monolith9/10
+│   ├── transform13.py       3×24-byte BigInt output via Monolith9/10 (retained reference, not executed by SeedTransform)
+│   ├── transform13_compact.py  Monolith8 → Transform13 → Monolith11 as span decode + PRESENT-80 (runtime)
 │   ├── big_int_operations.py  192-bit arithmetic (add, sub, mul, square)
 │   ├── big_int_transforms.py  BigInt higher-level ops
 │   ├── monolith_wrappers.py  WithCopy adapters for Monolith3-7

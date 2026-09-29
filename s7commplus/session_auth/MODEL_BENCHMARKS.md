@@ -134,3 +134,21 @@ measurement, but still excludes network and PLC time. After this change,
 roughly 57% of the remaining authentication time is spent in the generated
 Monolith9 (the `nine` package, called 12 times per authentication), which is
 the next candidate for recovery.
+
+## Monolith8 → Transform13 → Monolith11 as PRESENT-80
+
+Monolith9 is PRESENT-80 (standard S-box and P-layer, 31 rounds plus
+whitening) on a byte-reversed block, and Monolith10 lays out its key schedule
+with three fixed quirks; see `family0/transform13_compact.py`. SeedTransform
+now decodes the Transform7 span to its 160-bit value and computes Transform13's
+contribution to Monolith11 directly, so Monolith8, Monolith10 and three of the
+twelve Monolith9 calls are no longer executed there.
+
+| Measurement | Before | After |
+| --- | ---: | ---: |
+| Monolith8 → Transform13 → Monolith11 (20 random spans byte-identical) | 13.9 ms | 0.7 ms |
+| `seed_transform.execute` (300 seeded cases byte-identical) | 38.6 ms | 23.9 ms |
+| `legacy_auth.authenticate_real_plc` (S7-1500 key) | 82 ms | 65 ms |
+
+The remaining nine Monolith9 calls (PreSeedTransform and
+KeyDerivationTransform) are still about half of the authentication time.

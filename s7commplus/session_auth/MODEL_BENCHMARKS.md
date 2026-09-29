@@ -133,22 +133,36 @@ single-transform microbenchmarks above, the second row *is* a whole-authenticati
 measurement, but still excludes network and PLC time. After this change,
 roughly 57% of the remaining authentication time is spent in the generated
 Monolith9 (the `nine` package, called 12 times per authentication), which is
-the next candidate for recovery.
+the next candidate for recovery (done; see the next section).
 
-## Monolith8 → Transform13 → Monolith11 as PRESENT-80
+## Monolith9/Monolith10 as PRESENT-80
 
 Monolith9 is PRESENT-80 (standard S-box and P-layer, 31 rounds plus
 whitening) on a byte-reversed block, and Monolith10 lays out its key schedule
-with three fixed quirks; see `family0/transform13_compact.py`. SeedTransform
-now decodes the Transform7 span to its 160-bit value and computes Transform13's
-contribution to Monolith11 directly, so Monolith8, Monolith10 and three of the
-twelve Monolith9 calls are no longer executed there.
+with three fixed quirks; see `family0/monolith9_compact.py`. Every encoded
+160-bit buffer the transforms exchange decodes through Monolith11's kernel as
+the value XOR a fixed offset, so the authenticator now passes plain integers:
+
+- PreSeedTransform is three encryptions of the key1 blocks under the fixed
+  key `pre_seed_transform.KEY` (the round-key layout in `TRANSFORM1_DATA`).
+- SeedTransform decodes the Transform7 span to its value and computes
+  Transform13's contribution to Monolith11 directly; the encoding offsets
+  cancel, so the seed is `pre_seed ^ transform13_compact.execute_value(...)`.
+- KeyDerivationTransform is six encryptions of `SHARED_DATA` blocks keyed by
+  the low and high 80 bits of the pre-seed.
+
+The runtime no longer executes Monolith8, Monolith9, Monolith10 or
+Transform13. The handwritten `execute` ports remain as references, and tests
+pin the value path against them, the upstream fixtures and the complete
+encoded authentication chain.
 
 | Measurement | Before | After |
 | --- | ---: | ---: |
 | Monolith8 → Transform13 → Monolith11 (20 random spans byte-identical) | 13.9 ms | 0.7 ms |
 | `seed_transform.execute` (300 seeded cases byte-identical) | 38.6 ms | 23.9 ms |
-| `legacy_auth.authenticate_real_plc` (S7-1500 key) | 82 ms | 65 ms |
+| `legacy_auth.authenticate_real_plc` (S7-1500 key, Transform13 step only) | 75.8 ms | 60.1 ms |
+| `legacy_auth.authenticate_real_plc` (S7-1500 key, all Monolith9 calls) | 75.8 ms | 23.3 ms |
 
-The remaining nine Monolith9 calls (PreSeedTransform and
-KeyDerivationTransform) are still about half of the authentication time.
+The authentication rows are medians of 15 runs in one session. The remaining
+time is dominated by the Transform7 span computation (Monolith1, Monolith2 and
+Monolith4).

@@ -95,19 +95,20 @@ session_auth/
 │   ├── authenticator.py     RealPlcAuthenticator — top-level blob builder
 │   ├── fingerprint.py       8-byte challenge fingerprint (LUT + mutation chain)
 │   ├── seed_transform.py    Encrypted seed generation (monolith chain)
-│   ├── pre_seed_transform.py  Random key → pre-seed via Monolith9
-│   ├── key_derivation_transform.py  Pre-seed → 3 AES keys via Monolith9/10
+│   ├── pre_seed_transform.py  Random key → pre-seed (runtime: PRESENT-80 value; encoded port retained)
+│   ├── key_derivation_transform.py  Pre-seed → 3 AES keys (runtime: PRESENT-80 value; encoded port retained)
 │   ├── checksum_transform.py  AES-ECB checksum of encrypted blocks
 │   ├── lut_generator.py     Lookup table for harpo_hash
 │   ├── transform7.py        Original Transform7 (retained reference, not executed)
 │   ├── transform7_compact.py  Runtime Transform7: integer setup + integer Transform12 dispatch + final monolith chain
 │   ├── transform12_compact.py  Transform12 tape interpreter over plain 160-bit integers
 │   ├── transform12.py       Opcode-driven BigInt dispatcher
-│   ├── transform13.py       3×24-byte BigInt output via Monolith9/10 (retained reference, not executed by SeedTransform)
-│   ├── transform13_compact.py  Monolith8 → Transform13 → Monolith11 as span decode + PRESENT-80 (runtime)
+│   ├── transform13.py       3×24-byte BigInt output via Monolith9/10 (retained reference, not executed)
+│   ├── transform13_compact.py  Span decode + Transform13 as PRESENT-80 on values (runtime)
 │   ├── big_int_operations.py  192-bit arithmetic (add, sub, mul, square)
 │   ├── big_int_transforms.py  BigInt higher-level ops
 │   ├── monolith_wrappers.py  WithCopy adapters for Monolith3-7
+│   ├── monolith9_compact.py  Monolith9/10 as PRESENT-80 and the encoded-value decode (runtime)
 │   ├── monolith5_compact.py  Compiled, proven-equivalent Monolith5 (replaces _generated/monolith5.py)
 │   └── monolith11_compact.py  Proven-equivalent Monolith11 (replaces _generated/monolith11.py)
 ```

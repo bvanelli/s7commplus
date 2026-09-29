@@ -11,9 +11,12 @@ Monolith5 was migrated to the mechanically compiled, proven-equivalent
 now calls `family0/transform7_compact.py`, whose 23-call monolith setup is
 replaced by the proven integer setup model (so Monolith3 and Monolith5 are no
 longer executed at all) and whose Transform12 tape runs on plain integers via
-`family0/transform12_compact.py`. SeedTransform's Monolith8 → Transform13 →
-Monolith11 chain runs as `family0/transform13_compact.py`: the span's decoded
-value keys a PRESENT-80 variant (Monolith9 with the Monolith10 key schedule).
+`family0/transform12_compact.py`. Monolith9/Monolith10 are a PRESENT-80
+variant (`family0/monolith9_compact.py`), so the authenticator passes 160-bit
+integers between PreSeedTransform, SeedTransform (via
+`family0/transform13_compact.py`) and KeyDerivationTransform instead of
+encoded buffers, and Monolith8, Monolith9, Monolith10 and Transform13 are no
+longer executed.
 The replaced generated sources and the original `family0/transform7.py` are
 retained for provenance and analysis, not executed.
 

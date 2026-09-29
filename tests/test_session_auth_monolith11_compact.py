@@ -48,4 +48,4 @@ def test_compact_execute_matches_generated_on_random_vectors_and_preserves_tail(
 
 def test_seed_transform_no_longer_imports_generated_monolith11() -> None:
     assert not hasattr(seed_transform, "monolith11")
-    assert seed_transform.monolith11_compact is monolith11_compact
+    assert seed_transform.monolith9_compact.monolith11_compact is monolith11_compact

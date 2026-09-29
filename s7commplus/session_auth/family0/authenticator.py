@@ -61,12 +61,11 @@ class RealPlcAuthenticator:
         return write_metadata(blob, public_key, bytes(self._key2), family)
 
     def write_seed(self, blob: bytearray | memoryview, public_key: bytes) -> int:
-        t1 = bytearray(pre_seed_transform.DESTINATION_SIZE)
-        pre_seed_transform.execute(t1, bytes(self._key1))
-        seed_transform.execute(blob, public_key, bytes(t1))
+        pre_seed = pre_seed_transform.execute_value(bytes(self._key1))
+        seed_transform.execute_value(blob, public_key, pre_seed)
         offset = seed_transform.DESTINATION_SIZE
 
-        self._derive_keys_and_lut(bytes(t1))
+        self._derive_keys_and_lut(pre_seed)
 
         checksum_transform.execute(self._checksum, bytes(self._iv), bytes(self._lookup_table))
 
@@ -141,9 +140,8 @@ class RealPlcAuthenticator:
     def extract_key2(self) -> bytes:
         return bytes(self._key2)
 
-    def _derive_keys_and_lut(self, t1: bytes) -> None:
-        kd_buf = bytearray(key_derivation_transform.DESTINATION_SIZE)
-        key_derivation_transform.execute(kd_buf, t1)
+    def _derive_keys_and_lut(self, pre_seed: int) -> None:
+        kd_buf = key_derivation_transform.execute_value(pre_seed)
 
         # First 16 bytes: challenge encryption key
         self._challenge_key[:] = kd_buf[:16]

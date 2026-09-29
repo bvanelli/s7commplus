@@ -6,19 +6,30 @@ two uint32s from the source key into the work buffer, runs Monolith9,
 and copies 6 (or 3 for the last iteration) uints of the result to
 the destination.
 
-Manual port of ``HarpoS7.Family0.Transforms.PreSeedTransform``.
+Manual port of ``HarpoS7.Family0.Transforms.PreSeedTransform``, retained as
+the reference. The runtime uses ``execute_value``: ``TRANSFORM1_DATA`` is
+Monolith10's round-key layout for the fixed key ``KEY``, so the encoded output
+holds the three source blocks encrypted under it (``monolith9_compact``).
+
+Monolith9 also compares the three postfix words with a 96-bit tag of the
+block and, only on a match, emits plain rather than encoded words. The fixed
+``_MAGIC_POSTFIX`` never matched in testing with random source keys, so
+``execute_value`` models only the encoded path.
 """
 
 from __future__ import annotations
 
 import struct
 
+from . import monolith9_compact
 from ._generated import monolith9
 from ._generated.data import TRANSFORM1_DATA
 
 SOURCE_SIZE = 0x18
 DESTINATION_SIZE = 0x3C
 
+# Key register whose Monolith10 round-key layout is TRANSFORM1_DATA[:0x300].
+KEY = 0xA98DE7C5164AD032538F
 _MAGIC_POSTFIX = struct.pack("<III", 0x4F5BB379, 0x90BA725F, 0x36A4D7BB)
 
 
@@ -44,3 +55,10 @@ def execute(destination: bytearray, source: bytes) -> None:
 
         copy_len = 24 if i < 2 else 12  # 6 uints or 3 uints
         destination[i * 24 : i * 24 + copy_len] = m9_dst[:copy_len]
+
+
+def execute_value(source: bytes) -> int:
+    """The 160-bit value ``execute`` encodes: the three source blocks encrypted under ``KEY``."""
+    if len(source) < SOURCE_SIZE:
+        raise ValueError(f"source too small ({len(source)}, need {SOURCE_SIZE})")
+    return monolith9_compact.encrypt_blocks(struct.unpack("<3Q", source[:SOURCE_SIZE]), (KEY,) * 3)

@@ -1118,7 +1118,8 @@ class TestCreateSessionRequest:
 
         await client._create_session()
 
-        assert client._legacy_session_key_required
+        assert client._public_key_fingerprint == "01:BD426B091F08731A"
+        assert client._session_challenge == bytes(range(20))
         assert client._server_session_version is not None
 
 
@@ -1540,36 +1541,6 @@ class TestAtomicSessionSetup:
         assert not client.session_setup_ok
         assert not client._session_ready
         assert not client._transport_connected
-        writer.close.assert_called_once()
-
-    @pytest.mark.asyncio
-    async def test_async_legacy_session_key_fails_before_setup(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        client = S7CommPlusAsyncClient()
-        reader = MagicMock()
-        writer = MagicMock()
-        writer.wait_closed = AsyncMock()
-        monkeypatch.setattr("s7commplus.async_client.asyncio.open_connection", AsyncMock(return_value=(reader, writer)))
-        client._cotp_connect = AsyncMock()
-        client._init_ssl = AsyncMock()
-
-        async def create_session() -> None:
-            client._protocol_version = ProtocolVersion.V1
-            client._session_id = 7
-            client._server_session_version = bytes([0x00, DataType.UDINT, 0x01])
-            client._legacy_session_key_required = True
-
-        client._create_session = AsyncMock(side_effect=create_session)
-        client._setup_session = AsyncMock()
-
-        with pytest.raises(S7ConnectionError, match="synchronous s7commplus.Client"):
-            await client.connect("127.0.0.1")
-
-        client._setup_session.assert_not_awaited()
-        assert not client.connected
-        assert not client.session_setup_ok
-        assert not client._session_ready
-        assert not client._transport_connected
-        assert not client._legacy_session_key_required
         writer.close.assert_called_once()
 
 

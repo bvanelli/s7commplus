@@ -111,8 +111,10 @@ async with AsyncClient() as client:
 ```
 
 TLS connections use the `use_tls`, `tls_cert`, `tls_key`, and `tls_ca`
-arguments to `connect()`. The synchronous client also accepts `password` there;
-with the async client, call `authenticate()` after connecting. Never weaken
+arguments to `connect()`. Both clients also accept `password` there, which V1
+SessionKey sessions use for their post-handshake legitimation and TLS sessions
+pass to `authenticate()`; that method can also be called after connecting.
+V1 SessionKey support in the async client is emulator-tested only. Never weaken
 certificate verification or authentication defaults merely to make an
 integration test pass.
 

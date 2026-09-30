@@ -26,6 +26,9 @@ from tools.scalar_stage_plan import constant
 from tools.transform7_setup_integer import model as setup
 
 
+pytestmark = pytest.mark.analysis  # studies retired HarpoS7 code in old/; pass --analysis
+
+
 @pytest.mark.slow
 @pytest.mark.parametrize("case", boundary.cases(), ids=lambda case: case.name)
 def test_first_nonce_acceptance_and_all_60_bytes_against_original(case: boundary.Case) -> None:

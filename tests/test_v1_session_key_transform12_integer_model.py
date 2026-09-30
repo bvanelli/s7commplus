@@ -10,6 +10,9 @@ from tools import transform12_integer_model as model
 from tools.decompile_transform12 import CONTEXT_SLOTS, dispatch_program, phase2_program
 
 
+pytestmark = pytest.mark.analysis  # studies retired HarpoS7 code in old/; pass --analysis
+
+
 def test_packing_matches_prepare_finalize() -> None:
     rng = random.Random(16047)
     for value in [0, 1, model.CANDIDATE_MODULUS, model.MASK, *(rng.getrandbits(160) for _ in range(1000))]:

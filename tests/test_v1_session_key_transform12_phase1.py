@@ -10,6 +10,9 @@ from tools import transform12_integer_model as arithmetic
 from tools.decompile_transform12 import dispatch_program
 
 
+pytestmark = pytest.mark.analysis  # studies retired HarpoS7 code in old/; pass --analysis
+
+
 def test_branch_union_liveness_catalogue() -> None:
     catalogue = model.catalogue()
     assert catalogue["initial_slots"] == (46, 48, 70, 94)

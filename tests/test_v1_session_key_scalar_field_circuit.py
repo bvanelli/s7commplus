@@ -12,6 +12,9 @@ from tools.scalar_compiled_stage import compile_stage
 from tools.recover_transform12_phase1 import recover
 from tools.transform7_reference import tail_program
 
+
+pytestmark = pytest.mark.analysis  # studies retired HarpoS7 code in old/; pass --analysis
+
 P = model.P
 
 

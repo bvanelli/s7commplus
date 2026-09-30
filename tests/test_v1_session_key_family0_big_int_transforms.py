@@ -18,6 +18,9 @@ from old.family0.big_int_transforms import (
     big_int_subtraction,
 )
 
+
+pytestmark = pytest.mark.analysis  # studies retired HarpoS7 code in old/; pass --analysis
+
 _FIXTURES = Path(__file__).parent / "fixtures" / "family0" / "transforms"
 
 

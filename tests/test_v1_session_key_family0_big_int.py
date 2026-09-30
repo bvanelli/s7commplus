@@ -22,6 +22,9 @@ from old.family0.big_int_operations import (
 )
 from s7commplus.v1_session_key.real_plc.authenticator import RealPlcAuthenticator
 
+
+pytestmark = pytest.mark.analysis  # studies retired HarpoS7 code in old/; pass --analysis
+
 _FIXTURES = Path(__file__).parent / "fixtures" / "family0" / "bit_operations"
 
 

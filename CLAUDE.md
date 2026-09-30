@@ -179,6 +179,17 @@ Run with `--slow` when changing anything under `tools/prove_*.py`,
 checked-in proof/model JSON — the fast default only checks that code exists
 and imports, not that its proofs still hold.
 
+Tests whose subject is the retired HarpoS7 code in `old/` (monolith models,
+Transform7/12 analyses, scalar research, bit traces) are marked `analysis`
+and are also skipped by default, which keeps a plain `pytest` run to about a
+minute. The runtime's own tests, including its comparisons against `old/`
+references, always run. CI passes `--analysis`; do the same when touching
+`old/`, `tools/` or the analysis tests:
+
+```bash
+pytest --analysis
+```
+
 The write DB supplied to E2E tests must be disposable and safe to modify. Never
 run E2E tests against an unknown, production, or safety-related PLC. Do not turn
 an E2E failure into a unit-test skip; reproduce protocol behavior with the

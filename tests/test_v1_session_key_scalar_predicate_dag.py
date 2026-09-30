@@ -11,6 +11,9 @@ from tools.prove_scalar_predicate_guards import compile_guard
 from tools.scalar_predicate_dag import Backend, P
 
 
+pytestmark = pytest.mark.analysis  # studies retired HarpoS7 code in old/; pass --analysis
+
+
 @pytest.mark.parametrize(
     "name",
     ["lazy_addition_defect", "lazy_subtraction_defect", "nonzero_product_lift", "subtraction_lift", "small_nonzero_product_lift"],

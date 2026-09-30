@@ -18,6 +18,9 @@ from tools.trace_transform7_setup_shadows import NAMES, Expression, compose, con
 from tools.transform7_setup_merge import CORRECTION
 
 
+pytestmark = pytest.mark.analysis  # studies retired HarpoS7 code in old/; pass --analysis
+
+
 def test_corrected_dependency_map_and_pair_split_cancellation() -> None:
     expected = {
         46: {0: "1/2", 2: "1", 3: "2", 4: "1", 5: "1"},

@@ -11,6 +11,9 @@ from tools.decompose_boolean_polynomial import FactoredFunction, Kernel, expand_
 from tools.recover_monolith5 import _term_source_ids
 
 
+pytestmark = pytest.mark.analysis  # studies retired HarpoS7 code in old/; pass --analysis
+
+
 def _circuit_truth(function: FactoredFunction, kernels: list[Kernel]) -> int:
     """Evaluate all input assignments in parallel with independent bitsets."""
     values = list(_variable_masks(function["inputs"]))

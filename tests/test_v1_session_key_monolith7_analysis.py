@@ -14,6 +14,9 @@ from tools.analyze_symbolic_monolith import analyze_output_bit
 from tools.monolith7_tail_model import execute_words
 from tools.recover_monolith7_tail import recover_model
 
+
+pytestmark = pytest.mark.analysis  # studies retired HarpoS7 code in old/; pass --analysis
+
 _ROOT = Path(__file__).resolve().parents[1]
 _FIXTURES = _ROOT / "tests/fixtures/family0/monoliths"
 

@@ -22,6 +22,9 @@ from tools.decompile_transform12 import (
 )
 
 
+pytestmark = pytest.mark.analysis  # studies retired HarpoS7 code in old/; pass --analysis
+
+
 def _context() -> bytearray:
     rng = random.Random(0x1200)
     context = bytearray(transform12.CONTEXT_SIZE)

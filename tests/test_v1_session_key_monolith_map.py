@@ -5,6 +5,9 @@ import pytest
 from tools.map_v1_session_key_monoliths import map_artifacts, map_execute
 
 
+pytestmark = pytest.mark.analysis  # studies retired HarpoS7 code in old/; pass --analysis
+
+
 def test_map_execute_distinguishes_word_reads_and_writes() -> None:
     source = """
 def execute(source, destination, locals_):

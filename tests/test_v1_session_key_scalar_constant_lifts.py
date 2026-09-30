@@ -8,6 +8,9 @@ import pytest
 from tools import scalar_constant_lifts as rules
 from tools import transform12_residue_defects as arithmetic
 
+
+pytestmark = pytest.mark.analysis  # studies retired HarpoS7 code in old/; pass --analysis
+
 P = arithmetic.P
 
 

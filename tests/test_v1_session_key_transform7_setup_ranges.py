@@ -31,6 +31,9 @@ from tools.recover_monolith4_span_identity import output_bit_diagram
 from tools.recover_transform7_setup import capture_setup
 
 
+pytestmark = pytest.mark.analysis  # studies retired HarpoS7 code in old/; pass --analysis
+
+
 class ConcreteBits:
     """Independent all-concrete backend; no solver dependency."""
 

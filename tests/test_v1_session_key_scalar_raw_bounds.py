@@ -15,6 +15,9 @@ from tools.scalar_stage_plan import constant
 from tools.recover_transform12_phase1 import recover
 from tools.trace_scalar_defects import evaluate_stage
 
+
+pytestmark = pytest.mark.analysis  # studies retired HarpoS7 code in old/; pass --analysis
+
 P = prefix.P
 
 

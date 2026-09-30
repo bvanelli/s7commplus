@@ -5,6 +5,9 @@ import pytest
 from tools.trace_v1_session_key_output import DependencyGraph, format_input_ranges, trace_monolith
 
 
+pytestmark = pytest.mark.analysis  # studies retired HarpoS7 code in old/; pass --analysis
+
+
 def test_input_ranges_are_compact_and_keep_input_kinds_separate() -> None:
     assert format_input_ranges(["source[0]", "source[1]", "source[3]", "scratch_initial[2]"]) == (
         "source[0-1], source[3], scratch_initial[2]"

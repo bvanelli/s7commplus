@@ -10,6 +10,9 @@ from tools import transform12_integer_model as exact
 from tools.decompile_transform12 import dispatch_program, phase2_program, trace_outputs
 
 
+pytestmark = pytest.mark.analysis  # studies retired HarpoS7 code in old/; pass --analysis
+
+
 def test_exact_sparse_polynomial_recovery() -> None:
     outputs, peak = formulas.recover()
     p = formulas.MODULUS

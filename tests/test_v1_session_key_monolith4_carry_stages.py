@@ -15,6 +15,9 @@ from tools.prove_monolith4_carry_stages import abstract_cone, proof_progress, pr
 from tools import prove_monolith4_carry_stages as carry_proof
 
 
+pytestmark = pytest.mark.analysis  # studies retired HarpoS7 code in old/; pass --analysis
+
+
 class Node:
     def __init__(self, factory: Factory, operation: str, name: str, args: tuple[Node, ...], identifier: int) -> None:
         self.factory, self.operation, self.name, self.args, self.identifier = factory, operation, name, args, identifier

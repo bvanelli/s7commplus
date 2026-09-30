@@ -27,6 +27,9 @@ from old.family0._generated import (
     monolith11,
 )
 
+
+pytestmark = pytest.mark.analysis  # studies retired HarpoS7 code in old/; pass --analysis
+
 _FIXTURES = Path(__file__).parent / "fixtures" / "family0" / "monoliths"
 
 

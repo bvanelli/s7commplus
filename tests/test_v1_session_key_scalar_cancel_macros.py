@@ -15,6 +15,9 @@ from tools.scalar_stage_plan import constant
 from tools.transform7_reference import tail_program
 
 
+pytestmark = pytest.mark.analysis  # studies retired HarpoS7 code in old/; pass --analysis
+
+
 @pytest.mark.slow
 def test_composed_source_and_actual_predicate_ast_proofs() -> None:
     pytest.importorskip("z3")

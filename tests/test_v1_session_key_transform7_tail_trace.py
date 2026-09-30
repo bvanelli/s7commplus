@@ -8,6 +8,9 @@ from old.family0 import transform7, transform12
 from tools import trace_transform7_tail as trace
 
 
+pytestmark = pytest.mark.analysis  # studies retired HarpoS7 code in old/; pass --analysis
+
+
 def test_synthetic_cases_are_deterministic_and_cover_public_sources() -> None:
     cases = trace.cases(1)
     assert cases == trace.cases(1)

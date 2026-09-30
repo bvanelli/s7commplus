@@ -14,6 +14,9 @@ from tools.recover_scalar_encodings import scalar_xor_mask
 from tools.recover_transform12_phase1 import recover
 from tools.trace_scalar_defects import evaluate_stage
 
+
+pytestmark = pytest.mark.analysis  # studies retired HarpoS7 code in old/; pass --analysis
+
 P = dag.P
 
 

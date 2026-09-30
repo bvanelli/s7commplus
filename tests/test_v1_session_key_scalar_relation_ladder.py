@@ -11,6 +11,9 @@ from tools.recover_scalar_shadow import evaluate, recover
 from tools.recover_transform12_phase1 import recover as stages
 from tools.trace_scalar_defects import evaluate_stage
 
+
+pytestmark = pytest.mark.analysis  # studies retired HarpoS7 code in old/; pass --analysis
+
 P = model.P
 
 

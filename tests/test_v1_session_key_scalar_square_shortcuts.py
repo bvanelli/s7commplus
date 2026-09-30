@@ -16,6 +16,9 @@ from tools.recover_transform12_phase1 import recover
 from tools.trace_scalar_defects import evaluate_stage
 from tools.transform7_reference import model as reference
 
+
+pytestmark = pytest.mark.analysis  # studies retired HarpoS7 code in old/; pass --analysis
+
 P = rules.MODULUS
 
 

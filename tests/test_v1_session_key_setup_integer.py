@@ -36,6 +36,9 @@ from tools.recover_transform7_setup import SLOTS, capture_setup, targeted_base_p
 from tools.trace_transform7_setup_shadows import NAMES
 from tools.transform7_setup_merge import decode_payload
 
+
+pytestmark = pytest.mark.analysis  # studies retired HarpoS7 code in old/; pass --analysis
+
 FOLDER = Path(__file__).resolve().parents[1] / "tools"
 
 

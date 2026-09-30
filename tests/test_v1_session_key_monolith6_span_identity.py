@@ -21,6 +21,9 @@ from tools.recover_monolith6_span_identity import H, high_bit_witness, local_car
 from tools.recover_monolith5_span_decoder import MODULUS, P, local_gate, recover
 
 
+pytestmark = pytest.mark.analysis  # studies retired HarpoS7 code in old/; pass --analysis
+
+
 def test_local_columns_wrap_balance_and_exact_signed_integer_identity() -> None:
     rng = random.Random(0x6DEC)
     wraps = set()

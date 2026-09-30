@@ -22,7 +22,7 @@ Run the complete checks
 
 .. code-block:: console
 
-   pytest
+   pytest --analysis
    mypy s7commplus
    ruff check s7commplus tests
    ruff format --check s7commplus tests

@@ -16,6 +16,9 @@ from tools.trace_scalar_defects import evaluate_stage
 from tools.transform7_setup_integer import model as setup
 
 
+pytestmark = pytest.mark.analysis  # studies retired HarpoS7 code in old/; pass --analysis
+
+
 @pytest.fixture(scope="module")
 def reference_states():
     x = int.from_bytes(TRANSFORM7_DATA[0xD8:0xEC], "little")

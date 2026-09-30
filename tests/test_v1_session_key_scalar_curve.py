@@ -14,6 +14,9 @@ from tools.decompile_transform12 import Operand, dispatch_program
 from tools.recover_transform12_phase1 import evaluate_stage, recover as stages
 
 
+pytestmark = pytest.mark.analysis  # studies retired HarpoS7 code in old/; pass --analysis
+
+
 def modular_tape(stage_index: int, branch: int, state: dict[int, int]) -> dict[int, int]:
     """Numeric modular interpreter independent of symbolic polynomial operations."""
     program = stages()[stage_index].choices[branch]

@@ -12,6 +12,9 @@ from old.family0._generated import monolith11
 from tools.analyze_bitwise_monolith import _anf_coefficients, _variable_masks, analyze_bitwise_output, anf_monomial_masks
 from tools.monolith11_model import EVEN_COEFFICIENTS, ODD_COEFFICIENTS, execute_words
 
+
+pytestmark = pytest.mark.analysis  # studies retired HarpoS7 code in old/; pass --analysis
+
 _FIXTURES = Path(__file__).parent / "fixtures/family0/monoliths"
 
 

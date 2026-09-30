@@ -12,6 +12,9 @@ from tools.decompile_transform12 import Instruction, Operand, Program
 from tools.recover_transform12_phase1 import recover
 from tools.trace_scalar_defects import evaluate_stage
 
+
+pytestmark = pytest.mark.analysis  # studies retired HarpoS7 code in old/; pass --analysis
+
 P = rules.MODULUS
 LOW = rules.arithmetic.LOW_LIMIT
 

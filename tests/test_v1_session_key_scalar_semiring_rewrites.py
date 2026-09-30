@@ -10,6 +10,10 @@ from math import gcd
 from tools import transform12_integer_model as source
 from tools.scalar_cancel_macros import cancellation_carry as carry
 from tools.scalar_shift_macros import CORRECTION, LOW, P
+import pytest
+
+
+pytestmark = pytest.mark.analysis  # studies retired HarpoS7 code in old/; pass --analysis
 
 VALUES = (0, 1, 2, 45, 46, 47, 48, 94, LOW - 1, LOW, LOW + 47, LOW + 100, P - 100, P - 1, P, P + 1, P + 46)
 

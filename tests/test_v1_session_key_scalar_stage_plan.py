@@ -23,6 +23,9 @@ from tools.transform7_reference import finalize, model as reference, tail_progra
 from tools.transform7_setup_integer import model as setup
 
 
+pytestmark = pytest.mark.analysis  # studies retired HarpoS7 code in old/; pass --analysis
+
+
 def base_point() -> tuple[int, int]:
     x, y = (int.from_bytes(TRANSFORM7_DATA[o : o + 20], "little") for o in (0xD8, 0xEC))
     return x, y

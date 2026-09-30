@@ -9,6 +9,9 @@ from tools import transform7_setup_merge as model
 from tools.recover_transform7_setup import recover, targeted_base_point_probe
 
 
+pytestmark = pytest.mark.analysis  # studies retired HarpoS7 code in old/; pass --analysis
+
+
 def _runtime_merge(first: int, second: int) -> bytes:
     output = bytearray(24)
     big_int_transforms.big_int_addition(output, model.encode_payload(first), model.encode_payload(second))

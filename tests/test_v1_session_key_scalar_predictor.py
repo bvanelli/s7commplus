@@ -26,6 +26,9 @@ from tools.transform7_reference import model as reference
 from tools.transform7_setup_integer import model as setup
 
 
+pytestmark = pytest.mark.analysis  # studies retired HarpoS7 code in old/; pass --analysis
+
+
 def primitive_program(operation: str) -> Program:
     instruction = Instruction(0, 0, 2, operation, (Operand("input", 0), Operand("input", 1)), 0)
     return Program(0, 1, 3, 0, (instruction,), ((2, Operand("value", 0)),))

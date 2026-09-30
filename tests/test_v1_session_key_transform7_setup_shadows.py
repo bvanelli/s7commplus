@@ -16,6 +16,9 @@ from tools.recover_transform7_setup import capture_setup, recover, targeted_base
 from tools.trace_transform7_setup_shadows import compose, conditional_candidate, span_shadow, trace
 
 
+pytestmark = pytest.mark.analysis  # studies retired HarpoS7 code in old/; pass --analysis
+
+
 def test_conditional_composition_cancels_unknown_pair_splits() -> None:
     expected = {
         46: {"d": Fraction(1, 4), "X": Fraction(1, 4), "Y": Fraction(1, 2), "R": Fraction(1, 8)},

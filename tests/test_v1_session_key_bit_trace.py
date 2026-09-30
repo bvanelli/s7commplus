@@ -11,6 +11,9 @@ from old.family0._generated import monolith5
 from tools.trace_v1_session_key_bits import _evaluate, trace_output_bits
 
 
+pytestmark = pytest.mark.analysis  # studies retired HarpoS7 code in old/; pass --analysis
+
+
 def test_fixed_shifts_masks_and_power_of_two_multiplication() -> None:
     cases = {
         "src_dwords[3] << 2 & 0xC": {2: {(3, 0)}, 3: {(3, 1)}},

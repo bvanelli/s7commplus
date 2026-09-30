@@ -15,6 +15,9 @@ from old.family0._generated.data import TRANSFORM7_DATA
 from tools.recover_scalar_encodings import scalar_xor_mask
 
 
+pytestmark = pytest.mark.analysis  # studies retired HarpoS7 code in old/; pass --analysis
+
+
 def primitive(operation: str = "add") -> Program:
     operands = (Operand("input", 0),) if operation == "square" else (Operand("input", 0), Operand("input", 1))
     instruction = Instruction(0, 0, 2, operation, operands, 0)

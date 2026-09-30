@@ -19,6 +19,10 @@ from tools.compile_monolith5 import compile_source
 
 from old.family0 import monolith5_compact, monolith_wrappers
 from old.family0._generated import monolith5 as generated_monolith5
+import pytest
+
+
+pytestmark = pytest.mark.analysis  # studies retired HarpoS7 code in old/; pass --analysis
 
 _FIXTURES = Path(__file__).parent / "fixtures/family0/monoliths"
 

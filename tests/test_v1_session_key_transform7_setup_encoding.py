@@ -9,6 +9,9 @@ from old.family0 import transform7, transform12
 from tools import recover_transform7_setup as model
 
 
+pytestmark = pytest.mark.analysis  # studies retired HarpoS7 code in old/; pass --analysis
+
+
 def test_recovered_affine_coefficients_and_inverse() -> None:
     candidate = model.recover()
     p = model.MODULUS

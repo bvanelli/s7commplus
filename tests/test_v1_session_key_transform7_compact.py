@@ -17,6 +17,9 @@ from tools import transform12_integer_model as arithmetic
 from tools.recover_monolith4_span_identity import normalized_span
 from tools.transform7_setup_integer import model as proven_setup
 
+
+pytestmark = pytest.mark.analysis  # studies retired HarpoS7 code in old/; pass --analysis
+
 _BASE_POINT = bytes(TRANSFORM7_DATA[0xD8:])
 # Reachable synthetic input whose setup hits BigIntAddition's lost-carry exception.
 _CARRY_WITNESS = (1456322070154714087054275448276265639382807574476).to_bytes(20, "little")

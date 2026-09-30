@@ -16,6 +16,9 @@ from old.family0 import checksum_transform, lut_generator, transform13
 from old.family0 import pre_seed_transform as old_pre_seed_transform
 from old.family0 import key_derivation_transform as old_key_derivation_transform
 
+
+pytestmark = pytest.mark.analysis  # studies retired HarpoS7 code in old/; pass --analysis
+
 _FIXTURES = Path(__file__).parent / "fixtures" / "family0" / "transforms"
 
 

@@ -14,6 +14,9 @@ from tools.recover_transform12_phase1 import recover
 from tools.trace_scalar_defects import evaluate_stage
 
 
+pytestmark = pytest.mark.analysis  # studies retired HarpoS7 code in old/; pass --analysis
+
+
 def eager_lift(a: int, b: int, lift_a: Callable[[], bool], lift_b: Callable[[], bool]) -> bool:
     """Value-equivalent baseline that always requests both operand lifts."""
     ta, tb = lift_a(), lift_b()

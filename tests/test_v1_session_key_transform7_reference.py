@@ -18,6 +18,9 @@ from tools.recover_transform7_setup import targeted_base_point_probe
 from tools.prove_transform7_reference_topology import verify as verify_topology
 from tools.trace_transform7_tail import Case, cases, observe
 
+
+pytestmark = pytest.mark.analysis  # studies retired HarpoS7 code in old/; pass --analysis
+
 FIXTURES = Path(__file__).resolve().parents[1] / "tests/fixtures/family0/monoliths"
 
 

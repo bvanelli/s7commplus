@@ -34,7 +34,7 @@ def get_free_tcp_port() -> int:
 
 
 def pytest_addoption(parser: pytest.Parser) -> None:
-    """Add command line options for e2e and slow tests."""
+    """Add command line options for e2e, slow and analysis tests."""
     parser.addoption(
         "--e2e",
         action="store_true",
@@ -46,6 +46,12 @@ def pytest_addoption(parser: pytest.Parser) -> None:
         action="store_true",
         default=False,
         help="Run slow tests that re-derive recovered SessionKey proofs via Z3 (skipped by default)",
+    )
+    parser.addoption(
+        "--analysis",
+        action="store_true",
+        default=False,
+        help="Run the analyses of retired HarpoS7 code in old/ (skipped by default; CI runs them)",
     )
     parser.addoption(
         "--plc-ip",
@@ -124,6 +130,10 @@ def pytest_configure(config: pytest.Config) -> None:
         "markers",
         "slow: mark test as re-deriving a recovered SessionKey proof via Z3 (skipped by default; pass --slow to run)",
     )
+    config.addinivalue_line(
+        "markers",
+        "analysis: mark test as studying retired HarpoS7 code in old/ (skipped by default; pass --analysis to run)",
+    )
     global _REAL_PLC_REPORT
     _REAL_PLC_REPORT = RealPLCReport(
         sensitive_values=tuple(
@@ -165,6 +175,8 @@ def pytest_collection_modifyitems(config: pytest.Config, items: list[pytest.Item
     for item in items:
         if "e2e" in item.keywords and not config.getoption("--e2e"):
             item.add_marker(pytest.mark.skip(reason="Need --e2e option to run end-to-end tests"))
+        if "analysis" in item.keywords and not config.getoption("--analysis"):
+            item.add_marker(pytest.mark.skip(reason="ANALYSIS_OPT_IN_REQUIRED: pass --analysis to study retired code in old/"))
         if "slow" in item.keywords and not config.getoption("--slow"):
             item.add_marker(pytest.mark.skip(reason="SLOW_OPT_IN_REQUIRED: pass --slow to re-derive proofs via Z3"))
         if ("write" in item.keywords or "plc_write" in item.keywords) and not config.getoption("--allow-plc-write"):

@@ -19,6 +19,9 @@ from tools.trace_scalar_defects import execute, reference_case
 from tools.trace_transform7_setup_shadows import conditional_candidate
 
 
+pytestmark = pytest.mark.analysis  # studies retired HarpoS7 code in old/; pass --analysis
+
+
 def modular_phase(x: int, y: int, r: int, scalar: int) -> tuple[int, int]:
     initial = conditional_candidate().encode(x, y, r) + (x % MODULUS,)
     state = dict(zip(stages()[0].inputs, initial))

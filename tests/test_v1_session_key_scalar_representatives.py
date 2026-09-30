@@ -17,6 +17,9 @@ from tools.recover_transform12_phase1 import recover as stages
 from tools.trace_scalar_defects import evaluate_stage
 
 
+pytestmark = pytest.mark.analysis  # studies retired HarpoS7 code in old/; pass --analysis
+
+
 @pytest.mark.parametrize("operation", ["add", "subtract", "multiply"])
 def test_normal_form_matches_packed_primitives_and_independent_oracles(operation: str) -> None:
     p, low = rules.MODULUS, arithmetic.LOW_LIMIT

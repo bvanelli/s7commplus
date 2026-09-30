@@ -20,6 +20,9 @@ from tools.recover_monolith5_span_decoder import MODULUS, P, combined_payload, l
 from tools.trace_transform7_setup_shadows import span_shadow
 
 
+pytestmark = pytest.mark.analysis  # studies retired HarpoS7 code in old/; pass --analysis
+
+
 def test_source_proves_boundary_and_eight_payload_bits() -> None:
     proof = prove_prefix()
     assert proof["proved_boundary_bits"] == 1

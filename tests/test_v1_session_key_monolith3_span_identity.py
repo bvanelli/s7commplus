@@ -20,6 +20,9 @@ from tools.recover_monolith5_span_decoder import MODULUS, P, local_gate, recover
 from tools.recover_monolith6_span_identity import H, local_carries, normalized_relation
 
 
+pytestmark = pytest.mark.analysis  # studies retired HarpoS7 code in old/; pass --analysis
+
+
 def test_virtual_span_columns_exact_integer_and_corrected_field_relations() -> None:
     rng = random.Random(0x3DEC)
     wraps = set()

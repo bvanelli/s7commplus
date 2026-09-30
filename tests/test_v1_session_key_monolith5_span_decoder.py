@@ -14,6 +14,9 @@ from tools.recover_monolith5_span_decoder import MODULUS, P, combined_payload, d
 from tools.transform7_setup_merge import decode_payload
 
 
+pytestmark = pytest.mark.analysis  # studies retired HarpoS7 code in old/; pass --analysis
+
+
 def generated_sum(source: list[int]) -> int:
     output = bytearray(48)
     monolith5.execute(output, struct.pack("<54I", *source))

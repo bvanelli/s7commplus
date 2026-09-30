@@ -7,6 +7,10 @@ import random
 from old.family0 import big_int_operations, big_int_transforms, transform12, transform12_compact
 from old.family0._generated.data import TRANSFORM12_BIG_INT_DATA
 from old.family0._generated.data._constants import TRANSFORM7_COUNTS_INTS, TRANSFORM7_INDEXES_INTS
+import pytest
+
+
+pytestmark = pytest.mark.analysis  # studies retired HarpoS7 code in old/; pass --analysis
 
 LIMIT = 1 << 160
 P = LIMIT - 47

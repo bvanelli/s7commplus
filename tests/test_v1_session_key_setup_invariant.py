@@ -22,6 +22,9 @@ from tools.prove_transform7_setup_ranges import (
 from tools.recover_monolith4_span_identity import normalized_span
 
 
+pytestmark = pytest.mark.analysis  # studies retired HarpoS7 code in old/; pass --analysis
+
+
 FOLDER = Path(__file__).resolve().parents[1] / "tools"
 
 

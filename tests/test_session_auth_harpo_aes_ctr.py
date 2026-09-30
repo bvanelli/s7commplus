@@ -1,4 +1,4 @@
-"""Tests for the custom AES-CTR-with-MAC primitive.
+"""Tests for HarpoAesCtr, AES-GCM with a 24-bit counter.
 
 Vectors reproduced from ``HarpoS7.Tests/Aes/HarpoAesCtrTests.cs``, plus
 differential tests against ``cryptography``'s AES-GCM.
@@ -61,27 +61,23 @@ class TestEncryptCtr:
 @pytest.mark.skipif(not _has_cryptography, reason="requires cryptography package")
 class TestCalculateChecksum:
     def test_harpos7_vector(self) -> None:
-        # HarpoAesCtrTests.CalculateChecksumTest — mocks every
-        # piece of internal state directly, then verifies the
-        # finalised MAC. Mirrors the C# test which uses reflection;
-        # we just assign the bytearrays.
+        # HarpoAesCtrTests.CalculateChecksumTest — mocks the internal
+        # state directly, then verifies the finalised tag. The C# test
+        # sets HarpoS7's fields by reflection: _var2 (ciphertext length)
+        # is _length, _var1 (associated-data length, always 0) no longer
+        # exists, the LUT is _hash_table, _aes3 is _ghash and
+        # _iv_extension is _j0. Its _aes2 value is overwritten before use.
         cipher = HarpoAesCtr(bytes.fromhex("43950F7B8B896E30457824DC8A591E32"))
+        cipher._length = 0x10
 
-        # Mock _var1, _var2.
-        cipher._var2 = 0x10
-        cipher._var1 = 0x00
-
-        # Mock LUT — load the 4096-byte fixture vendored from the
-        # C# test's _mockChecksumLut literal.
+        # The 4096-byte fixture vendored from the C# test's _mockChecksumLut literal.
         from pathlib import Path
 
         fixture = Path(__file__).parent / "fixtures" / "harpo_aes_ctr_mock_checksum_lut.bin"
-        cipher._lut[:] = fixture.read_bytes()
+        cipher._hash_table[:] = fixture.read_bytes()
 
-        # Mock the three 16-byte slots the test pre-fills.
-        cipher._aes3[:] = bytes.fromhex("738FA8A07EF0893A97CBF681250AD2FA")
-        cipher._aes2[:] = bytes.fromhex("478FC2674E3EB1DD3DD9787103E92316")
-        cipher._iv_extension[:] = bytes.fromhex("585CE8585DF132FA4C7FD9BECEB97461")
+        cipher._ghash[:] = bytes.fromhex("738FA8A07EF0893A97CBF681250AD2FA")
+        cipher._j0[:] = bytes.fromhex("585CE8585DF132FA4C7FD9BECEB97461")
 
         checksum = cipher.calculate_checksum()
         assert checksum == bytes.fromhex("5A948DB51DC34FF25808ED3ABE15EB12")

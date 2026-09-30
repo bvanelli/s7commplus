@@ -266,4 +266,11 @@ HarpoHash and HarpoAesCtr, which the SessionKey handshake does not use,
 are standard: HarpoHash is GCM's GHASH multiplication with Shoup's 8-bit
 tables, and HarpoAesCtr is AES-GCM without associated data, apart from a
 24-bit counter increment. Tests match both against a textbook GHASH and
-`cryptography`'s AES-GCM.
+`cryptography`'s AES-GCM. Both modules are now written as that arithmetic
+rather than as ports of HarpoS7's 32-bit register code: the Shoup table is
+built from a bit-serial GCM multiply, `LUT_SEED` is computed from the
+reduction rule, and HarpoAesCtr keeps `J0`, the counter, the running GHASH
+and the ciphertext length under those names. HarpoS7's known-answer
+vectors still pass unchanged, and a differential run against the previous
+port matched on 400 random sessions with split blocks, truncated tags and
+24-bit counter wraps.

@@ -2,9 +2,8 @@
 
 HarpoS7's ``HarpoAes`` is a thin .NET-Framework wrapper around its
 built-in AES, configured for 128-bit keys, 128-bit blocks, ECB mode,
-zero padding. We mirror the API in Python via ``cryptography`` (the
-standard cross-platform PyPI crypto library, already an optional
-dependency of s7commplus).
+zero padding. We mirror the API in Python via ``cryptography``, the
+package's only runtime dependency.
 
 Only ``encrypt_ecb`` is exposed: HarpoS7 uses AES purely as a building
 block for ``HarpoAesCtr``, never as an encryption primitive on its own.

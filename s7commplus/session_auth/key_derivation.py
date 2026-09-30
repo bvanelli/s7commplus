@@ -1,9 +1,8 @@
 """SHA-256-based key derivation helpers used by the session-auth handshake.
 
 These functions construct the various symmetric keys and IVs the
-handshake feeds into AES-CTR. None of them reach into the proprietary
-"monolith" transforms, so they're implementable in pure Python with
-``hashlib`` alone.
+handshake feeds into its AES encryptions. They need only ``hashlib`` and
+``hmac``.
 
 Ported from HarpoS7 (MIT) — ``HarpoS7.Keys.KeyUtilities``. SessionKey
 derivation also uses the Family-0 challenge fingerprint; it is imported

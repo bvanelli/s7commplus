@@ -2,19 +2,21 @@
 
 This is AES-GCM (NIST SP 800-38D) without associated data:
 
-- Init takes H = ``AES-ECB(key, 0)`` for the GHASH table (``HarpoHash``)
-  and derives the pre-counter block J0 from the IV the way GCM does for
-  IVs that are not 96 bits long.
-- EncryptCtr increments the counter, AES-encrypts it to produce a
-  keystream block, XORs that with plaintext to make ciphertext, and
-  feeds the ciphertext into the running GHASH.
-- CalculateChecksum folds in the lengths and returns the GCM tag
-  ``GHASH ^ AES(J0)``.
+- ``init`` sets ``H = AES(key, 0^128)``, builds its GHASH table
+  (``harpo_hash``), and derives the pre-counter block
+  ``J0 = GHASH(iv || 0^64 || [8 * len(iv)]_64)``, GCM's rule for IVs that
+  are not 96 bits long.
+- ``encrypt_ctr`` XORs the plaintext with ``AES(key, counter)`` blocks,
+  incrementing the counter before each block, and folds the ciphertext into
+  the running GHASH. Calls may split blocks anywhere.
+- ``calculate_checksum`` folds in the length block ``0^64 || [8 * len(C)]_64``
+  and returns the GCM tag ``AES(key, J0) ^ GHASH``.
 
 Tests match ciphertexts and tags against ``cryptography``'s AES-GCM. The one
 difference is the counter: HarpoS7 increments only bytes 13..15, while GCM's
 inc32 also carries into byte 12, so the two diverge after the low 24 bits of
-the counter wrap.
+the counter wrap. HarpoS7 rejects 12-byte IVs and IVs that are not a multiple
+of 16 bytes; so does this module.
 
 Ported from HarpoS7 (MIT) — ``HarpoS7.Aes.HarpoAesCtr``.
 """
@@ -24,54 +26,37 @@ from __future__ import annotations
 from .harpo_aes import AES_BLOCK_SIZE, HarpoAes
 from .harpo_hash import generate_lookup_table, hash_block
 
-_LUT_SIZE = 4096
-
 
 class HarpoAesCtr(HarpoAes):
-    """Stateful CTR-mode primitive bound to a 16-byte AES key.
+    """AES-GCM encryption, without associated data, bound to a 16-byte key.
 
-    Lifecycle:
-
-    1. ``HarpoAesCtr(key)`` — construct.
-    2. ``init(iv)`` — set up working table + counter from an
-       IV. Must be a multiple of 16 bytes (12-byte and short-tail
-       paths are upstream NotImplementedException, mirrored here).
-    3. ``encrypt_ctr(plaintext)`` — call as many times as needed.
+    Call ``init(iv)``, then ``encrypt_ctr`` as often as needed, then
+    ``calculate_checksum`` once for the tag.
     """
 
     def __init__(self, key: bytes) -> None:
         super().__init__(key)
-        # The four 16-byte slots HarpoS7 names as `_counter`,
-        # `_aes2`, `_aes3`, `_aes4` plus `_iv_extension` at slot 5.
-        # Slot 4 is the seed buffer used during Init only.
+        self._hash_table = bytearray(256 * AES_BLOCK_SIZE)  # GHASH table for H
+        self._j0 = bytearray(AES_BLOCK_SIZE)  # pre-counter block; its encryption masks the tag
         self._counter = bytearray(AES_BLOCK_SIZE)
-        self._aes2 = bytearray(AES_BLOCK_SIZE)
-        self._aes3 = bytearray(AES_BLOCK_SIZE)  # MAC accumulator
-        self._aes4 = bytearray(AES_BLOCK_SIZE)  # seed scratch
-        self._iv_extension = bytearray(AES_BLOCK_SIZE)
-        self._lut = bytearray(_LUT_SIZE)
-        self._var1 = 0  # bytes encrypted in current pre-init region
-        self._var2 = 0  # total bytes encrypted post-init
+        self._keystream = bytearray(AES_BLOCK_SIZE)  # AES(counter) for the current block
+        self._ghash = bytearray(AES_BLOCK_SIZE)  # running GHASH of the ciphertext
+        self._length = 0  # ciphertext bytes produced since init
 
     @property
     def counter(self) -> bytes:
-        """Internal counter state — exposed for vector-test parity."""
+        """The current counter block."""
         return bytes(self._counter)
 
+    def _ghash_block(self) -> None:
+        self._ghash[:] = hash_block(bytes(self._ghash), bytes(self._hash_table))
+
     def init(self, iv: bytes) -> None:
-        """Set up the working table and counter from an IV.
-
-        Mirrors HarpoS7's ``Init``. The IV must be a non-zero
-        multiple of 16 bytes; 12-byte and partial-tail paths are
-        ``NotImplementedException`` upstream and ``NotImplementedError``
-        here — they're not exercised by the SessionKey handshake.
-
-        Args:
-            iv: IV bytes; length must be a multiple of 16.
+        """Start a message under ``iv``, whose length must be a non-zero multiple of 16.
 
         Raises:
-            NotImplementedError: For IV lengths upstream rejects.
-            ValueError: For empty IV.
+            ValueError: For an empty IV.
+            NotImplementedError: For the IV lengths HarpoS7 does not implement.
         """
         if len(iv) == 0:
             raise ValueError("iv must not be empty")
@@ -80,178 +65,51 @@ class HarpoAesCtr(HarpoAes):
         if len(iv) % AES_BLOCK_SIZE != 0:
             raise NotImplementedError("non-multiple-of-16 IV tail not implemented")
 
-        # 1. AES-ECB encrypt 16 zero bytes — produces the seed used
-        #    to drive the working-table generation.
-        for i in range(AES_BLOCK_SIZE):
-            self._aes4[i] = 0
-        encrypted_zero = self.encrypt_ecb(bytes(self._aes4))
-        for i in range(AES_BLOCK_SIZE):
-            self._aes4[i] = encrypted_zero[i]
+        self._hash_table[:] = generate_lookup_table(self.encrypt_ecb(bytes(AES_BLOCK_SIZE)))
 
-        # 2. Generate working LUT from that seed.
-        self._lut[:] = generate_lookup_table(bytes(self._aes4))
+        self._ghash[:] = bytes(AES_BLOCK_SIZE)
+        for start in range(0, len(iv), AES_BLOCK_SIZE):
+            self._fold(iv[start : start + AES_BLOCK_SIZE])
+        self._fold((8 * len(iv)).to_bytes(AES_BLOCK_SIZE, "big"))
+        self._j0[:] = self._ghash
+        self._counter[:] = self._j0
 
-        # 3. XOR + hash each 16-byte chunk of IV into _iv_extension.
-        for i in range(AES_BLOCK_SIZE):
-            self._iv_extension[i] = 0
-        for chunk_start in range(0, len(iv), AES_BLOCK_SIZE):
-            chunk = iv[chunk_start : chunk_start + AES_BLOCK_SIZE]
-            for i in range(AES_BLOCK_SIZE):
-                self._iv_extension[i] ^= chunk[i]
-            self._iv_extension[:] = hash_block(bytes(self._iv_extension), bytes(self._lut))
+        self._ghash[:] = bytes(AES_BLOCK_SIZE)
+        self._length = 0
 
-        # 4. XOR the IV bit-length and a derived high-bits byte into
-        #    fixed positions, then hash one more time.
-        iv_bit_len = len(iv) << 3
-        self._iv_extension[0xF] ^= iv_bit_len & 0xFF
-        self._iv_extension[0xE] ^= (iv_bit_len >> 8) & 0xFF
-        self._iv_extension[0xD] ^= (iv_bit_len >> 16) & 0xFF
-        self._iv_extension[0xC] ^= (iv_bit_len >> 24) & 0xFF
-        self._iv_extension[0xB] ^= (len(iv) >> 29) & 0xFF
-
-        self._iv_extension[:] = hash_block(bytes(self._iv_extension), bytes(self._lut))
-
-        # 6. Counter starts as a copy of the finalised IV extension.
-        self._counter[:] = self._iv_extension
-
-        # 7. Reset the MAC accumulator and byte counters.
-        for i in range(AES_BLOCK_SIZE):
-            self._aes3[i] = 0
-        self._var1 = 0
-        self._var2 = 0
+    def _fold(self, block: bytes) -> None:
+        """``ghash = (ghash ^ block) * H`` for a full block."""
+        for index, byte in enumerate(block):
+            self._ghash[index] ^= byte
+        self._ghash_block()
 
     def _increment_counter(self) -> None:
-        """Increment counter bytes 0xD..0xF only.
-
-        Mirrors HarpoS7's behaviour: the upper 13 bytes are treated
-        as a fixed nonce; only the bottom three bytes act as a counter.
-        """
-        v2 = 0x10
-        while v2 >= 0xD + 1:
-            v2 -= 1
-            self._counter[v2] = (self._counter[v2] + 1) & 0xFF
-            if self._counter[v2] != 0:
-                break
+        """Add 1 to the 24-bit big-endian counter in bytes 13..15, wrapping without carry."""
+        value = (int.from_bytes(self._counter[13:16], "big") + 1) & 0xFFFFFF
+        self._counter[13:16] = value.to_bytes(3, "big")
 
     def encrypt_ctr(self, plaintext: bytes) -> bytes:
-        """Encrypt arbitrarily-sized plaintext, accumulating the MAC.
-
-        Output length matches input length. Multiple calls accumulate
-        into the same MAC and counter — call ``init`` again to reset.
-
-        Args:
-            plaintext: Bytes to encrypt; any length, including zero.
-
-        Returns:
-            Ciphertext, same length as plaintext.
-        """
+        """Encrypt ``plaintext`` (any length), continuing the keystream and GHASH of earlier calls."""
         out = bytearray(len(plaintext))
-
-        # Position within the current 16-byte keystream block —
-        # bytes 0..(v1-1) of _aes2 have already been consumed.
-        v1 = self._var2 & 0xF
-
-        # If we previously encrypted 1..15 bytes of a block but
-        # haven't yet hashed it, do that now (only on a re-entry
-        # where _var2 == 0 but _var1 has unaligned tail bytes).
-        if self._var2 == 0 and self._var1 != 0 and (self._var1 & 0xF) != 0:
-            self._aes3[:] = hash_block(bytes(self._aes3), bytes(self._lut))
-
-        v4 = 0  # bytes processed of plaintext
-        # Finish the partial block we started in a previous call.
-        if v1 != 0:
-            if len(plaintext) != 0:
-                while True:
-                    if v1 > 0xF:
-                        break
-                    v3 = (self._aes2[v1] ^ plaintext[v4]) & 0xFF
-                    out[v4] = v3
-                    self._aes3[v1] ^= v3
-                    v1 += 1
-                    v4 += 1
-                    if v4 >= len(plaintext):
-                        break
-            if v1 == 0x10:
-                self._aes3[:] = hash_block(bytes(self._aes3), bytes(self._lut))
-                v1 = 0
-
-        # Process whole 16-byte blocks.
-        while v4 + AES_BLOCK_SIZE <= len(plaintext):
-            self._increment_counter()
-            self._aes2[:] = self.encrypt_ecb(bytes(self._counter))
-            for i in range(AES_BLOCK_SIZE):
-                ct = (plaintext[v4 + i] ^ self._aes2[i]) & 0xFF
-                out[v4 + i] = ct
-                self._aes3[i] ^= ct
-            self._aes3[:] = hash_block(bytes(self._aes3), bytes(self._lut))
-            v4 += AES_BLOCK_SIZE
-
-        # Tail: 1..15 bytes — encrypt under a fresh counter block,
-        # but defer the hash until we either get more bytes (above)
-        # or the caller calls calculate_checksum (next slice).
-        if v4 < len(plaintext):
-            self._increment_counter()
-            self._aes2[:] = self.encrypt_ecb(bytes(self._counter))
-            tail_len = len(plaintext) - v4
-            aes3_index = v1
-            for i in range(tail_len):
-                ct = (self._aes2[aes3_index] ^ plaintext[v4 + i]) & 0xFF
-                out[v4 + i] = ct
-                self._aes3[aes3_index] ^= ct
-                aes3_index += 1
-            v4 = len(plaintext)
-
-        self._var2 += v4
+        for index, byte in enumerate(plaintext):
+            position = self._length % AES_BLOCK_SIZE
+            if position == 0:
+                self._increment_counter()
+                self._keystream[:] = self.encrypt_ecb(bytes(self._counter))
+            out[index] = byte ^ self._keystream[position]
+            self._ghash[position] ^= out[index]
+            self._length += 1
+            if position == AES_BLOCK_SIZE - 1:
+                self._ghash_block()
         return bytes(out)
 
     def calculate_checksum(self, length: int = AES_BLOCK_SIZE) -> bytes:
-        """Finalise the running MAC and emit the checksum bytes.
-
-        Folds the total bit-length of encrypted data into the
-        accumulator, runs one final HarpoHash round, AES-encrypts the
-        original IV extension as a key for the output, and XORs the
-        two together. Should be called once per session, after all
-        ``encrypt_ctr`` calls.
-
-        Args:
-            length: Number of checksum bytes to emit. Must be 1..16.
-                The full HarpoS7 protocol uses 16; smaller values
-                produce a truncated MAC.
-
-        Returns:
-            ``length`` bytes of checksum.
-
-        Raises:
-            ValueError: If ``length`` is outside 1..16.
-        """
+        """The first ``length`` bytes (1..16) of the GCM tag for everything encrypted since ``init``."""
         if length < 1 or length > AES_BLOCK_SIZE:
             raise ValueError(f"length must be 1..{AES_BLOCK_SIZE}, got {length}")
 
-        # Hash any partial-block tail the encryptor left unhashed.
-        if self._var2 == 0 and self._var1 != 0 and (self._var1 & 0xF) != 0:
-            self._aes3[:] = hash_block(bytes(self._aes3), bytes(self._lut))
-        if self._var2 != 0 and (self._var2 & 0xF) != 0:
-            self._aes3[:] = hash_block(bytes(self._aes3), bytes(self._lut))
-
-        # XOR the bit-length of the encrypted region into bytes 0xC..0xF
-        # of the accumulator (with overflow into 0xB).
-        v1 = (self._var2 << 3) & 0xFFFFFFFF
-        for i in range(0xF, 0xB, -1):
-            self._aes3[i] ^= (v1 >> ((0xF - i) * 8)) & 0xFF
-        self._aes3[0xB] ^= (self._var2 >> 29) & 0xFF
-
-        # Same for the pre-init region's bit-length, into bytes 4..7
-        # (with overflow into 3).
-        v2 = (self._var1 << 3) & 0xFFFFFFFF
-        for i in range(7, 3, -1):
-            self._aes3[i] ^= (v2 >> ((7 - i) * 8)) & 0xFF
-        self._aes3[3] ^= (self._var1 >> 29) & 0xFF
-
-        # Final hash round.
-        self._aes3[:] = hash_block(bytes(self._aes3), bytes(self._lut))
-
-        # AES-encrypt the original IV extension as the keystream for
-        # the checksum output.
-        self._aes2[:] = self.encrypt_ecb(bytes(self._iv_extension))
-
-        return bytes(self._aes2[i] ^ self._aes3[i] for i in range(length))
+        if self._length % AES_BLOCK_SIZE:
+            self._ghash_block()  # the zero-padded final partial block
+        self._fold((8 * self._length).to_bytes(AES_BLOCK_SIZE, "big"))  # no associated data
+        mask = self.encrypt_ecb(bytes(self._j0))
+        return bytes(tag ^ m for tag, m in zip(self._ghash[:length], mask))

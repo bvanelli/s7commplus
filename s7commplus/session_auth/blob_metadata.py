@@ -2,9 +2,9 @@
 
 Produces the leading 48 bytes (12 little-endian uint32 dwords) of the
 180-byte blob TIA Portal sends as the ``SessionKey`` value in its
-session-setup write. The remaining 132 bytes — encrypted seed, AES-CBC
-IV, encrypted challenge — are added by the auth orchestrator in a
-later slice.
+session-setup write. ``family0.authenticator`` writes the remaining 132
+bytes: the 60-byte seed field, the 16-byte counter IV, the encrypted
+challenge and key2 (40 bytes), and the encrypted 16-byte checksum.
 
 Layout (matches Wireshark s7comm-plus dissector field names):
 

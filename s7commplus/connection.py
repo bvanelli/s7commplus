@@ -1736,8 +1736,9 @@ class S7CommPlusConnection:
         Always uses V2 framing, transport flags 0x34, and no IntegrityId.
 
         On V1-initial PLCs (FW < 4.5), this also includes the SecurityKey
-        blob at address 1830, carrying an encrypted random seed and
-        AES-CBC-encrypted challenge derived from the PLC's public key.
+        blob at address 1830, carrying a seed encrypted with an ECDH against
+        the PLC's public key and the challenge encrypted under keys derived
+        from that seed (see ``session_auth.family0.authenticator``).
 
         Returns:
             True if session setup succeeded (return_value == 0).

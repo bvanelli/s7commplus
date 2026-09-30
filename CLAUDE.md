@@ -48,9 +48,12 @@ tested against an isolated, non-safety-critical controller.
 - `tests/`: unit, protocol conformance, emulator, TLS, authentication, and
   opt-in real-PLC tests
 
-Package data matters: `py.typed`, authentication `.bin` files, and zlib
-dictionary `.xml` files are included through `pyproject.toml`. Do not move,
-rename, or omit them from distributions accidentally.
+Package data matters: `py.typed`, the session-authentication documents,
+`LICENSE-HarpoS7` and `artifacts.json`, and zlib dictionary `.xml` files are
+included through `pyproject.toml`. The runtime currently ships no `.bin` tables;
+the `session_auth/**/*.bin` glob stays so that any manifested table added later
+is distributed. Do not move, rename, or omit package data from distributions
+accidentally.
 
 The session-authentication code derives from HarpoS7. Preserve its attribution
 and `s7commplus/session_auth/LICENSE-HarpoS7` when changing or redistributing it.

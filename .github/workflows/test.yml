@@ -42,6 +42,6 @@ jobs:
       - name: Verify wheel contents
         run: >-
           python -c "import glob, zipfile; names = zipfile.ZipFile(glob.glob('dist/*.whl')[0]).namelist();
-          required = ('s7commplus/py.typed', 's7commplus/session_auth/LICENSE-HarpoS7');
-          assert all(item in names for item in required); assert any(item.endswith('.bin') for item in names);
+          required = ('s7commplus/py.typed', 's7commplus/session_auth/LICENSE-HarpoS7', 's7commplus/session_auth/artifacts.json');
+          assert all(item in names for item in required);
           assert any(item.startswith('s7commplus/zlib_dicts/') and item.endswith('.xml') for item in names)"

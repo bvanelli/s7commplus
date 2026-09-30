@@ -10,7 +10,7 @@ from __future__ import annotations
 import os
 import struct
 
-from s7commplus.session_auth.family0 import seed
+from s7commplus.v1_session_key.real_plc import seed
 
 from . import encoding, transform7_compact
 from ._generated import monolith1, monolith2

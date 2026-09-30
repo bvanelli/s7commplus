@@ -2,7 +2,7 @@
 
 Manual port of ``HarpoS7.Family0.Transforms.ChecksumTransform``. With
 ``lookup_table`` from ``lut_generator.execute(table, h)``, ``execute`` computes
-``key * h`` in the field of ``s7commplus.session_auth.family0.checksum``, which
+``key * h`` in the field of ``s7commplus.v1_session_key.real_plc.checksum``, which
 the runtime multiplies directly. The work buffer is a uint32[8] 256-bit product
 that the port walks one key byte at a time and reduces in its final mixing step.
 """

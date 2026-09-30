@@ -9,7 +9,7 @@ import random
 import sys
 from typing import Any
 
-from tools.benchmark_session_auth_models import measure
+from tools.benchmark_v1_session_key_models import measure
 from tools.recover_transform7_setup import capture_setup
 from tools.transform7_setup_integer import LIMIT, model
 

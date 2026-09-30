@@ -1444,7 +1444,7 @@ independent human review.
 ```
 python -m tools.prove_scalar_saturated_history
 python -m tools.scalar_saturated_history --max-terms 2
-pytest tests/test_session_auth_scalar_saturated_history.py
+pytest tests/test_v1_session_key_scalar_saturated_history.py
 ```
 
 ### Further probes and the remaining research boundary
@@ -1544,7 +1544,7 @@ patterns overlap or have shared intermediate values.
 ```
 python -m tools.prove_scalar_shift_macros
 python -m tools.scalar_shift_macros --equations
-pytest tests/test_session_auth_scalar_shift_macros.py
+pytest tests/test_v1_session_key_scalar_shift_macros.py
 ```
 
 These are recovered, independently understandable formulas for actual
@@ -1593,7 +1593,7 @@ deletion. No original program or production code is rewritten.
 ```
 python -m tools.prove_scalar_cancel_macros
 python -m tools.scalar_cancel_macros
-pytest tests/test_session_auth_scalar_cancel_macros.py
+pytest tests/test_v1_session_key_scalar_cancel_macros.py
 ```
 
 ## Caller-visible seed counterexamples with bundled public keys
@@ -1666,7 +1666,7 @@ dependent on feeding an unreachable all-zero Transform1 buffer to SeedTransform.
 
 ```
 python -m tools.trace_scalar_seed_boundary
-pytest tests/test_session_auth_scalar_seed_boundary.py
+pytest tests/test_v1_session_key_scalar_seed_boundary.py
 ```
 
 The bundled key and nonce are public/synthetic, not a live session capture.
@@ -1739,7 +1739,7 @@ if-and-only-if conditions, unconditional multiplication associativity, lifted
 zeros/ones and deliberately constructed carry corners:
 
 ```
-pytest tests/test_session_auth_scalar_semiring_rewrites.py
+pytest tests/test_v1_session_key_scalar_semiring_rewrites.py
 ```
 
 This supplies precise proof obligations for a later mass rewrite. It does not

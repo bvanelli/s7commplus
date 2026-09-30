@@ -16,7 +16,7 @@ from functools import lru_cache
 
 from tools.monolith7_full_model import execute_words as execute_seven
 from tools.recover_monolith5 import _literal
-from tools.trace_session_auth_output import DependencyGraph, REPOSITORY_ROOT
+from tools.trace_v1_session_key_output import DependencyGraph, REPOSITORY_ROOT
 
 OPERATIONS = {
     "and": operator.and_,

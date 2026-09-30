@@ -53,8 +53,8 @@ formulas, decompile arithmetic tape dependencies, and benchmark model costs:
    python -m tools.recover_monolith5_gates --formula 0
    python -m tools.recover_monolith7_full --verify tools/monolith7_full_model.json
    python -m tools.decompile_transform12 --phase2 --output-slot 27
-   python -m tools.benchmark_session_auth_models
-   python -m tools.verify_session_auth
+   python -m tools.benchmark_v1_session_key_models
+   python -m tools.verify_v1_session_key
    python -m tools.transform7_reference --random-cases 2
    python -m tools.recover_scalar_curve
    python -m tools.recover_scalar_shadow --catalogue
@@ -71,16 +71,16 @@ formulas, decompile arithmetic tape dependencies, and benchmark model costs:
 
 The tools run from the checkout and do not replace the packaged runtime.
 Read the `analysis and verification boundary
-<https://github.com/gijzelaerr/s7commplus/blob/master/s7commplus/session_auth/ARCHITECTURE.md>`_
+<https://github.com/gijzelaerr/s7commplus/blob/master/s7commplus/v1_session_key/ARCHITECTURE.md>`_
 and `model benchmark findings
-<https://github.com/gijzelaerr/s7commplus/blob/master/s7commplus/session_auth/MODEL_BENCHMARKS.md>`_
+<https://github.com/gijzelaerr/s7commplus/blob/master/s7commplus/v1_session_key/MODEL_BENCHMARKS.md>`_
 before using a recovered evaluator as an implementation.
 
 The `SessionKey maintainer and evidence guide
-<https://github.com/gijzelaerr/s7commplus/blob/master/s7commplus/session_auth/MAINTAINER_GUIDE.md>`_
+<https://github.com/gijzelaerr/s7commplus/blob/master/s7commplus/v1_session_key/MAINTAINER_GUIDE.md>`_
 maps handwritten interfaces, source/fixture provenance, failure triage and the
 remaining proof boundaries. For one offline source-correspondence check, pass
-``--upstream-root /path/to/HarpoS7`` to ``tools.verify_session_auth``; add
+``--upstream-root /path/to/HarpoS7`` to ``tools.verify_v1_session_key``; add
 ``--models`` to regenerate saved Boolean models and check setup proof
 accounting. The command does not fetch upstream code or contact a PLC.
 

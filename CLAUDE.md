@@ -33,10 +33,12 @@ tested against an isolated, non-safety-critical controller.
 - `s7commplus/tag_browser.py`, `typeinfo.py`, and `blob_decompressor.py`: symbol,
   type-information, and compressed metadata parsing
 - `s7commplus/subscription.py` and `alarm.py`: cyclic subscriptions and alarms
-- `s7commplus/legitimation.py`: client-side password legitimation flow
-- `s7commplus/session_auth/`: session authentication and HarpoS7-derived
-  cryptographic algorithms
-- `s7commplus/session_auth/family0/`: the Family-0 blob builder and its
+- `s7commplus/legitimation.py`: client-side password legitimation for TLS
+  (V2/V3) sessions
+- `s7commplus/v1_session_key/`: the V1 SessionKey handshake and V1 password
+  legitimation, used only for S7CommPlus V1 without TLS; HarpoS7-derived
+- `s7commplus/v1_session_key/real_plc/`: the blob algorithm for real
+  S7-1200/1500 keys (HarpoS7's "Family 0") and its
   recovered primitives (`seed`, `curve`, `present`, `checksum`, `fingerprint`);
   `fingerprint.py`'s constants are recovered by `tools/recover_fingerprint.py`
 - `old/`: retired, repository-only reference code (the transpiled HarpoS7
@@ -48,15 +50,15 @@ tested against an isolated, non-safety-critical controller.
 - `tests/`: unit, protocol conformance, emulator, TLS, authentication, and
   opt-in real-PLC tests
 
-Package data matters: `py.typed`, the session-authentication documents,
+Package data matters: `py.typed`, the V1 SessionKey documents,
 `LICENSE-HarpoS7` and `artifacts.json`, and zlib dictionary `.xml` files are
 included through `pyproject.toml`. The runtime currently ships no `.bin` tables;
-the `session_auth/**/*.bin` glob stays so that any manifested table added later
+the `v1_session_key/**/*.bin` glob stays so that any manifested table added later
 is distributed. Do not move, rename, or omit package data from distributions
 accidentally.
 
-The session-authentication code derives from HarpoS7. Preserve its attribution
-and `s7commplus/session_auth/LICENSE-HarpoS7` when changing or redistributing it.
+The V1 SessionKey code derives from HarpoS7. Preserve its attribution
+and `s7commplus/v1_session_key/LICENSE-HarpoS7` when changing or redistributing it.
 
 ## Protocol stack and design constraints
 
@@ -144,7 +146,7 @@ Useful focused commands:
 ```bash
 pytest tests/test_s7_unit.py
 pytest tests/test_s7_tls.py
-pytest tests/test_session_auth.py
+pytest tests/test_v1_session_key.py
 pytest -m conformance
 ```
 

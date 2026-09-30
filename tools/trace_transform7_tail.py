@@ -14,7 +14,7 @@ import random
 from dataclasses import dataclass
 from unittest.mock import patch
 
-from s7commplus.session_auth import get_public_key
+from s7commplus.v1_session_key import get_public_key
 from old.family0 import transform7, transform12
 from old.family0._generated.data import TRANSFORM7_DATA
 from old.family0._generated.data._constants import TRANSFORM7_COUNTS_INTS, TRANSFORM7_INDEXES_INTS

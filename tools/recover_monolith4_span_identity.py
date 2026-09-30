@@ -14,8 +14,8 @@ from functools import lru_cache
 
 from tools.recover_monolith5 import BDD, _literal
 from tools.recover_monolith5_span_decoder import MODULUS, P, Term, local_gate, recover
-from tools.trace_session_auth_bits import trace_output_bits
-from tools.trace_session_auth_output import REPOSITORY_ROOT, trace_monolith
+from tools.trace_v1_session_key_bits import trace_output_bits
+from tools.trace_v1_session_key_output import REPOSITORY_ROOT, trace_monolith
 
 
 @lru_cache(maxsize=18)

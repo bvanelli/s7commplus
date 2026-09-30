@@ -5,7 +5,7 @@ bitwise-only per-bit Boolean functions (AND/OR/XOR/NOT; no shifts, carries,
 or cross-word state). Exhaustive truth-table analysis over every possible
 input proved each output bit has an exact degree-2 algebraic normal form
 depending on only six source bits. See ``MONOLITH11_ANALYSIS.md`` for the
-derivation and ``tests/test_session_auth_bitwise_analysis.py`` for the
+derivation and ``tests/test_v1_session_key_bitwise_analysis.py`` for the
 equivalence proof: all 5x32 output bits, the upstream known-answer vector,
 and 100 random vectors cross-checked against the retained generated code.
 

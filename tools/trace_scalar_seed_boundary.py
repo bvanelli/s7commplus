@@ -22,7 +22,7 @@ from old.family0 import encoding, transform7_compact
 from old.family0 import seed_transform as old_seed_transform
 from old.family0._generated import monolith1
 from old.family0._generated.data import TRANSFORM7_DATA
-from s7commplus.session_auth.keys import get_public_key
+from s7commplus.v1_session_key.keys import get_public_key
 from tools import transform12_integer_model as arithmetic
 from tools import transform7_reference as reference
 from tools.recover_scalar_encodings import recover_all, scalar_xor_mask

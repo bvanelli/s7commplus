@@ -52,7 +52,7 @@ from types import TracebackType
 from typing import Any, Optional, Type
 
 from .transport import ISOTCPConnection
-from .session_auth.keys import KeyFamily
+from .v1_session_key.keys import KeyFamily
 
 from .codec import decode_header, encode_header, encode_object_qualifier, parse_create_object_attributes
 from .error import S7ConnectionError
@@ -571,8 +571,8 @@ class S7CommPlusConnection:
         # Session key derived from the SessionKey handshake, used for
         # HMAC packet integrity after authentication.
         self._session_key: Optional[bytes] = None
-        self._session_auth_public_key: bytes = b""
-        self._session_auth_family = KeyFamily.S7_1500
+        self._v1_session_key_public_key: bytes = b""
+        self._v1_session_key_family = KeyFamily.S7_1500
         self._session_key_fingerprint_override: Optional[str] = None
         self._session_key_refresh_interval: Optional[float] = _DEFAULT_LEGACY_SESSION_KEY_REFRESH_INTERVAL
         self._session_key_refresh_timer: Optional[threading.Timer] = None
@@ -719,7 +719,7 @@ class S7CommPlusConnection:
             self._create_session()
 
             if self._public_key_fingerprint is not None and ":" not in self._public_key_fingerprint:
-                from .session_auth.keys import parse_family_identifier, parse_fingerprint
+                from .v1_session_key.keys import parse_family_identifier, parse_fingerprint
 
                 try:
                     family = parse_family_identifier(self._public_key_fingerprint)
@@ -1038,8 +1038,8 @@ class S7CommPlusConnection:
         self._public_key_fingerprint = None
         self._session_challenge = None
         self._session_key = None
-        self._session_auth_public_key = b""
-        self._session_auth_family = KeyFamily.S7_1500
+        self._v1_session_key_public_key = b""
+        self._v1_session_key_family = KeyFamily.S7_1500
         self._with_integrity_id = False
         self._integrity_id_read = 0
         self._integrity_id_write = 0
@@ -1092,19 +1092,19 @@ class S7CommPlusConnection:
 
     def _renew_session_key_locked(self) -> None:
         """Perform the challenge/SecurityKey exchange while the old key is active."""
-        if self._session_key is None or not self._session_auth_public_key:
+        if self._session_key is None or not self._v1_session_key_public_key:
             raise S7ConnectionError("Legacy SessionKey renewal prerequisites are unavailable")
 
-        from .session_auth.keys import KeyFamily
-        from .session_auth.legacy_auth import authenticate_real_plc
+        from .v1_session_key.keys import KeyFamily
+        from .v1_session_key.handshake import authenticate_real_plc
 
-        integrity_tail = 3 if self._session_auth_family == KeyFamily.S7_1200 else 4
+        integrity_tail = 3 if self._v1_session_key_family == KeyFamily.S7_1200 else 4
         challenge_payload = self._build_get_var_substreamed(self._session_id, LegitimationId.SERVER_SESSION_REQUEST)
         challenge_response = self._send_request(FunctionCode.GET_VAR_SUBSTREAMED, challenge_payload, integrity_tail, False)
         challenge = _parse_get_var_substreamed_response(challenge_response)
         if len(challenge) != 20:
             raise S7ConnectionError(f"SessionKey renewal returned an unexpected {len(challenge)}-byte challenge")
-        blob, new_session_key = authenticate_real_plc(challenge, self._session_auth_public_key, self._session_auth_family)
+        blob, new_session_key = authenticate_real_plc(challenge, self._v1_session_key_public_key, self._v1_session_key_family)
         security_key = self._encode_security_key_struct(blob, new_session_key)
         renewal_payload = _build_set_variable_payload(self._session_id, LegitimationId.SESSION_SETUP_LEGITIMATION, security_key)
         renewal_response = self._send_request(FunctionCode.SET_VARIABLE, renewal_payload, 4, False)
@@ -1701,7 +1701,7 @@ class S7CommPlusConnection:
             return None
 
         try:
-            from .session_auth.keys import get_public_key, parse_fingerprint
+            from .v1_session_key.keys import get_public_key, parse_fingerprint
 
             fingerprint = self._session_key_fingerprint_override or self._public_key_fingerprint
             family, _key_id = parse_fingerprint(fingerprint)
@@ -1711,11 +1711,11 @@ class S7CommPlusConnection:
                 logger.info(f"SessionKey auth: no matching public key for {fingerprint}")
                 return None
 
-            from .session_auth.legacy_auth import authenticate_real_plc
+            from .v1_session_key.handshake import authenticate_real_plc
 
             blob, session_key = authenticate_real_plc(self._session_challenge, public_key, family)
-            self._session_auth_public_key = public_key
-            self._session_auth_family = family
+            self._v1_session_key_public_key = public_key
+            self._v1_session_key_family = family
             logger.info(f"SessionKey auth blob generated with key {fingerprint} ({len(blob)} bytes)")
             return blob, session_key
 
@@ -1738,7 +1738,7 @@ class S7CommPlusConnection:
         On V1-initial PLCs (FW < 4.5), this also includes the SecurityKey
         blob at address 1830, carrying a seed encrypted with an ECDH against
         the PLC's public key and the challenge encrypted under keys derived
-        from that seed (see ``session_auth.family0.authenticator``).
+        from that seed (see ``v1_session_key.real_plc.authenticator``).
 
         Returns:
             True if session setup succeeded (return_value == 0).
@@ -1845,9 +1845,9 @@ class S7CommPlusConnection:
         captures use a zero-valued VLQ qualifier, a two-byte request field,
         and a four-byte fill. The IntegrityId is inserted before that fill.
         """
-        from .session_auth.keys import KeyFamily
+        from .v1_session_key.keys import KeyFamily
 
-        if self._session_auth_family == KeyFamily.S7_1200:
+        if self._v1_session_key_family == KeyFamily.S7_1200:
             oq = encode_object_qualifier(key_qualifier=self._sequence_number, protocol_version=ProtocolVersion.V1)
             payload = struct.pack(">I", in_object_id)
             payload += bytes([0x20, DataType.UDINT])
@@ -1903,12 +1903,12 @@ class S7CommPlusConnection:
         """
         # Step 1: Read legitimation challenge from session, address 303
         logger.debug("Post-auth legitimation: reading challenge from address 303")
-        from .session_auth.keys import KeyFamily
+        from .v1_session_key.keys import KeyFamily
 
         challenge_resp = self.send_request(
             FunctionCode.GET_VAR_SUBSTREAMED,
             self._build_get_var_substreamed(self._session_id, LegitimationId.SERVER_SESSION_REQUEST),
-            integrity_tail=3 if self._session_auth_family == KeyFamily.S7_1200 else 4,
+            integrity_tail=3 if self._v1_session_key_family == KeyFamily.S7_1200 else 4,
         )
 
         # Never substitute the earlier CreateObject challenge when this read
@@ -1920,7 +1920,7 @@ class S7CommPlusConnection:
             raise S7ConnectionError("Post-auth legitimation failed: expected a 20-byte challenge")
 
         # Step 2: Solve the challenge
-        from .session_auth.legitimate import solve_legitimate_challenge_real_plc
+        from .v1_session_key.legitimation import solve_legitimate_challenge_real_plc
 
         session_key = self._session_key
         if session_key is None:
@@ -1929,8 +1929,8 @@ class S7CommPlusConnection:
             raise S7ConnectionError("Post-auth legitimation failed: no session key")
         legit_blob = solve_legitimate_challenge_real_plc(
             legit_challenge,
-            self._session_auth_public_key,
-            self._session_auth_family,
+            self._v1_session_key_public_key,
+            self._v1_session_key_family,
             session_key,
             password,
         )
@@ -1971,21 +1971,21 @@ class S7CommPlusConnection:
         Struct(1800) containing key descriptors for the public and symmetric
         keys, plus the encrypted blob.
         """
-        from .session_auth.utils import derive_key_id
+        from .v1_session_key.utils import derive_key_id
 
-        if not self._session_auth_public_key:
+        if not self._v1_session_key_public_key:
             raise ValueError("SessionKey authentication requires public key material")
         if not session_key:
             raise ValueError("SessionKey authentication requires generated session key material")
 
-        public_key_id = derive_key_id(self._session_auth_public_key)
+        public_key_id = derive_key_id(self._v1_session_key_public_key)
         symmetric_key_id = derive_key_id(session_key)
 
         # Determine key flags from family
-        from .session_auth.blob_metadata import get_public_key_flags, get_symmetric_key_flags
-        from .session_auth.keys import KeyFamily
+        from .v1_session_key.blob_metadata import get_public_key_flags, get_symmetric_key_flags
+        from .v1_session_key.keys import KeyFamily
 
-        family = self._session_auth_family if self._session_auth_family else KeyFamily.S7_1500
+        family = self._v1_session_key_family if self._v1_session_key_family else KeyFamily.S7_1500
         sym_flags = get_symmetric_key_flags(family)
         pub_flags = get_public_key_flags(family)
 

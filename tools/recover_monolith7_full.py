@@ -14,8 +14,8 @@ from pathlib import Path
 from typing import TypedDict
 
 from tools.recover_monolith5 import BDD, _literal
-from tools.trace_session_auth_bits import trace_output_bits
-from tools.trace_session_auth_output import REPOSITORY_ROOT, trace_monolith
+from tools.trace_v1_session_key_bits import trace_output_bits
+from tools.trace_v1_session_key_output import REPOSITORY_ROOT, trace_monolith
 
 
 class Function(TypedDict):

@@ -14,8 +14,8 @@ from dataclasses import asdict, dataclass
 from pathlib import Path
 
 from tools.recover_monolith5 import BDD, Polynomial, _literal, _term_source_ids
-from tools.trace_session_auth_bits import BitRef, trace_output_bits
-from tools.trace_session_auth_output import REPOSITORY_ROOT, trace_monolith
+from tools.trace_v1_session_key_bits import BitRef, trace_output_bits
+from tools.trace_v1_session_key_output import REPOSITORY_ROOT, trace_monolith
 
 
 @dataclass(frozen=True)

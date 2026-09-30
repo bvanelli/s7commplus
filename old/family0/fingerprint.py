@@ -6,7 +6,7 @@ and ``ContextMutator``. HarpoS7 computes each gate's output from a
 changes between the 20 rounds. That context never depends on the challenge,
 so ``gates`` evaluates the same formulas once for all 256 inputs of every gate,
 and ``evaluate`` runs the resulting fixed network. ``tools/recover_fingerprint.py``
-recovers the cipher in ``s7commplus/session_auth/family0/fingerprint.py`` from
+recovers the cipher in ``s7commplus/v1_session_key/real_plc/fingerprint.py`` from
 that network.
 """
 

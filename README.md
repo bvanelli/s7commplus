@@ -61,5 +61,5 @@ build it locally from a development checkout:
 sphinx-build -W --keep-going -b html docs docs/_build/html
 ```
 
-The session-authentication implementation derives from HarpoS7; its MIT
-license is included at `s7commplus/session_auth/LICENSE-HarpoS7`.
+The V1 SessionKey implementation derives from HarpoS7; its MIT
+license is included at `s7commplus/v1_session_key/LICENSE-HarpoS7`.

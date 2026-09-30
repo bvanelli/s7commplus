@@ -3,7 +3,7 @@
 HarpoS7's fingerprint (``old/family0/fingerprint.py``) is a fixed network of
 496 nibble gates: a white-boxed cipher whose wires carry secret 4-bit
 encodings. This tool recovers the cipher from the network alone and checks
-that the constants in ``s7commplus/session_auth/family0/fingerprint.py``
+that the constants in ``s7commplus/v1_session_key/real_plc/fingerprint.py``
 match. With ``--print`` it prints the recovered constants instead.
 
 Write ``crumb(v, j)`` for bits ``j`` and ``j + 4`` of byte ``v``, as a 2-bit
@@ -38,7 +38,7 @@ from collections import defaultdict
 from dataclasses import dataclass
 
 from old.family0 import fingerprint as harpo
-from s7commplus.session_auth.family0 import fingerprint as runtime
+from s7commplus.v1_session_key.real_plc import fingerprint as runtime
 
 # Final-state nibbles HarpoS7 reads the fingerprint from, most significant first.
 OUTPUT_NIBBLES = (187, 448, 378, 107, 239, 173, 166, 66, 458, 117, 138, 331, 126, 178, 344, 495)

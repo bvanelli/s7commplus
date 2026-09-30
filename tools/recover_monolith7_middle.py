@@ -15,7 +15,7 @@ from typing import TypedDict
 from tools.analyze_symbolic_monolith import analyze_output_bit
 from tools.decompose_boolean_polynomial import CORE_FORMULAS, FactoredFunction, Kernel, factor_function
 from tools.recover_monolith5 import _term_source_ids
-from tools.trace_session_auth_output import REPOSITORY_ROOT
+from tools.trace_v1_session_key_output import REPOSITORY_ROOT
 
 
 class Model(TypedDict):

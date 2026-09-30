@@ -5,7 +5,7 @@ from unittest.mock import patch
 
 import pytest
 
-from s7commplus.session_auth.family0 import transform7, transform12
+from old.family0 import transform7, transform12
 from tools import recover_transform7_setup as model
 
 

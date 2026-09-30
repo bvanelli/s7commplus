@@ -19,8 +19,8 @@ from dataclasses import asdict, dataclass
 from fractions import Fraction
 from unittest.mock import patch
 
-from s7commplus.session_auth.family0 import transform7
-from s7commplus.session_auth.family0._generated.data import TRANSFORM7_DATA
+from old.family0 import transform7
+from old.family0._generated.data import TRANSFORM7_DATA
 from tools.recover_monolith5_span_decoder import P, local_gate, recover
 from tools.recover_transform7_setup import Candidate, capture_setup, targeted_base_point_probe
 from tools.transform7_setup_merge import decode_payload

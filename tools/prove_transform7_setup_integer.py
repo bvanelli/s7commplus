@@ -16,7 +16,7 @@ from pathlib import Path
 from typing import Any
 from unittest.mock import patch
 
-from s7commplus.session_auth.family0 import big_int_transforms, transform7
+from old.family0 import big_int_transforms, transform7
 from tools import transform7_setup_integer as integer
 from tools import transform12_integer_model as arithmetic
 from tools import recover_monolith5_span_decoder as decoder

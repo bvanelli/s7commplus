@@ -5,8 +5,8 @@ from unittest.mock import patch
 
 import pytest
 
-from s7commplus.session_auth.family0 import big_int_transforms, transform7
-from s7commplus.session_auth.family0._generated.data import TRANSFORM7_DATA
+from old.family0 import big_int_transforms, transform7
+from old.family0._generated.data import TRANSFORM7_DATA
 from tools import predict_scalar_defects as predictor
 from tools import scalar_representative_program as program_rules
 from tools import scalar_representative_rules as rules

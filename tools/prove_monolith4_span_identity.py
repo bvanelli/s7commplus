@@ -16,7 +16,7 @@ import time
 from pathlib import Path
 from typing import Any
 
-from s7commplus.session_auth.family0._generated import monolith3, monolith4, monolith5, monolith6
+from old.family0._generated import monolith3, monolith4, monolith5, monolith6
 from tools.recover_monolith4_span_identity import input_gate_diagram, normalized_span, normalized_terms, output_gate_diagram
 from tools.recover_monolith5 import _literal
 

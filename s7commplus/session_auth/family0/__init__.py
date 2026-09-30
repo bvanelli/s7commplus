@@ -1,7 +1,16 @@
-"""Family-0 session authentication transforms.
+"""Family-0 session authentication (S7-1200 and S7-1500 real PLCs).
 
-The human-readable orchestration modules live here (authenticator,
-fingerprint, transforms, key derivation). The machine-transpiled
-monolith transforms (95K+ lines of uint32 arithmetic) live in
-``_generated/`` — see ``_generated/__init__.py`` for details.
+- ``authenticator``: builds the 180-byte SecurityKeyEncryptedKey blob.
+- ``seed``: the encrypted seed and the blob's three keys, from key1 and the
+  PLC public key (HarpoS7's PreSeed, Seed, Transform13 and KeyDerivation
+  transforms).
+- ``curve``: the 160-bit elliptic curve behind the seed's ECDH.
+- ``present``: the PRESENT-80 variant behind the seed and the keys.
+- ``checksum``: the GF(2^128) multiply for the blob's checksum.
+- ``fingerprint``: the challenge fingerprint for the session key, with its
+  gate network in ``fingerprint_gates.bin``.
+
+HarpoS7's transpiled originals, their vendored tables and the ports these
+modules replace live in ``old/family0`` in the repository and are not
+distributed.
 """

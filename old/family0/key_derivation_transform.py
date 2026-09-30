@@ -1,30 +1,18 @@
-"""KeyDerivationTransform — derives three 128-bit keys from the pre-seed.
+"""KeyDerivationTransform's encoded reference: Monolith10 and six Monolith9 calls.
 
-Calls Monolith10 to build a work buffer, then iterates Monolith9 six
-times with SharedData entries to produce 12 uint32s (3 × 16-byte keys:
-challenge encryption key, checksum encryption key, LUT seed).
-
-Manual port of ``HarpoS7.Family0.Transforms.KeyDerivationTransform``,
-retained as the reference. The runtime uses ``execute_value``: Monolith10 keys
-the first three Monolith9 calls with the low 80 bits of the decoded source and
-the last three with the high 80 bits. The postfix words are each block's tag,
-so Monolith9 emits the plain ciphertext (see ``monolith9_compact``).
+Manual port of ``HarpoS7.Family0.Transforms.KeyDerivationTransform``. The
+runtime computes it with ``s7commplus...family0.seed.derive_keys``.
 """
 
 from __future__ import annotations
 
 import struct
 
-from . import monolith9_compact
 from ._generated import monolith9, monolith10
 from ._generated.data import SHARED_DATA
 
 SOURCE_SIZE = 0x3C
 DESTINATION_SIZE = 0x30
-
-# SHARED_DATA words 0..11 as six little-endian 64-bit plaintext blocks.
-_SHARED = struct.unpack_from("<12I", SHARED_DATA)
-PLAINTEXTS = tuple(_SHARED[2 * block] | _SHARED[2 * block + 1] << 32 for block in range(6))
 
 
 def execute(destination: bytearray, source: bytes) -> None:
@@ -69,11 +57,3 @@ def execute(destination: bytearray, source: bytes) -> None:
             monolith10.execute(buf2, bytes(buf1))
 
     struct.pack_into(f"<{len(dst_dwords_out)}I", destination, 0, *dst_dwords_out)
-
-
-def execute_value(pre_seed: int) -> bytes:
-    """The 48 bytes ``execute`` derives from PreSeedTransform's decoded 160-bit value."""
-    low, high = monolith9_compact.key_halves(pre_seed)
-    return struct.pack(
-        "<6Q", *(monolith9_compact.encrypt(block, low if index < 3 else high) for index, block in enumerate(PLAINTEXTS))
-    )

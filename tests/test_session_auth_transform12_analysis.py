@@ -7,7 +7,7 @@ import struct
 
 import pytest
 
-from s7commplus.session_auth.family0 import big_int_operations, transform12
+from old.family0 import big_int_operations, transform12
 from tools.decompile_transform12 import (
     CONTEXT_SLOTS,
     Operand,

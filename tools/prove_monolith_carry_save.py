@@ -17,7 +17,7 @@ import time
 from pathlib import Path
 from typing import Any
 
-from s7commplus.session_auth.family0._generated import monolith5
+from old.family0._generated import monolith5
 from tools.prove_monolith4_span_identity import boolean_backend, symbolic_source
 from tools.prove_monolith6_span_identity import symbolic_pair
 from tools.prove_monolith_setup_invariant import UPPER_ZERO_TRIPLES, allowed_triple
@@ -142,7 +142,7 @@ def prove(timeout_ms: int = 10000, progress: bool = False) -> dict[str, Any]:
             rows.append(row)
             if progress:
                 print(json.dumps(row), file=sys.stderr, flush=True)
-    folder = Path(__file__).resolve().parents[1] / "s7commplus/session_auth/family0/_generated"
+    folder = Path(__file__).resolve().parents[1] / "old/family0/_generated"
     return {
         "scope": "individual decoded carry-save spans/streams; pair span0 top bit conditional on the proved setup invariant",
         "source_sha256": {

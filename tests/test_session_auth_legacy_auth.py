@@ -54,7 +54,7 @@ def test_fingerprint_lookup_tables_cover_every_computed_block() -> None:
     renewal. Fixed in HarpoS7 v1.1.3 (commit 22b9dc0).
     """
     import struct
-    from s7commplus.session_auth.family0._generated.data import FP_DATA1, FP_DATA2
+    from old.family0._generated.data import FP_DATA1, FP_DATA2
 
     def load_collection(data: bytes) -> list[list[int]]:
         lengths = list(struct.unpack("<20I", data[:80]))
@@ -173,7 +173,7 @@ def test_authenticate_real_plc_vector(
     with ExitStack() as stack:
         stack.enter_context(patch("os.urandom", mock_urandom))
         if implementation == "reference":
-            from s7commplus.session_auth.family0 import transform7_compact
+            from old.family0 import transform7_compact
             from tools.transform7_reference import model
 
             def independent(destination, prng1, prng2, source):

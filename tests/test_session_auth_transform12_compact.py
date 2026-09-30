@@ -4,9 +4,9 @@ from __future__ import annotations
 
 import random
 
-from s7commplus.session_auth.family0 import big_int_operations, big_int_transforms, transform12, transform12_compact
-from s7commplus.session_auth.family0._generated.data import TRANSFORM12_BIG_INT_DATA
-from s7commplus.session_auth.family0._generated.data._constants import TRANSFORM7_COUNTS_INTS, TRANSFORM7_INDEXES_INTS
+from old.family0 import big_int_operations, big_int_transforms, transform12, transform12_compact
+from old.family0._generated.data import TRANSFORM12_BIG_INT_DATA
+from old.family0._generated.data._constants import TRANSFORM7_COUNTS_INTS, TRANSFORM7_INDEXES_INTS
 
 LIMIT = 1 << 160
 P = LIMIT - 47

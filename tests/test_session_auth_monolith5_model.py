@@ -11,7 +11,7 @@ from pathlib import Path
 
 import pytest
 
-from s7commplus.session_auth.family0._generated import monolith5
+from old.family0._generated import monolith5
 from tools.monolith5_model import execute_words
 from tools.recover_monolith5 import BDD, recover_model
 

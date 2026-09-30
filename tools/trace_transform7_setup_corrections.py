@@ -16,8 +16,8 @@ from contextlib import ExitStack
 from dataclasses import asdict, dataclass
 from unittest.mock import patch
 
-from s7commplus.session_auth.family0 import transform7
-from s7commplus.session_auth.family0._generated.data import TRANSFORM7_DATA
+from old.family0 import transform7
+from old.family0._generated.data import TRANSFORM7_DATA
 from tools import transform12_integer_model as arithmetic
 from tools.recover_monolith3_span_identity import relation as plain_relation
 from tools.recover_monolith4_span_identity import candidate_add, normalized_span

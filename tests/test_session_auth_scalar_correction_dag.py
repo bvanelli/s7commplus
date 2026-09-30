@@ -7,7 +7,7 @@ from unittest.mock import patch
 
 import pytest
 
-from s7commplus.session_auth.family0._generated.data import TRANSFORM7_DATA
+from old.family0._generated.data import TRANSFORM7_DATA
 from tools import scalar_correction_dag as dag
 from tools import scalar_stage_plan as compiler
 from tools.recover_scalar_encodings import scalar_xor_mask

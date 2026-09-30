@@ -7,7 +7,7 @@ import random
 
 import pytest
 
-from s7commplus.session_auth.family0._generated import monolith5
+from old.family0._generated import monolith5
 from tools.trace_session_auth_bits import _evaluate, trace_output_bits
 
 

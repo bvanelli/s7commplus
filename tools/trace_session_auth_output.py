@@ -222,7 +222,7 @@ def trace_monolith(monolith: int, output_word: int, root: Path = REPOSITORY_ROOT
         raise ValueError("monolith must be 1 through 11")
     artifacts = json.loads(manifest.read_text(encoding="utf-8"))["artifacts"]
     generated = {item["path"] for item in artifacts if item["category"] == "generated-source"}
-    base = "s7commplus/session_auth/family0/_generated"
+    base = "old/family0/_generated"
     if monolith in (9, 10):
         folder = "nine" if monolith == 9 else "ten"
         paths = [f"{base}/{folder}/part{number}.py" for number in range(1, 12 if monolith == 9 else 4)]

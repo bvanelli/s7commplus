@@ -6,7 +6,7 @@ from unittest.mock import patch
 
 import pytest
 
-from s7commplus.session_auth.family0._generated.data import TRANSFORM7_DATA
+from old.family0._generated.data import TRANSFORM7_DATA
 from tools import scalar_lift_categories as categories
 from tools import scalar_stage_plan as compiler
 from tools import transform12_residue_defects as arithmetic

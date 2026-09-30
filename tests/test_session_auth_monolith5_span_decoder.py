@@ -9,7 +9,7 @@ from pathlib import Path
 
 import pytest
 
-from s7commplus.session_auth.family0._generated import monolith5
+from old.family0._generated import monolith5
 from tools.recover_monolith5_span_decoder import MODULUS, P, combined_payload, decode_span, recover
 from tools.transform7_setup_merge import decode_payload
 

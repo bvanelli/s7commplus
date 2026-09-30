@@ -184,7 +184,7 @@ def generate() -> str:
     return "\n".join(lines)
 
 
-_TARGET = _HERE.parent / "s7commplus" / "session_auth" / "family0" / "monolith5_compact.py"
+_TARGET = _HERE.parent / "old" / "family0" / "monolith5_compact.py"
 
 
 def compile_source() -> str:

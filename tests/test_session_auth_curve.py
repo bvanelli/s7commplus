@@ -9,9 +9,11 @@ from unittest import mock
 
 import pytest
 
-from s7commplus.session_auth.family0 import curve, seed_transform, transform7_compact, transform12_compact, transform13_compact
-from s7commplus.session_auth.family0._generated import monolith2
-from s7commplus.session_auth.family0._generated.data import TRANSFORM7_DATA
+from s7commplus.session_auth.family0 import curve, seed
+from old.family0 import encoding, transform7_compact, transform12_compact
+from old.family0 import seed_transform as old_seed_transform
+from old.family0._generated import monolith2
+from old.family0._generated.data import TRANSFORM7_DATA
 from s7commplus.session_auth.keys import KeyFamily, fingerprints_for_family, get_public_key
 from tools import trace_scalar_seed_boundary as boundary
 from tools.recover_scalar_encodings import scalar_xor_mask
@@ -67,10 +69,11 @@ def _is_probable_prime(value: int) -> bool:
 def _transform7_value(prng1: bytes, prng2: bytes, source: bytes) -> int:
     span = bytearray(transform7_compact.DESTINATION_SIZE)
     transform7_compact.execute(span, bytearray(prng1), bytearray(prng2), source)
-    return transform13_compact.span_value(span)
+    return encoding.span_value(span)
 
 
 def test_domain_parameters() -> None:
+    assert _GENERATOR == curve.GENERATOR_X.to_bytes(20, "little") + curve.GENERATOR_Y.to_bytes(20, "little")
     generator = (curve.GENERATOR_X, curve.GENERATOR_Y)
     assert _is_probable_prime(curve.P) and _is_probable_prime(curve.ORDER)
     assert (curve.GENERATOR_Y**2 - (curve.GENERATOR_X**3 + curve.A * curve.GENERATOR_X + curve.B)) % curve.P == 0
@@ -115,7 +118,7 @@ def test_upstream_transform7_known_answers(number: int) -> None:
     record = json.loads(PROVENANCE.read_text(encoding="utf-8"))["transform7_vectors"][number]
     fields = {key: bytes.fromhex(field["hex"]) for key, field in record["fields"].items()}
     x = int.from_bytes(fields["source"][:20], "little")
-    expected = transform13_compact.span_value(fields["destination"])
+    expected = encoding.span_value(fields["destination"])
     assert curve.x_multiply(curve.ladder_scalar(fields["prng2"]), x) == expected
 
 
@@ -127,9 +130,9 @@ def test_ignored_inputs_and_value_preserving_monoliths() -> None:
     for _ in range(3):
         span = bytearray(transform7_compact.DESTINATION_SIZE)
         transform7_compact.execute(span, bytearray(rng.randbytes(20)), bytearray(rng.randbytes(20)), rng.choice(_PUBLIC_KEYS))
-        value = transform13_compact.span_value(span)
-        seed_transform._monolith1_loop(span)
-        assert transform13_compact.span_value(span) == value
+        value = encoding.span_value(span)
+        old_seed_transform._monolith1_loop(span)
+        assert encoding.span_value(span) == value
         serialized = bytearray(20)
         monolith2.execute(serialized, bytes(span))
         assert serialized == value.to_bytes(20, "little")
@@ -164,7 +167,7 @@ def _run(implementation: object, public_key: bytes, pre_seed: int, entropy: Iter
         requests += 1
         return next(entropy)
 
-    destination = bytearray(seed_transform.DESTINATION_SIZE)
+    destination = bytearray(seed.SEED_LENGTH)
     with mock.patch("os.urandom", urandom):
         implementation(destination, public_key, pre_seed)  # type: ignore[operator]
     return bytes(destination), requests
@@ -176,7 +179,7 @@ def test_seed_transform_matches_the_transform7_chain(trial: int) -> None:
     public_key, pre_seed = rng.choice(_PUBLIC_KEYS), rng.getrandbits(160)
     outputs = [
         _run(implementation, public_key, pre_seed, _entropy(random.Random(trial)))
-        for implementation in (seed_transform.execute_value, seed_transform.reference_execute_value)
+        for implementation in (seed.write_seed, old_seed_transform.reference_execute_value)
     ]
     assert outputs[0] == outputs[1]
     assert outputs[0][1] == 2
@@ -186,7 +189,7 @@ def test_seed_transform_retries_an_infinite_ephemeral_like_the_transform7_chain(
     forced = [bytes(20), curve.SCALAR_MASK.to_bytes(20, "little")]  # prng1, then the scalar 0.
     outputs = [
         _run(implementation, _PUBLIC_KEYS[0], 0, _entropy(random.Random(5404), forced))
-        for implementation in (seed_transform.execute_value, seed_transform.reference_execute_value)
+        for implementation in (seed.write_seed, old_seed_transform.reference_execute_value)
     ]
     assert outputs[0] == outputs[1]
     assert outputs[0][1] == 3
@@ -197,7 +200,7 @@ def test_seed_transform_runtime_does_not_execute_transform7() -> None:
         mock.patch.object(transform7_compact, "execute", side_effect=AssertionError("Transform7 executed")),
         mock.patch.object(monolith2, "execute", side_effect=AssertionError("Monolith2 executed")),
     ):
-        _run(seed_transform.execute_value, _GENERATOR, 0, _entropy(random.Random(5405)))
+        _run(seed.write_seed, _GENERATOR, 0, _entropy(random.Random(5405)))
 
 
 def test_negative_scalars_are_rejected() -> None:
@@ -220,10 +223,10 @@ def test_runtime_is_the_modular_candidate_on_constructed_carry_cases(case: bound
         except StopIteration:
             raise _Exhausted from None
 
-    destination = bytearray(seed_transform.DESTINATION_SIZE)
+    destination = bytearray(seed.SEED_LENGTH)
     with mock.patch("os.urandom", urandom):
         try:
-            seed_transform.execute(destination, case.public_key, case.transform1)
+            old_seed_transform.execute(destination, case.public_key, case.transform1)
             runtime: bytes | None = bytes(destination)
         except _Exhausted:
             runtime = None

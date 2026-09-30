@@ -2,10 +2,10 @@
 
 Builds a 4 KB table of 256 ``UInt128`` entries from a 16-byte seed
 key. Entry ``i`` is the seed times the polynomial whose coefficients are
-the bits of ``i``, in GF(2¹²⁸) modulo ``checksum_transform.POLYNOMIAL``
+the bits of ``i``, in GF(2¹²⁸) modulo ``s7commplus.session_auth.family0.checksum.POLYNOMIAL``
 (x^128 + x^32 + x^15 + x^2 + 1, not the AES-GCM field). The construction
 doubles iteratively and cross-XORs to fill the rest of the rows. The
-authenticator no longer builds the table; see ``checksum_transform.multiply``.
+authenticator no longer builds the table; see ``checksum.multiply``.
 
 Manual port of ``HarpoS7.Family0.Transforms.LutGenerator``.
 """

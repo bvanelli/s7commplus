@@ -13,12 +13,21 @@ from typing import Any
 
 REPOSITORY_ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_MANIFEST = REPOSITORY_ROOT / "s7commplus/session_auth/artifacts.json"
-GENERATED_ROOT = REPOSITORY_ROOT / "s7commplus/session_auth/family0/_generated"
+# The transpiled monoliths and vendored tables, kept outside the package (see old/__init__.py).
+RETIRED_ROOT = REPOSITORY_ROOT / "old/family0/_generated"
+# The runtime ships only derived binary tables, such as the fingerprint gate network.
+RUNTIME_ROOT = REPOSITORY_ROOT / "s7commplus/session_auth/family0"
 
 
 def _is_artifact(path: Path) -> bool:
-    # Include handwritten package glue: data/__init__.py embeds SHARED_DATA.
-    return path.suffix in {".bin", ".py"}
+    # Include handwritten package glue under old/: data/__init__.py embeds SHARED_DATA.
+    if path.is_relative_to(RETIRED_ROOT):
+        return path.suffix in {".bin", ".py"}
+    return path.is_relative_to(RUNTIME_ROOT) and path.suffix == ".bin"
+
+
+def _artifact_paths() -> set[Path]:
+    return {path for root in (RETIRED_ROOT, RUNTIME_ROOT) for path in root.rglob("*") if path.is_file() and _is_artifact(path)}
 
 
 def _load_manifest(path: Path) -> dict[str, Any]:
@@ -51,10 +60,8 @@ def verify(manifest_path: Path = DEFAULT_MANIFEST) -> list[str]:
             continue
         declared.add(relative)
         target = (REPOSITORY_ROOT / relative).resolve()
-        try:
-            target.relative_to(GENERATED_ROOT.resolve())
-        except ValueError:
-            errors.append(f"manifest path is outside the generated artifact directory: {relative}")
+        if not _is_artifact(target):
+            errors.append(f"manifest path is outside the generated artifact directories: {relative}")
             continue
         if not target.is_file():
             errors.append(f"missing generated artifact: {relative}")
@@ -66,11 +73,7 @@ def verify(manifest_path: Path = DEFAULT_MANIFEST) -> list[str]:
         if artifact["sha256"] != actual_hash:
             errors.append(f"SHA-256 mismatch for {relative}: manifest={artifact['sha256']}, actual={actual_hash}")
 
-    actual = {
-        path.relative_to(REPOSITORY_ROOT).as_posix()
-        for path in GENERATED_ROOT.rglob("*")
-        if path.is_file() and _is_artifact(path)
-    }
+    actual = {path.relative_to(REPOSITORY_ROOT).as_posix() for path in _artifact_paths()}
     for relative in sorted(actual - declared):
         errors.append(f"unmanifested generated artifact: {relative}")
     for relative in sorted(declared - actual):
@@ -108,7 +111,7 @@ def _verify_embedded_keys(document: dict[str, Any]) -> list[str]:
             errors.append(f"embedded public-key size/SHA-256 mismatch: {fingerprint}")
     errors.extend(f"unmanifested embedded public key: {fingerprint}" for fingerprint in sorted(expected.keys() - declared))
     formats = document.get("binary_formats")
-    binary_names = {path.name for path in GENERATED_ROOT.rglob("*.bin")}
+    binary_names = {path.name for path in _artifact_paths() if path.suffix == ".bin"}
     if (
         not isinstance(formats, dict)
         or set(formats) != binary_names

@@ -9,8 +9,8 @@ from unittest.mock import patch
 
 import pytest
 
-from s7commplus.session_auth.family0 import big_int_operations, big_int_transforms, transform7, transform12
-from s7commplus.session_auth.family0._generated import monolith3, monolith4, monolith5, monolith6, monolith7
+from old.family0 import big_int_operations, big_int_transforms, transform7, transform12
+from old.family0._generated import monolith3, monolith4, monolith5, monolith6, monolith7
 from tools import monolith_encoded_reference as encoded
 from tools import transform12_integer_model as arithmetic
 from tools import transform7_reference as reference

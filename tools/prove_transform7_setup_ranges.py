@@ -23,7 +23,7 @@ from contextlib import ExitStack
 from unittest.mock import patch
 from collections.abc import Callable
 
-from s7commplus.session_auth.family0 import big_int_operations, transform7, transform12
+from old.family0 import big_int_operations, transform7, transform12
 from tools.prove_monolith4_span_identity import symbolic_source
 from tools.prove_monolith_setup_invariant import UPPER_ZERO_TRIPLES
 from tools.recover_transform7_setup import capture_setup

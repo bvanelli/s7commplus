@@ -437,7 +437,7 @@ def verify(stage: Stage, source: Program, original: compiled.Stage) -> Certifica
 
     def constant(o: Operand) -> int:
         # Independent constant decoder, not the saturation compiler helper.
-        from s7commplus.session_auth.family0._generated.data import TRANSFORM12_BIG_INT_DATA
+        from old.family0._generated.data import TRANSFORM12_BIG_INT_DATA
         from tools.transform12_integer_model import decode
 
         return decode(TRANSFORM12_BIG_INT_DATA[o.index * 24 : (o.index + 1) * 24])
@@ -579,7 +579,7 @@ def full_output(data: Catalogue, x: int, y: int, prng1: int, scalar: int) -> tup
 
 
 def main() -> None:
-    from s7commplus.session_auth.family0._generated.data import TRANSFORM7_DATA
+    from old.family0._generated.data import TRANSFORM7_DATA
     from tools.recover_scalar_encodings import scalar_xor_mask
 
     parser = argparse.ArgumentParser(description=__doc__)

@@ -12,9 +12,9 @@ from unittest.mock import patch
 
 import pytest
 
-from s7commplus.session_auth.family0 import transform7
-from s7commplus.session_auth.family0._generated import monolith3, monolith4, monolith5, monolith6
-from s7commplus.session_auth.family0._generated.data import TRANSFORM7_DATA
+from old.family0 import transform7
+from old.family0._generated import monolith3, monolith4, monolith5, monolith6
+from old.family0._generated.data import TRANSFORM7_DATA
 from tools.prove_monolith4_span_identity import symbolic_source
 from tools.prove_transform7_setup_ranges import (
     OutputBit,

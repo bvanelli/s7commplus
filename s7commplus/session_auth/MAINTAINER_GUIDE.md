@@ -3,28 +3,28 @@
 This guide addresses issue #1's maintainability/auditability scope. It is not a
 claim to have reconstructed Siemens' original source or simplified every
 cryptographic transform. Preserve `LICENSE-HarpoS7` and attribution when
-reusing source-derived models. Runtime/generated implementations are unchanged
-by the analysis work, with three exceptions: Monolith11 was migrated to the
-proven-equivalent `family0/monolith11_compact.py` (see `MONOLITH11_ANALYSIS.md`),
-Monolith5 was migrated to the mechanically compiled, proven-equivalent
-`family0/monolith5_compact.py` (see `MONOLITH5_ANALYSIS.md`), and SeedTransform
-now calls `family0/transform7_compact.py`, whose 23-call monolith setup is
-replaced by the proven integer setup model (so Monolith3 and Monolith5 are no
-longer executed at all) and whose Transform12 tape runs on plain integers via
-`family0/transform12_compact.py`. Monolith9/Monolith10 are a PRESENT-80
-variant (`family0/monolith9_compact.py`), so the authenticator passes 160-bit
-integers between PreSeedTransform, SeedTransform (via
-`family0/transform13_compact.py`) and KeyDerivationTransform instead of
-encoded buffers, and Monolith8, Monolith9, Monolith10 and Transform13 are no
-longer executed. SeedTransform's Transform7/Monolith1/Monolith2 chain is an
-x-only ECDH on a 160-bit prime-order curve (`family0/curve.py`), so the
-runtime no longer executes Transform7, Transform12 or any of Monolith1–Monolith7
-either; authentication runs no `_generated` monolith at all. The ladder
-differs from the original only where Transform7's arithmetic is not modular,
-which needs structured inputs (see `curve.py`).
-The replaced generated sources, `family0/transform7_compact.py` and the
-original `family0/transform7.py` are retained for provenance and analysis,
-not executed.
+reusing source-derived models.
+
+Recovery identified every primitive the Family-0 runtime executes, so it runs
+no transpiled code:
+
+- `family0/seed.py`: HarpoS7's PreSeed, Seed, Transform13 and KeyDerivation
+  transforms, on plain 160-bit integers.
+- `family0/present.py`: Monolith9/Monolith10, a PRESENT-80 variant.
+- `family0/curve.py`: SeedTransform's Transform7/Monolith1/Monolith2 chain,
+  an x-only ECDH on a 160-bit prime-order curve. The ladder differs from the
+  original only where Transform7's arithmetic is not modular, which needs
+  structured inputs (see `curve.py`).
+- `family0/checksum.py`: the blob checksum's GF(2^128) multiply.
+- `family0/fingerprint.py`: the challenge fingerprint, as a fixed gate network
+  in `fingerprint_gates.bin`.
+
+The transpiled monoliths, their vendored tables, and the HarpoS7 ports and
+compact intermediates they were checked against (Transform7/12/13, the BigInt
+helpers, `monolith5_compact.py`, `monolith11_compact.py` and the encoded
+transform ports) live under `old/family0/` at the repository root. They are
+retained for provenance and as test references, but are neither executed nor
+distributed.
 
 ## Start at the handwritten boundary
 
@@ -48,8 +48,8 @@ assuming parity from shared arithmetic helpers.
 | `family0.authenticator.RealPlcAuthenticator` | Metadata, seed, challenge/key2 encryption, checksum | Deterministic entropy sequence in the complete blob vectors |
 | `key_derivation.derive_session_key` | HMAC(key2[:24], fingerprint(challenge) + challenge[2:18])[:24] | Complete SessionKey vectors and fingerprint regressions |
 | `legitimate` | Post-setup challenge solution, distinct from initial key derivation | `tests/test_session_auth_legitimate.py`; connection's 303/1846 exchange |
-| `family0.curve`, `seed_transform.execute_value` | SeedTransform as x-only ECDH | `tests/test_session_auth_curve.py`: domain parameters, ladder vs Transform7 on every catalogue key, upstream Transform7 vectors, seeded equality with `reference_execute_value` |
-| `family0.transform7_compact`, `transform12`, `monolith_wrappers` | Reference Transform7 arithmetic/encoding orchestration (not executed); `transform7.py` is the retained original the tools instrument | Byte-equivalence tests against `transform7.py`, independent full-output reference, upstream vectors below |
+| `family0.curve`, `family0.seed` | Seed and blob keys: x-only ECDH and PRESENT-80 | `tests/test_session_auth_curve.py`: domain parameters, ladder vs Transform7 on every catalogue key, upstream Transform7 vectors, seeded equality with `old.family0.seed_transform.reference_execute_value`; `tests/test_session_auth_seed.py`: PRESENT-80 vectors and equality with the encoded ports |
+| `old.family0.transform7_compact`, `transform12`, `monolith_wrappers` | Reference Transform7 arithmetic/encoding orchestration (repository only); `transform7.py` is the retained original the tools instrument | Byte-equivalence tests against `transform7.py`, independent full-output reference, upstream vectors below |
 
 Do not expose generated monoliths as an application API. For a new key within
 an existing supported family, verify its upstream bytes/identifier and add it
@@ -62,19 +62,20 @@ a family guard is not an implementation.
 
 - Outside `_generated/`: handwritten library APIs/orchestration and analysis
   documents. `keys.py` also contains source-inventoried vendored key values.
-  `family0/monolith11_compact.py` is a proven-equivalent runtime migration
-  out of `_generated/`; treat it as handwritten, not mechanical.
-  `family0/monolith5_compact.py` is also a proven-equivalent migration, but
-  it is itself mechanically generated by `tools/compile_monolith5.py` from
-  the recovered model — regenerate it with `--write` rather than hand-editing;
-  a test fails if the checked-in file and the generator disagree.
-- `monolith1..8/11.py`, `nine/part*.py`, `ten/part*.py`: mechanical source
-  output, kept for provenance. `monolith5.py` and `monolith11.py` are no
-  longer executed at runtime — see the `*_compact.py` modules above.
-- `_generated/monolith9.py` and `monolith10.py`: handwritten split-part wrappers.
-- `_generated/data/_constants.py` and `.bin`: extracted source/resource data.
-- `_generated/**/__init__.py`: handwritten package glue; the data loader also
-  embeds source-verified `SHARED_DATA`. All are checksum-inventoried.
+  `family0/fingerprint_gates.bin` is derived data: rebuild it with
+  `python -m tools.build_fingerprint_gates --write`; a test fails if it is stale.
+- `old/`: retired, repository-only reference code. Proof reports under
+  `tools/*.json` pin the SHA-256 of the monoliths, Transform7 and the BigInt
+  helpers, so those files must stay byte-identical; do not edit them. `old/family0/monolith5_compact.py`
+  is mechanically generated by `tools/compile_monolith5.py` from the recovered
+  model — regenerate it with `--write` rather than hand-editing; a test fails
+  if the checked-in file and the generator disagree.
+- `old/family0/_generated/monolith1..8/11.py`, `nine/part*.py`, `ten/part*.py`:
+  mechanical source output, kept for provenance.
+- `old/family0/_generated/monolith9.py` and `monolith10.py`: handwritten split-part wrappers.
+- `old/family0/_generated/data/_constants.py` and `.bin`: extracted source/resource data.
+- `old/family0/_generated/**/__init__.py`: handwritten package glue; the data
+  loader also embeds source-verified `SHARED_DATA`. All are checksum-inventoried.
 - `tests/fixtures/family0`: immutable upstream known-answer data, **not** new
   hardware captures. `provenance.json` maps every binary to source, size and hash,
   and embeds the two upstream Transform7 vectors as exact hex with hashes.
@@ -90,7 +91,7 @@ From a source checkout, no PLC or download is required:
 python -m tools.verify_session_auth
 ```
 
-This checks 34 runtime/glue artifacts, 25 embedded public keys, 77 existing
+This checks 35 runtime, retired and glue artifacts, 25 embedded public keys, 77 existing
 binary fixtures and both embedded Transform7 vector sets. Default verification
 uses only the standard library and does not import/execute the authentication
 package. The authoritative upstream revision and the fingerprint-table repair
@@ -191,7 +192,7 @@ currently logged at INFO. Prefer sanitized fixtures and metadata-only reports.
 | Criterion | Local evidence |
 | --- | --- |
 | Handwritten flow and supported extension points are easy to identify | This guide, module map and actual connection entry path |
-| Every generated/binary runtime artifact has provenance/integrity | Complete 34-file inventory including shared loader; 25 embedded-key records; binary formats |
+| Every generated/binary runtime artifact has provenance/integrity | Complete 35-file inventory including the shared loader and the derived fingerprint network; 25 embedded-key records; binary formats |
 | One verification workflow | `python -m tools.verify_session_auth`, with optional independent source/model checks |
 | Drift fails CI with actionable output | Verifier regression tests, pre-commit hook and explicit quality-job check |
 | Existing vectors/package/V1/TLS behavior retained | Full local suite/build checks; runtime functions and resource bytes unchanged |
@@ -203,10 +204,10 @@ an ordinary field/curve formula. Remaining semantic recovery and selective
 runtime migration are follow-up research. A mass rewrite is **not** justified:
 the setup merge has a real carry exception; ordinary modular tail formulas
 fail on arbitrary inputs; reachable scalar/tail invariants remain unproved.
-Monolith11's compact model has been migrated to runtime (`family0/monolith11_compact.py`).
+Monolith11's compact model was migrated first (`old/family0/monolith11_compact.py`); the runtime has since dropped the encoded values it decoded.
 Monolith5's named-gate model was also migrated, but only after compiling its
 168-position interpreter into flat code (`tools/compile_monolith5.py` →
-`family0/monolith5_compact.py`) — the interpreted form alone was slower than
+`old/family0/monolith5_compact.py`) — the interpreted form alone was slower than
 generated, contrary to a naive size-based judgment; see MODEL_BENCHMARKS.md.
 The full Monolith7 decision evaluator remains larger/slower than generated
 code and is not a migration candidate yet: no compact model exists for all

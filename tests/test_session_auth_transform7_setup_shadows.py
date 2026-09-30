@@ -9,8 +9,8 @@ from unittest.mock import patch
 
 import pytest
 
-from s7commplus.session_auth.family0 import transform7
-from s7commplus.session_auth.family0._generated.data import TRANSFORM7_DATA
+from old.family0 import transform7
+from old.family0._generated.data import TRANSFORM7_DATA
 from tools.recover_monolith5_span_decoder import MODULUS, P
 from tools.recover_transform7_setup import capture_setup, recover, targeted_base_point_probe
 from tools.trace_transform7_setup_shadows import compose, conditional_candidate, span_shadow, trace

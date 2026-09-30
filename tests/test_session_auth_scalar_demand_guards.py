@@ -6,7 +6,7 @@ from dataclasses import replace
 
 import pytest
 
-from s7commplus.session_auth.family0._generated.data import TRANSFORM7_DATA
+from old.family0._generated.data import TRANSFORM7_DATA
 from tools import scalar_representative_rules as rules
 from tools import scalar_stage_plan as compiler
 from tools import transform12_integer_model as exact

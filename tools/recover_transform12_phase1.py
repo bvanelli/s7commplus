@@ -12,7 +12,7 @@ import json
 from dataclasses import dataclass
 from functools import lru_cache
 
-from s7commplus.session_auth.family0._generated.data import TRANSFORM12_BIG_INT_DATA
+from old.family0._generated.data import TRANSFORM12_BIG_INT_DATA
 from tools import transform12_integer_model as arithmetic
 from tools.decompile_transform12 import Operand, Program, dispatch_program, external_operands, format_program, trace_outputs
 

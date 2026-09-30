@@ -4,7 +4,7 @@ import random
 
 import pytest
 
-from s7commplus.session_auth.family0 import big_int_operations, big_int_transforms
+from old.family0 import big_int_operations, big_int_transforms
 from tools import transform7_setup_merge as model
 from tools.recover_transform7_setup import recover, targeted_base_point_probe
 

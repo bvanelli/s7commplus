@@ -1,38 +1,32 @@
-"""Transform13 and the Monolith8 span decoding it consumes, on plain integers.
+"""Decoders for HarpoS7's encoded 160-bit values.
 
-SeedTransform used to re-encode the Transform7 span with Monolith8 and pass it
-through Transform13 (Monolith10 plus three Monolith9 calls). Recovery for issue
-#55 showed that the chain computes:
+HarpoS7's transforms exchange 160-bit values in encoded forms that the runtime
+never builds:
 
-* ``X = span_value(span)``: the span's 169 bits are local three-input gates
-  over its eighteen words, read as ``2*payload + boundary`` modulo 2^160 - 47
-  (the same decoder as ``tools/recover_monolith4_span_identity.py``);
-* ``execute_value(X)``: three encryptions (``monolith9_compact``) of fixed
-  ``SHARED_DATA`` blocks, under the low 80 bits of ``X`` for the first two and
-  the high 80 bits for the third, concatenated and truncated to 160 bits.
-
-The generated ``monolith8`` and the handwritten ``transform13`` port are kept as
-references and pinned against this model by tests.
+- 60-byte buffers (Monolith8 and Monolith9 output) hold three words per bit.
+  ``decode`` reads them through Monolith11's kernel as ``value ^ ENCODING_OFFSET``.
+- The 72-byte Transform7/Monolith1 span holds 169 bits as local three-input
+  gates over eighteen words. ``span_value`` reads them as
+  ``2*payload + boundary`` modulo 2^160 - 47, the same decoder as
+  ``tools/recover_monolith4_span_identity.py``.
 """
 
 from __future__ import annotations
 
 import struct
 
-from . import monolith9_compact
-from ._generated.data import SHARED_DATA
+from . import monolith11_compact
 
 MODULUS = (1 << 160) - 47
+_OFFSET_WORDS = 0x1D9AEB51CF334EA5
+# Monolith11's decode of every encoded 160-bit value is the value XOR this.
+ENCODING_OFFSET = _OFFSET_WORDS | _OFFSET_WORDS << 64 | (_OFFSET_WORDS & 0xFFFFFFFF) << 128
 
-# Plaintext blocks: SHARED_DATA words 12..17 as three little-endian 64-bit values.
-_SHARED = struct.unpack_from("<18I", SHARED_DATA)
-PLAINTEXTS = tuple(_SHARED[2 * block] | _SHARED[2 * block + 1] << 32 for block in (6, 7, 8))
 
-
-def execute_value(value: int) -> int:
-    """The 160-bit value Transform13 encodes for decoded input ``value``."""
-    low, high = monolith9_compact.key_halves(value)
-    return monolith9_compact.encrypt_blocks(PLAINTEXTS, (low, low, high))
+def decode(encoded: bytes | bytearray | memoryview) -> int:
+    """The 160-bit value held by a 60-byte encoded buffer (Monolith8/Monolith9 output)."""
+    words = monolith11_compact.execute_words(struct.unpack("<15I", bytes(encoded[:60])) + (0,) * 15)
+    return sum(word << (32 * index) for index, word in enumerate(words)) ^ ENCODING_OFFSET
 
 
 def _lanes(*chunks: int) -> int:
@@ -62,7 +56,7 @@ _CHOOSE = (
 
 
 def span_value(span: bytes | bytearray | memoryview) -> int:
-    """Decode the 72-byte Transform7/Monolith1 span to ``X``, the value Monolith8 re-encodes."""
+    """Decode the 72-byte Transform7/Monolith1 span to the value Monolith8 re-encodes."""
     if len(span) < 72:
         raise ValueError(f"span too small ({len(span)}, need 72)")
     words = struct.unpack("<18I", bytes(span[:72]))

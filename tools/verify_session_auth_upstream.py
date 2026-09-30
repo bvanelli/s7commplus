@@ -20,7 +20,7 @@ from typing import Any
 
 REPOSITORY_ROOT = Path(__file__).resolve().parents[1]
 AUTH_ROOT = REPOSITORY_ROOT / "s7commplus/session_auth"
-DATA_ROOT = AUTH_ROOT / "family0/_generated/data"
+DATA_ROOT = REPOSITORY_ROOT / "old/family0/_generated/data"
 HEX_NUMBER = re.compile(r"0[xX][0-9A-Fa-f]+")
 
 
@@ -115,7 +115,7 @@ def verify(upstream_root: Path, output_dir: Path | None = None) -> list[str]:
         patch_revision = next(
             patch["revision"]
             for patch in manifest["upstream_patches"]
-            if patch["artifact"] == "s7commplus/session_auth/family0/_generated/data/fp_data2.bin"
+            if patch["artifact"] == "old/family0/_generated/data/fp_data2.bin"
         )
         patched_fingerprint = subprocess.check_output(
             ["git", "-C", str(upstream_root), "show", f"{patch_revision}:HarpoS7/Fingerprint/FingerprintConsts.cs"],

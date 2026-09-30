@@ -170,7 +170,7 @@ def main() -> None:
     if args.carry_witness:
         if any(value is not None for value in values):
             parser.error("--carry-witness cannot be combined with --x/--y/--r")
-        from s7commplus.session_auth.family0._generated.data import TRANSFORM7_DATA
+        from old.family0._generated.data import TRANSFORM7_DATA
 
         source = TRANSFORM7_DATA[0xD8:]
         values = (

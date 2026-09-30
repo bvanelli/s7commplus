@@ -11,7 +11,7 @@ import hashlib
 import json
 from dataclasses import dataclass
 
-from s7commplus.session_auth.family0._generated.data import TRANSFORM12_BIG_INT_DATA
+from old.family0._generated.data import TRANSFORM12_BIG_INT_DATA
 from tools.decompile_transform12 import Operand, Program
 from tools.recover_transform12_phase1 import recover as recover_stages
 from tools.transform12_integer_model import CANDIDATE_MODULUS, decode

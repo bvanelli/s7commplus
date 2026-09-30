@@ -58,7 +58,7 @@ def _gate(bdd: BDD, term: Term, bits: list[int]) -> int:
 def _program(monolith: int = 4) -> list[tuple[str, ast.expr]]:
     if monolith not in (3, 4, 5, 6):
         raise ValueError("unsupported decoded-span monolith")
-    path = REPOSITORY_ROOT / f"s7commplus/session_auth/family0/_generated/monolith{monolith}.py"
+    path = REPOSITORY_ROOT / f"old/family0/_generated/monolith{monolith}.py"
     module = ast.parse(path.read_text(encoding="utf-8"))
     execute = next(node for node in module.body if isinstance(node, ast.FunctionDef) and node.name == "execute")
     statements = []

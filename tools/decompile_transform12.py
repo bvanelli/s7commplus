@@ -16,9 +16,9 @@ from collections import Counter
 from dataclasses import asdict, dataclass, replace
 from typing import Literal
 
-from s7commplus.session_auth.family0 import big_int_operations, big_int_transforms, transform12
-from s7commplus.session_auth.family0._generated.data import TRANSFORM12_BIG_INT_DATA, TRANSFORM12_METADATA
-from s7commplus.session_auth.family0._generated.data._constants import TRANSFORM7_COUNTS_INTS, TRANSFORM7_INDEXES_INTS
+from old.family0 import big_int_operations, big_int_transforms, transform12
+from old.family0._generated.data import TRANSFORM12_BIG_INT_DATA, TRANSFORM12_METADATA
+from old.family0._generated.data._constants import TRANSFORM7_COUNTS_INTS, TRANSFORM7_INDEXES_INTS
 
 SLOT_BYTES = 24
 CONTEXT_SLOTS = transform12.CONTEXT_SIZE // SLOT_BYTES

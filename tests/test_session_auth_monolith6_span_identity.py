@@ -13,7 +13,7 @@ from typing import Any
 
 import pytest
 
-from s7commplus.session_auth.family0._generated import monolith3, monolith4, monolith6
+from old.family0._generated import monolith3, monolith4, monolith6
 from tools import prove_monolith6_span_identity as proof
 from tools.prove_monolith4_span_identity import boolean_backend, symbolic_source
 from tools.recover_monolith4_span_identity import normalized_terms, output_gate_diagram

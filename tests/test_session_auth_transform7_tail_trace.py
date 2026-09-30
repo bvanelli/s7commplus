@@ -4,7 +4,7 @@ from unittest.mock import patch
 
 import pytest
 
-from s7commplus.session_auth.family0 import transform7, transform12
+from old.family0 import transform7, transform12
 from tools import trace_transform7_tail as trace
 
 

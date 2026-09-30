@@ -36,8 +36,14 @@ tested against an isolated, non-safety-critical controller.
 - `s7commplus/legitimation.py`: client-side password legitimation flow
 - `s7commplus/session_auth/`: session authentication and HarpoS7-derived
   cryptographic algorithms
-- `s7commplus/session_auth/family0/_generated/`: generated translations of
-  authentication transforms; avoid hand-editing without a specific reason
+- `s7commplus/session_auth/family0/`: the Family-0 blob builder and its
+  recovered primitives (`seed`, `curve`, `present`, `checksum`, `fingerprint`);
+  `fingerprint_gates.bin` is derived by `tools/build_fingerprint_gates.py`
+- `old/`: retired, repository-only reference code (the transpiled HarpoS7
+  monoliths, their vendored tables in `old/family0/_generated/data/`, and the
+  Transform7/12/13 ports) that tests and `tools/` compare the runtime against;
+  not packaged. Proof reports pin many of these files' SHA-256, so do not edit
+  them
 - `s7commplus/zlib_dicts/`: preset dictionaries used to decompress PLC metadata
 - `tests/`: unit, protocol conformance, emulator, TLS, authentication, and
   opt-in real-PLC tests
@@ -162,7 +168,7 @@ pytest --slow
 ```
 
 Run with `--slow` when changing anything under `tools/prove_*.py`,
-`tools/recover_*.py`, the generated `family0/_generated` monoliths, or any
+`tools/recover_*.py`, the retired `old/family0/` modules, or any
 checked-in proof/model JSON — the fast default only checks that code exists
 and imports, not that its proofs still hold.
 

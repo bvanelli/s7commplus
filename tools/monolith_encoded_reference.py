@@ -146,7 +146,7 @@ def evaluate(program: Program, words: tuple[int, ...]) -> tuple[int, ...]:
 def program(monolith: int) -> Program:
     if monolith not in (4, 6):
         raise ValueError("source-recovered reference supports Monolith4/6")
-    path = REPOSITORY_ROOT / f"s7commplus/session_auth/family0/_generated/monolith{monolith}.py"
+    path = REPOSITORY_ROOT / f"old/family0/_generated/monolith{monolith}.py"
     return compile_source(path.read_text(encoding="utf-8"), 18 if monolith == 4 else 36)
 
 

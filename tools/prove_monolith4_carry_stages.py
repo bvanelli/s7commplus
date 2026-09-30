@@ -17,7 +17,7 @@ from functools import lru_cache
 from typing import Any
 from pathlib import Path
 
-from s7commplus.session_auth.family0._generated import monolith4
+from old.family0._generated import monolith4
 from tools.prove_monolith4_span_identity import boolean_backend, symbolic_source, verify_translation
 from tools.recover_monolith4_span_identity import input_gate_diagram, normalized_terms, output_gate_diagram
 

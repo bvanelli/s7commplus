@@ -15,8 +15,8 @@ from dataclasses import asdict, dataclass
 from functools import lru_cache
 from unittest.mock import patch
 
-from s7commplus.session_auth.family0 import transform7, transform12
-from s7commplus.session_auth.family0._generated.data import TRANSFORM7_DATA
+from old.family0 import transform7, transform12
+from old.family0._generated.data import TRANSFORM7_DATA
 from tools import transform12_integer_model as arithmetic
 
 MODULUS = arithmetic.CANDIDATE_MODULUS

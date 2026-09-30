@@ -19,7 +19,7 @@ from typing import TYPE_CHECKING
 if TYPE_CHECKING:
     from tools.scalar_correction_dag import Graph
 
-from s7commplus.session_auth.family0._generated.data import TRANSFORM7_DATA, TRANSFORM12_BIG_INT_DATA
+from old.family0._generated.data import TRANSFORM7_DATA, TRANSFORM12_BIG_INT_DATA
 from tools import scalar_representative_rules as rules
 from tools import scalar_lift_categories as categories
 from tools import scalar_constant_lifts as constant_lifts

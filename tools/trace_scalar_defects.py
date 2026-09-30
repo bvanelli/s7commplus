@@ -6,7 +6,7 @@ import argparse
 import json
 from dataclasses import asdict, dataclass
 
-from s7commplus.session_auth.family0._generated.data import TRANSFORM7_DATA, TRANSFORM12_BIG_INT_DATA
+from old.family0._generated.data import TRANSFORM7_DATA, TRANSFORM12_BIG_INT_DATA
 from tools import transform12_integer_model as exact
 from tools import transform12_residue_defects as arithmetic
 from tools.decompile_transform12 import Operand

@@ -1,29 +1,19 @@
-"""Monolith9 and Monolith10 as a PRESENT-80 variant on plain integers.
+"""The PRESENT-80 block cipher variant behind the Family-0 seed and keys.
 
-Recovery for issue #55 showed that Monolith9 is PRESENT-80 (standard S-box
-and P-layer, 31 rounds plus whitening) applied to a byte-reversed
-little-endian block. Monolith10 lays out its round keys with three fixed
-deviations from the standard schedule (``round_keys``). Both keep their
-160-bit values in an encoded three-word-per-bit form, and every encoded value
-the transforms exchange decodes through Monolith11's kernel as
-``value ^ ENCODING_OFFSET`` (``decode``).
-
-The generated ``monolith9``/``monolith10`` modules (HarpoS7-derived,
-MIT-licensed; see ``LICENSE-HarpoS7``) are kept as references and pinned
-against this model by tests.
+HarpoS7's Monolith9 is PRESENT-80 (standard S-box and P-layer, 31 rounds plus
+whitening) applied to a byte-reversed little-endian block, and Monolith10 lays
+out its round keys with three fixed deviations from the standard schedule
+(``round_keys``). The transpiled originals are kept in
+``old/family0/_generated`` in the repository and pinned against this module
+by tests.
 """
 
 from __future__ import annotations
 
-import struct
-
-from . import monolith11_compact
+from collections.abc import Sequence
 
 KEY_OFFSET = 0x87CA995217BA31853DCE
 FIRST_ROUND_KEY_OFFSET = 0x0000081000000000
-_OFFSET_WORDS = 0x1D9AEB51CF334EA5
-# Monolith11's decode of every encoded 160-bit value is the value XOR this.
-ENCODING_OFFSET = _OFFSET_WORDS | _OFFSET_WORDS << 64 | (_OFFSET_WORDS & 0xFFFFFFFF) << 128
 VALUE_MASK = (1 << 160) - 1
 _KEY_MASK = (1 << 80) - 1
 
@@ -101,12 +91,6 @@ def key_halves(value: int) -> tuple[int, int]:
     return key_register(value & _KEY_MASK), key_register(value >> 80)
 
 
-def encrypt_blocks(blocks: tuple[int, ...] | list[int], keys: tuple[int, ...] | list[int]) -> int:
+def encrypt_blocks(blocks: Sequence[int], keys: Sequence[int]) -> int:
     """Concatenate ``encrypt(block, key)`` results into one 160-bit value, as three Monolith9 calls do."""
     return sum(encrypt(block, key) << (64 * index) for index, (block, key) in enumerate(zip(blocks, keys))) & VALUE_MASK
-
-
-def decode(encoded: bytes | bytearray | memoryview) -> int:
-    """The 160-bit value held by a 60-byte encoded buffer (Monolith8/Monolith9 output)."""
-    words = monolith11_compact.execute_words(struct.unpack("<15I", bytes(encoded[:60])) + (0,) * 15)
-    return sum(word << (32 * index) for index, word in enumerate(words)) ^ ENCODING_OFFSET

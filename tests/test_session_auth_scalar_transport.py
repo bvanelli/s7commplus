@@ -5,7 +5,7 @@ from dataclasses import replace
 
 import pytest
 
-from s7commplus.session_auth.family0._generated.data import TRANSFORM7_DATA
+from old.family0._generated.data import TRANSFORM7_DATA
 from tools import recover_scalar_encodings as encoding
 from tools import scalar_ladder_model as ladder
 from tools import transport_scalar_defects as transport

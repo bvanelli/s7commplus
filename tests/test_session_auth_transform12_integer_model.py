@@ -4,8 +4,8 @@ import random
 
 import pytest
 
-from s7commplus.session_auth.family0 import big_int_operations, big_int_transforms, transform12
-from s7commplus.session_auth.family0._generated.data import TRANSFORM12_BIG_INT_DATA
+from old.family0 import big_int_operations, big_int_transforms, transform12
+from old.family0._generated.data import TRANSFORM12_BIG_INT_DATA
 from tools import transform12_integer_model as model
 from tools.decompile_transform12 import CONTEXT_SLOTS, dispatch_program, phase2_program
 

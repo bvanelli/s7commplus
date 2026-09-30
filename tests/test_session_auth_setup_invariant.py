@@ -10,7 +10,7 @@ from unittest.mock import patch
 
 import pytest
 
-from s7commplus.session_auth.family0 import transform7
+from old.family0 import transform7
 from tools.prove_monolith_setup_invariant import UPPER_ZERO_TRIPLES, allowed_triple, local_queries, prove
 from tools.prove_transform7_setup_ranges import (
     OutputBit,

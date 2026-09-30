@@ -8,7 +8,7 @@ import struct
 
 import pytest
 
-from s7commplus.session_auth.family0 import transform7
+from old.family0 import transform7
 from tools.recover_monolith4_span_identity import (
     candidate_add,
     normalized_combined,

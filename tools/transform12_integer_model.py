@@ -11,8 +11,8 @@ from __future__ import annotations
 import struct
 from typing import TYPE_CHECKING
 
-from s7commplus.session_auth.family0._generated.data import TRANSFORM12_BIG_INT_DATA
-from s7commplus.session_auth.family0.transform12_compact import add, multiply, subtract
+from old.family0._generated.data import TRANSFORM12_BIG_INT_DATA
+from old.family0.transform12_compact import add, multiply, subtract
 
 if TYPE_CHECKING:
     from tools.decompile_transform12 import Operand, Program

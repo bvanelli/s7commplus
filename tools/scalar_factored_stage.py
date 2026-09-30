@@ -195,7 +195,7 @@ def main() -> None:
     args = parser.parse_args()
     if args.max_nodes < 2 or args.max_terms < 2:
         parser.error("integer node and term budgets>=2 required")
-    from s7commplus.session_auth.family0._generated.data import TRANSFORM7_DATA
+    from old.family0._generated.data import TRANSFORM7_DATA
     from tools.recover_scalar_encodings import scalar_xor_mask
 
     original = equations.compile_catalogue(args.max_terms, exclusive_corrections=True, verify_data=True)

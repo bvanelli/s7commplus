@@ -9,8 +9,10 @@ from unittest.mock import patch
 import pytest
 
 from s7commplus.session_auth import keys
-from s7commplus.session_auth.family0 import seed_transform, transform7, transform7_compact, transform12, transform12_compact
-from s7commplus.session_auth.family0._generated.data import TRANSFORM7_DATA
+from s7commplus.session_auth.family0 import seed
+from old.family0 import seed_transform as old_seed_transform
+from old.family0 import transform7, transform7_compact, transform12, transform12_compact
+from old.family0._generated.data import TRANSFORM7_DATA
 from tools import transform12_integer_model as arithmetic
 from tools.recover_monolith4_span_identity import normalized_span
 from tools.transform7_setup_integer import model as proven_setup
@@ -89,6 +91,6 @@ def test_execute_matches_the_original_for_every_public_key() -> None:
             assert actual == expected
 
 
-def test_seed_transform_calls_the_compact_transform7() -> None:
-    assert not hasattr(seed_transform, "transform7")
-    assert seed_transform.transform7_compact is transform7_compact
+def test_only_the_reference_seed_transform_calls_the_compact_transform7() -> None:
+    assert not hasattr(seed, "transform7") and not hasattr(seed, "transform7_compact")
+    assert old_seed_transform.transform7_compact is transform7_compact

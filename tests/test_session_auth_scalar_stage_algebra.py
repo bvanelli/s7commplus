@@ -11,7 +11,7 @@ from tools import verify_scalar_stage_algebra as checker
 from tools.decompile_transform12 import Instruction, Operand, Program
 from tools.recover_transform12_phase1 import recover
 from tools.transform7_reference import tail_program
-from s7commplus.session_auth.family0._generated.data import TRANSFORM7_DATA
+from old.family0._generated.data import TRANSFORM7_DATA
 from tools.recover_scalar_encodings import scalar_xor_mask
 
 

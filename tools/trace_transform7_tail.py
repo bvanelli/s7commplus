@@ -15,9 +15,9 @@ from dataclasses import dataclass
 from unittest.mock import patch
 
 from s7commplus.session_auth import get_public_key
-from s7commplus.session_auth.family0 import transform7, transform12
-from s7commplus.session_auth.family0._generated.data import TRANSFORM7_DATA
-from s7commplus.session_auth.family0._generated.data._constants import TRANSFORM7_COUNTS_INTS, TRANSFORM7_INDEXES_INTS
+from old.family0 import transform7, transform12
+from old.family0._generated.data import TRANSFORM7_DATA
+from old.family0._generated.data._constants import TRANSFORM7_COUNTS_INTS, TRANSFORM7_INDEXES_INTS
 from tools import transform12_integer_model as exact
 from tools.decompile_transform12 import phase2_program, trace_outputs
 from tools.recover_transform12_phase1 import INITIAL_SLOTS, execute_state

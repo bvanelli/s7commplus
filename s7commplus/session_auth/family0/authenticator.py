@@ -1,13 +1,12 @@
 """RealPlcAuthenticator — builds the 180-byte SecurityKeyEncryptedKey blob.
 
-Orchestrates PreSeedTransform, SeedTransform, KeyDerivationTransform,
-ChecksumTransform, BigIntOperations, and AES-ECB to produce the encrypted
-authentication blob for S7-1200/1500 PLCs.
+Combines the seed and keys from ``seed``, the ``checksum`` field and AES-ECB
+into the encrypted authentication blob for S7-1200/1500 PLCs.
 
-The blob encryption is GCM-like: AES-ECB of a counter (the IV rotated left
-by 31 bits per block) masks the challenge and key2, and a GHASH-style
-checksum over the ciphertext, ``c = (c ^ block) * H`` in
-``checksum_transform``'s field, is encrypted under a second key.
+The blob encryption is GCM-like: AES-ECB of a counter masks the challenge and
+key2, and the counter advances by a multiplication by x in GCM's field. A
+GHASH-style checksum over the ciphertext, ``c = (c ^ block) * H`` in
+``checksum``'s field, is encrypted under a second key.
 
 Manual port of ``HarpoS7.Family0.Auth.RealPlcAuthenticator``.
 """
@@ -19,13 +18,7 @@ from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
 
 from ..blob_metadata import write_metadata
 from ..keys import KeyFamily
-from . import (
-    checksum_transform,
-    key_derivation_transform,
-    pre_seed_transform,
-    seed_transform,
-)
-from . import big_int_operations
+from . import checksum, seed
 
 
 class RealPlcAuthenticator:
@@ -64,14 +57,16 @@ class RealPlcAuthenticator:
         return write_metadata(blob, public_key, bytes(self._key2), family)
 
     def write_seed(self, blob: bytearray | memoryview, public_key: bytes) -> int:
-        pre_seed = pre_seed_transform.execute_value(bytes(self._key1))
-        seed_transform.execute_value(blob, public_key, pre_seed)
-        offset = seed_transform.DESTINATION_SIZE
+        pre_seed = seed.pre_seed(bytes(self._key1))
+        seed.write_seed(blob, public_key, pre_seed)
 
-        self._derive_keys(pre_seed)
-        self._checksum = checksum_transform.multiply(int.from_bytes(self._iv, "little"), self._hash_key)
+        keys = seed.derive_keys(pre_seed)
+        self._challenge_key[:] = keys.challenge_key
+        self._checksum_key[:] = keys.checksum_key
+        self._hash_key = keys.hash_key
+        self._checksum = checksum.multiply(int.from_bytes(self._iv, "little"), self._hash_key)
 
-        return offset
+        return seed.SEED_LENGTH
 
     def encrypt_full_blocks(self, blob: bytearray | memoryview, challenge: bytes) -> int:
         offset = 0
@@ -87,7 +82,7 @@ class RealPlcAuthenticator:
         offset += 16
         self._encrypted_bytes += 16
 
-        big_int_operations.rotate_left_31(self._iv)
+        self._advance_counter()
         self._update_checksum(ct_block)
 
         # Encrypt full 16-byte blocks of key2
@@ -98,7 +93,7 @@ class RealPlcAuthenticator:
             offset += 16
             self._encrypted_bytes += 16
 
-            big_int_operations.rotate_left_31(self._iv)
+            self._advance_counter()
             self._update_checksum(ct_block)
 
         return offset
@@ -123,12 +118,12 @@ class RealPlcAuthenticator:
         self._update_checksum(bytes(ct_padded))
 
         # Final checksum calculation: fold in the length (little-endian dword 3)
-        checksum = checksum_transform.multiply(self._checksum ^ self._encrypted_bytes << 96, self._hash_key)
+        final_checksum = checksum.multiply(self._checksum ^ self._encrypted_bytes << 96, self._hash_key)
 
         # Encrypt checksum with checksum encryption key
         cipher = Cipher(algorithms.AES(bytes(self._checksum_key)), modes.ECB())
         enc = cipher.encryptor()
-        encrypted_checksum = enc.update(checksum.to_bytes(16, "little")) + enc.finalize()
+        encrypted_checksum = enc.update(final_checksum.to_bytes(16, "little")) + enc.finalize()
 
         blob[offset : offset + 16] = encrypted_checksum
         offset += 16
@@ -138,26 +133,22 @@ class RealPlcAuthenticator:
     def extract_key2(self) -> bytes:
         return bytes(self._key2)
 
-    def _derive_keys(self, pre_seed: int) -> None:
-        kd_buf = key_derivation_transform.execute_value(pre_seed)
-
-        # First 16 bytes: challenge encryption key
-        self._challenge_key[:] = kd_buf[:16]
-
-        # Next 16 bytes: checksum encryption key
-        self._checksum_key[:] = kd_buf[16:32]
-
-        # Last 16 bytes: the checksum's hash key H
-        self._hash_key = int.from_bytes(kd_buf[32:48], "little")
-
     def _aes_ecb_encrypt(self, plaintext: bytes) -> bytes:
         cipher = Cipher(algorithms.AES(bytes(self._challenge_key)), modes.ECB())
         enc = cipher.encryptor()
         return bytes(enc.update(plaintext[:16]) + enc.finalize())
 
+    def _advance_counter(self) -> None:
+        """Multiply the little-endian counter by x in GCM's bit-reflected field.
+
+        HarpoS7 calls this ``BigIntOperations.RotateLeft31``.
+        """
+        value = int.from_bytes(self._iv, "little")
+        self._iv[:] = (value >> 1 ^ (0xE1 << 120 if value & 1 else 0)).to_bytes(16, "little")
+
     def _update_checksum(self, ct_block: bytes) -> None:
         block = int.from_bytes(ct_block[:16], "little")
-        self._checksum = checksum_transform.multiply(self._checksum ^ block, self._hash_key)
+        self._checksum = checksum.multiply(self._checksum ^ block, self._hash_key)
 
 
 def _xor_bytes(a: bytes, b: bytes) -> bytes:

@@ -17,7 +17,7 @@ from math import gcd
 from pathlib import Path
 from typing import cast
 
-from s7commplus.session_auth.family0._generated.data import TRANSFORM7_DATA, TRANSFORM12_BIG_INT_DATA
+from old.family0._generated.data import TRANSFORM7_DATA, TRANSFORM12_BIG_INT_DATA
 from tools import recover_scalar_curve as curve
 from tools import transform12_integer_model as exact
 from tools.decompile_transform12 import Operand
@@ -302,10 +302,10 @@ def reference_case(effective_scalar: int = 0, prng1: int = 0) -> dict[str, objec
         "tools/recover_scalar_shadow.py",
         "tools/recover_scalar_encodings.py",
         "tools/scalar_ladder_model.py",
-        "s7commplus/session_auth/family0/transform7.py",
-        "s7commplus/session_auth/family0/_generated/data/_constants.py",
-        "s7commplus/session_auth/family0/_generated/data/transform12_metadata.bin",
-        "s7commplus/session_auth/family0/_generated/data/transform12_big_int_data.bin",
+        "old/family0/transform7.py",
+        "old/family0/_generated/data/_constants.py",
+        "old/family0/_generated/data/transform12_metadata.bin",
+        "old/family0/_generated/data/transform12_big_int_data.bin",
     )
     return {
         "scope": "symbolic transport at observed synthetic defect sites; not global predicate recovery or exact-byte rewrite",

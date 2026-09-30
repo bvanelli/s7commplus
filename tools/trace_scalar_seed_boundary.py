@@ -18,9 +18,10 @@ from dataclasses import dataclass
 from typing import Literal
 from unittest.mock import patch
 
-from s7commplus.session_auth.family0 import monolith9_compact, seed_transform, transform7_compact
-from s7commplus.session_auth.family0._generated import monolith1
-from s7commplus.session_auth.family0._generated.data import TRANSFORM7_DATA
+from old.family0 import encoding, transform7_compact
+from old.family0 import seed_transform as old_seed_transform
+from old.family0._generated import monolith1
+from old.family0._generated.data import TRANSFORM7_DATA
 from s7commplus.session_auth.keys import get_public_key
 from tools import transform12_integer_model as arithmetic
 from tools import transform7_reference as reference
@@ -128,12 +129,12 @@ def first_nonce(case: Case, implementation: Implementation, normalization_limit:
     destination = bytearray(60)
     with (
         patch.object(os, "urandom", fixed_entropy),
-        patch.object(seed_transform, "_monolith1_loop", normalize),
+        patch.object(old_seed_transform, "_monolith1_loop", normalize),
         patch.object(transform7_compact, "execute", observed_transform),
     ):
         try:
-            pre_seed = monolith9_compact.decode(case.transform1)
-            seed_transform.reference_execute_value(destination, case.public_key, pre_seed)
+            pre_seed = encoding.decode(case.transform1)
+            old_seed_transform.reference_execute_value(destination, case.public_key, pre_seed)
         except _NonceRejected:
             return Result(False, None, tuple(transforms), tuple(normalizations), requests)
     return Result(True, bytes(destination), tuple(transforms), tuple(normalizations), requests)

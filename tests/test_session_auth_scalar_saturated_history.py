@@ -6,7 +6,7 @@ from unittest.mock import patch
 
 import pytest
 
-from s7commplus.session_auth.family0._generated.data import TRANSFORM7_DATA, TRANSFORM12_BIG_INT_DATA
+from old.family0._generated.data import TRANSFORM7_DATA, TRANSFORM12_BIG_INT_DATA
 from tools import scalar_compiled_stage as old
 from tools import scalar_saturated_history as model
 from tools import scalar_stage_plan as compiler

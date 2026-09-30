@@ -6,11 +6,12 @@ and the corresponding ``Blobs/BitOperations/`` binary fixtures.
 
 from __future__ import annotations
 
+import random
 from pathlib import Path
 
 import pytest
 
-from s7commplus.session_auth.family0.big_int_operations import (
+from old.family0.big_int_operations import (
     FINALIZE_DESTINATION_SIZE,
     PREPARE_DESTINATION_SIZE,
     finalize,
@@ -19,6 +20,7 @@ from s7commplus.session_auth.family0.big_int_operations import (
     rotate_left_31,
     rotate_right_30,
 )
+from s7commplus.session_auth.family0.authenticator import RealPlcAuthenticator
 
 _FIXTURES = Path(__file__).parent / "fixtures" / "family0" / "bit_operations"
 
@@ -63,6 +65,18 @@ def test_rotate_left_31_vectors(input_bytes: bytes, expected: bytes) -> None:
     buf = bytearray(input_bytes)
     rotate_left_31(buf)
     assert bytes(buf) == expected
+
+
+@pytest.mark.parametrize(
+    "iv", [bytes(16), b"\xff" * 16, bytes.fromhex("25" * 16)] + [random.Random(0x31).randbytes(16) for _ in range(64)]
+)
+def test_authenticator_counter_is_rotate_left_31(iv: bytes) -> None:
+    expected = bytearray(iv)
+    rotate_left_31(expected)
+    authenticator = object.__new__(RealPlcAuthenticator)
+    authenticator._iv = bytearray(iv)
+    authenticator._advance_counter()
+    assert authenticator._iv == expected
 
 
 def test_rotate_right_30_smoke() -> None:

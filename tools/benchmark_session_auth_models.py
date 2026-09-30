@@ -63,7 +63,7 @@ def implementations() -> list[Implementation]:
     cases = [
         Implementation(
             f"monolith{number}_generated",
-            f"s7commplus.session_auth.family0._generated.monolith{number}",
+            f"old.family0._generated.monolith{number}",
             number,
             source_words,
             tuple(range(output_words)),
@@ -77,7 +77,7 @@ def implementations() -> list[Implementation]:
             Implementation("monolith5_gates", "tools.monolith5_gate_model", 5, 54, tuple(range(12))),
             Implementation(
                 "monolith5_compiled",
-                "s7commplus.session_auth.family0.monolith5_compact",
+                "old.family0.monolith5_compact",
                 5,
                 54,
                 tuple(range(12)),
@@ -96,7 +96,7 @@ def validate(case: Implementation, execute: Callable[[bytes], bytes], sources: S
     fixture_dir = _ROOT / "tests/fixtures/family0/monoliths"
     fixture_source = (fixture_dir / f"monolith{case.monolith}-src.bin").read_bytes()
     fixture_expected = (fixture_dir / f"monolith{case.monolith}-dst.bin").read_bytes()
-    generated = importlib.import_module(f"s7commplus.session_auth.family0._generated.monolith{case.monolith}")
+    generated = importlib.import_module(f"old.family0._generated.monolith{case.monolith}")
     for source, expected in [(fixture_source, fixture_expected), *((source, None) for source in sources)]:
         if expected is None:
             destination = bytearray({5: 48, 7: 144, 11: 20}[case.monolith])

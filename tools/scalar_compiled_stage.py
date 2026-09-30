@@ -394,7 +394,7 @@ def main() -> None:
     args = parser.parse_args()
     if args.max_terms < 2 or not 0 <= args.effective_scalar < 1 << 160 or not 0 <= args.prng1 < 1 << 160:
         parser.error("unsigned160 synthetic parameters and term bound>=2 required")
-    from s7commplus.session_auth.family0._generated.data import TRANSFORM7_DATA
+    from old.family0._generated.data import TRANSFORM7_DATA
     from tools.recover_scalar_encodings import scalar_xor_mask
 
     catalogue = compile_catalogue(args.max_terms, exclusive_corrections=args.exclusive_corrections, verify_data=args.verify_data)

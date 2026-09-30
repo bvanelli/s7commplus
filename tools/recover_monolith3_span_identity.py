@@ -12,7 +12,7 @@ import struct
 from collections import Counter
 from dataclasses import asdict, dataclass
 
-from s7commplus.session_auth.family0._generated import monolith3
+from old.family0._generated import monolith3
 from tools.recover_monolith4_span_identity import normalized_span
 from tools.recover_monolith5_span_decoder import MODULUS, P
 from tools.recover_monolith6_span_identity import H, Relation, normalized_relation

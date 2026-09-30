@@ -1,10 +1,10 @@
-"""Runtime-migration checks for Monolith11.
+"""Checks for the compact Monolith11 in ``old/family0``.
 
-`family0/monolith11_compact.execute` replaced `_generated/monolith11.execute`
-as the function ``seed_transform.py`` actually calls. These tests prove the
-byte-level entry point (not just the word-level formula already covered in
-``test_session_auth_bitwise_analysis.py``) is equivalent, and guard against a
-regression back to importing the generated module at runtime.
+``monolith11_compact.execute`` replaced ``_generated/monolith11.execute`` for
+decoding encoded values. These tests prove the byte-level entry point (not
+just the word-level formula already covered in
+``test_session_auth_bitwise_analysis.py``) is equivalent, and that the runtime
+no longer needs either, because it passes decoded integers.
 """
 
 from __future__ import annotations
@@ -12,8 +12,11 @@ from __future__ import annotations
 import random
 from pathlib import Path
 
-from s7commplus.session_auth.family0 import monolith11_compact, seed_transform
-from s7commplus.session_auth.family0._generated import monolith11 as generated_monolith11
+import sys
+
+import s7commplus.session_auth.legacy_auth  # noqa: F401  (loads the whole runtime)
+from old.family0 import encoding, monolith11_compact
+from old.family0._generated import monolith11 as generated_monolith11
 
 _FIXTURES = Path(__file__).parent / "fixtures/family0/monoliths"
 
@@ -46,6 +49,7 @@ def test_compact_execute_matches_generated_on_random_vectors_and_preserves_tail(
         assert bytes(compact_destination[20:]) == tail
 
 
-def test_seed_transform_no_longer_imports_generated_monolith11() -> None:
-    assert not hasattr(seed_transform, "monolith11")
-    assert seed_transform.monolith9_compact.monolith11_compact is monolith11_compact
+def test_only_the_encoded_value_decoder_uses_monolith11() -> None:
+    assert encoding.monolith11_compact is monolith11_compact
+    runtime = [module for name, module in sys.modules.items() if name.startswith("s7commplus.session_auth")]
+    assert runtime and not any("monolith" in name for module in runtime for name in vars(module))

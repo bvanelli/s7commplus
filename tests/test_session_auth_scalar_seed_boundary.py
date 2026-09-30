@@ -7,8 +7,11 @@ from unittest.mock import patch
 
 import pytest
 
-from s7commplus.session_auth.family0 import pre_seed_transform, seed_transform, transform7_compact
-from s7commplus.session_auth.family0._generated import monolith1
+from s7commplus.session_auth.family0 import seed
+from old.family0 import transform7_compact
+from old.family0 import pre_seed_transform as old_pre_seed_transform
+from old.family0 import seed_transform as old_seed_transform
+from old.family0._generated import monolith1
 from s7commplus.session_auth.keys import KeyFamily
 from s7commplus.session_auth.legacy_auth import authenticate_real_plc
 from tools import trace_scalar_seed_boundary as boundary
@@ -80,7 +83,7 @@ def test_caller_difference_is_not_specific_to_zero_transform1() -> None:
 @pytest.mark.slow
 def test_bundled_key_difference_survives_actual_preseed_transform() -> None:
     transform1 = bytearray(60)
-    pre_seed_transform.execute(transform1, bytes(range(24)))
+    old_pre_seed_transform.execute(transform1, bytes(range(24)))
     case = replace(boundary.cases()[4], transform1=bytes(transform1))
     original = boundary.first_nonce(case, "original")
     exact = boundary.first_nonce(case, "reference")
@@ -128,9 +131,9 @@ def test_bundled_key_carry_changes_the_complete_180_byte_authentication_blob() -
 
         with (
             patch.object(os, "urandom", fixed_entropy),
-            patch.object(seed_transform, "_monolith1_loop", normalize),
+            patch.object(old_seed_transform, "_monolith1_loop", normalize),
             patch.object(transform7_compact, "execute", scalar),
-            patch.object(seed_transform, "execute_value", seed_transform.reference_execute_value),
+            patch.object(seed, "write_seed", old_seed_transform.reference_execute_value),
         ):
             result = authenticate_real_plc(bytes(range(20)), case.public_key, KeyFamily.S7_1500)
         assert requests == 5
@@ -170,13 +173,13 @@ def test_bundled_key_counterexample_is_constructed_at_the_first_scalar_carry() -
 
 
 def test_normalization_bound_fails_closed_and_restores_patches() -> None:
-    original_transform, original_loop = transform7_compact.execute, seed_transform._monolith1_loop
+    original_transform, original_loop = transform7_compact.execute, old_seed_transform._monolith1_loop
     with patch.object(monolith1, "execute", return_value=0) as normalized:
         with pytest.raises(ValueError, match="declared bound"):
             boundary.first_nonce(boundary.cases()[1], "original", normalization_limit=2)
         assert normalized.call_count == 2
     assert transform7_compact.execute is original_transform
-    assert seed_transform._monolith1_loop is original_loop
+    assert old_seed_transform._monolith1_loop is original_loop
 
 
 def test_inputs_and_candidate_domain_are_explicit() -> None:

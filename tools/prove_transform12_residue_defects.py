@@ -24,11 +24,14 @@ WIDTH = 322  # All source intermediates fit, including signed complements.
 
 
 def compile_source(z3: Any, operation: str, a: Any, b: Any, product: Any | None = None) -> Any:
-    tree = ast.parse(inspect.getsource(getattr(exact, operation)))
+    source_function = getattr(exact, operation)
+    tree = ast.parse(inspect.getsource(source_function))
     function = tree.body[0]
     if not isinstance(function, ast.FunctionDef):
         raise ValueError("expected an integer-model function")
-    env = {"a": a, "b": b, **{name: getattr(exact, name) for name in ("LIMIT", "MASK", "WORD_MASK", "FOLD", "BITS")}}
+    # The model re-exports the runtime functions, so resolve their module's integer constants.
+    constants = {name: value for name, value in vars(inspect.getmodule(source_function)).items() if type(value) is int}
+    env = {"a": a, "b": b, **constants}
 
     def expression(node: ast.expr, state: dict[str, Any]) -> Any:
         if isinstance(node, ast.Name) and node.id in state:

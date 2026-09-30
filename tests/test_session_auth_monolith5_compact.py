@@ -17,8 +17,8 @@ from pathlib import Path
 
 from tools.compile_monolith5 import compile_source
 
-from s7commplus.session_auth.family0 import monolith5_compact, monolith_wrappers
-from s7commplus.session_auth.family0._generated import monolith5 as generated_monolith5
+from old.family0 import monolith5_compact, monolith_wrappers
+from old.family0._generated import monolith5 as generated_monolith5
 
 _FIXTURES = Path(__file__).parent / "fixtures/family0/monoliths"
 

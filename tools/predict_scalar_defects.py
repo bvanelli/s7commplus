@@ -17,7 +17,7 @@ from dataclasses import dataclass
 from functools import lru_cache
 from pathlib import Path
 
-from s7commplus.session_auth.family0._generated.data import TRANSFORM7_DATA, TRANSFORM12_BIG_INT_DATA
+from old.family0._generated.data import TRANSFORM7_DATA, TRANSFORM12_BIG_INT_DATA
 from tools import recover_scalar_curve as curve
 from tools import scalar_representative_rules as representative_rules
 from tools import transform12_integer_model as exact
@@ -335,9 +335,9 @@ def source_hashes() -> dict[str, str]:
         "tools/transform7_reference.py",
         "tools/monolith_encoded_reference.py",
         "s7commplus/session_auth/artifacts.json",
-        "s7commplus/session_auth/family0/_generated/data/_constants.py",
-        "s7commplus/session_auth/family0/_generated/data/transform12_metadata.bin",
-        "s7commplus/session_auth/family0/_generated/data/transform12_big_int_data.bin",
+        "old/family0/_generated/data/_constants.py",
+        "old/family0/_generated/data/transform12_metadata.bin",
+        "old/family0/_generated/data/transform12_big_int_data.bin",
     )
     return {name: hashlib.sha256((root / name).read_bytes()).hexdigest() for name in paths}
 

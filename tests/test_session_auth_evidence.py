@@ -9,7 +9,7 @@ from unittest.mock import patch
 
 import pytest
 
-from s7commplus.session_auth.family0 import transform7
+from old.family0 import transform7
 from tools import verify_session_auth as workflow
 from tools.transform7_reference import model
 from tools.verify_session_auth_evidence import PROVENANCE, verify

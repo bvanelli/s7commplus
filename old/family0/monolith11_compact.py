@@ -1,4 +1,4 @@
-"""Monolith11 — compact, human-maintained runtime implementation.
+"""Monolith11 — compact, human-maintained implementation.
 
 Family-0 Monolith11 maps 30 source words to 5 destination words through
 bitwise-only per-bit Boolean functions (AND/OR/XOR/NOT; no shifts, carries,
@@ -9,11 +9,10 @@ derivation and ``tests/test_session_auth_bitwise_analysis.py`` for the
 equivalence proof: all 5x32 output bits, the upstream known-answer vector,
 and 100 random vectors cross-checked against the retained generated code.
 
-This module is the runtime implementation used by ``seed_transform.py``.
-``family0/_generated/monolith11.py`` (HarpoS7-derived, MIT-licensed; see
-``LICENSE-HarpoS7``) is kept only for provenance/audit and is no longer
-called here — this is a proven, byte-for-byte equivalent representation
-change per issue #1's acceptance criteria, not a behavior change.
+``encoding.decode`` uses it to read encoded 160-bit values. The runtime no
+longer needs either, because it passes decoded integers between transforms.
+``_generated/monolith11.py`` (HarpoS7-derived, MIT-licensed; see
+``LICENSE-HarpoS7``) is the transpiled original it replaces.
 """
 
 from __future__ import annotations
@@ -62,7 +61,7 @@ def execute_words(source: Sequence[int]) -> tuple[int, ...]:
 def execute(destination: bytearray, source: bytes) -> None:
     """Write the five Monolith11 output words into ``destination[:20]``.
 
-    Signature matches the retired ``family0/_generated/monolith11.py`` entry
+    Signature matches the transpiled ``_generated/monolith11.py`` entry
     point: ``source`` supplies (at least) 30 little-endian uint32 words, and
     only the first 20 bytes of ``destination`` are written — the generated
     version also left ``destination[20:]`` unchanged, so this is a no-op

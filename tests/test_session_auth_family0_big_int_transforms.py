@@ -10,7 +10,7 @@ from pathlib import Path
 
 import pytest
 
-from s7commplus.session_auth.family0.big_int_transforms import (
+from old.family0.big_int_transforms import (
     DESTINATION_SIZE,
     big_int_addition,
     big_int_multiplication,

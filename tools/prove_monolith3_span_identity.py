@@ -15,7 +15,7 @@ import time
 from pathlib import Path
 from typing import Any
 
-from s7commplus.session_auth.family0._generated import monolith3
+from old.family0._generated import monolith3
 from tools.prove_monolith6_span_identity import local_equations
 
 

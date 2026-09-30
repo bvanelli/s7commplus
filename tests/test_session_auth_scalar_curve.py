@@ -5,8 +5,8 @@ from unittest.mock import patch
 
 import pytest
 
-from s7commplus.session_auth.family0 import transform12
-from s7commplus.session_auth.family0._generated.data import TRANSFORM12_BIG_INT_DATA
+from old.family0 import transform12
+from old.family0._generated.data import TRANSFORM12_BIG_INT_DATA
 from tools import recover_scalar_curve as curve
 from tools import recover_scalar_shadow as shadow
 from tools import transform12_integer_model as exact

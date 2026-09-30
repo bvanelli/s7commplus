@@ -4,8 +4,8 @@ This is an exact compact model of the pinned, generated Family-0 Monolith5.
 It is not a claim about every proprietary DLL version, but the "Named gates
 and span structure" formula below *has* been promoted to the runtime
 implementation: `tools/compile_monolith5.py` mechanically unrolls it into
-`family0/monolith5_compact.py`, which `monolith_wrappers.py` now calls
-instead of `_generated/monolith5.py` (kept for provenance only). See
+`old/family0/monolith5_compact.py`, which `monolith_wrappers.py` now calls
+instead of `old/family0/_generated/monolith5.py` (kept for provenance only). See
 "Runtime migration" below. Source and destination are little-endian 32-bit
 words, numbered from zero.
 
@@ -106,12 +106,12 @@ not the underlying arithmetic: `tools/compile_monolith5.py` mechanically
 unrolls the same formula (same gate/position records, no new cryptanalysis)
 into straight-line Python — one local variable per unique lane evaluation,
 and one statement per position, with the per-position subset enumeration
-resolved at generation time — producing `family0/monolith5_compact.py`. That
+resolved at generation time — producing `old/family0/monolith5_compact.py`. That
 compiled form measured about 2.2x *faster* than generated and about 1.6x
 smaller, with no runtime JSON loading. `monolith_wrappers.py` now calls it
-instead of `_generated/monolith5.py`.
+instead of `old/family0/_generated/monolith5.py`.
 
-`family0/monolith5_compact.py` is mechanically generated and must not be
+`old/family0/monolith5_compact.py` is mechanically generated and must not be
 hand-edited; regenerate it with `python -m tools.compile_monolith5 --write`
 after any change to `monolith5_gate_model.json` or `monolith5_model.json`.
 `tests/test_session_auth_monolith5_compact.py` fails if the checked-in file

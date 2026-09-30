@@ -9,7 +9,7 @@ from pathlib import Path
 
 import pytest
 
-from s7commplus.session_auth.family0._generated import monolith7
+from old.family0._generated import monolith7
 from tools.analyze_symbolic_monolith import analyze_output_bit
 from tools.monolith7_tail_model import execute_words
 from tools.recover_monolith7_tail import recover_model

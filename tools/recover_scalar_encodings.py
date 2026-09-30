@@ -17,9 +17,9 @@ from itertools import combinations_with_replacement
 from math import gcd
 from pathlib import Path
 
-from s7commplus.session_auth.family0 import transform7
-from s7commplus.session_auth.family0._generated.data import TRANSFORM7_DATA, TRANSFORM12_BIG_INT_DATA, TRANSFORM12_METADATA
-from s7commplus.session_auth.family0._generated.data._constants import TRANSFORM7_COUNTS_INTS, TRANSFORM7_INDEXES_INTS
+from old.family0 import transform7
+from old.family0._generated.data import TRANSFORM7_DATA, TRANSFORM12_BIG_INT_DATA, TRANSFORM12_METADATA
+from old.family0._generated.data._constants import TRANSFORM7_COUNTS_INTS, TRANSFORM7_INDEXES_INTS
 
 from tools import recover_scalar_curve as curve
 from tools.recover_scalar_shadow import MODULUS, Polynomial, add, multiply, recover, substitute

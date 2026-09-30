@@ -17,7 +17,7 @@ from collections import Counter, defaultdict
 from dataclasses import asdict, dataclass
 from pathlib import Path
 
-from s7commplus.session_auth.family0._generated.data import TRANSFORM12_BIG_INT_DATA
+from old.family0._generated.data import TRANSFORM12_BIG_INT_DATA
 from tools.decompile_transform12 import Instruction, Operand, Program
 from tools.scalar_stage_plan import Plan, Polynomial, compile_plan
 from tools.transform12_integer_model import decode

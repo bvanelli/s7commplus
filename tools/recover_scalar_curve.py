@@ -16,7 +16,7 @@ from dataclasses import asdict, dataclass
 from math import gcd
 from pathlib import Path
 
-from s7commplus.session_auth.family0._generated.data import TRANSFORM7_DATA, TRANSFORM12_BIG_INT_DATA, TRANSFORM12_METADATA
+from old.family0._generated.data import TRANSFORM7_DATA, TRANSFORM12_BIG_INT_DATA, TRANSFORM12_METADATA
 from tools import transform12_integer_model as exact
 from tools.decompile_transform12 import Operand
 from tools.recover_scalar_shadow import MODULUS, Polynomial, add, evaluate, multiply, recover, substitute

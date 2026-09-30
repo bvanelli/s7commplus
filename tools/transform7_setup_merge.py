@@ -14,7 +14,7 @@ from dataclasses import asdict, dataclass
 from typing import cast
 from unittest.mock import patch
 
-from s7commplus.session_auth.family0 import transform7
+from old.family0 import transform7
 from tools import transform12_integer_model as arithmetic
 from tools.recover_transform7_setup import capture_setup, recover, targeted_base_point_probe
 

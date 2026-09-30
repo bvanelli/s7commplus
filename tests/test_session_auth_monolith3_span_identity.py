@@ -12,7 +12,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from s7commplus.session_auth.family0._generated import monolith3
+from old.family0._generated import monolith3
 from tools import prove_monolith3_span_identity as proof
 from tools.prove_monolith6_span_identity import symbolic_pair
 from tools.recover_monolith3_span_identity import PLAIN_LIMIT, high_bit_witness, observe, relation

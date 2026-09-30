@@ -5,8 +5,8 @@ from unittest.mock import patch
 
 import pytest
 
-from s7commplus.session_auth.family0 import big_int_transforms
-from s7commplus.session_auth.family0._generated.data import TRANSFORM7_DATA, TRANSFORM12_BIG_INT_DATA
+from old.family0 import big_int_transforms
+from old.family0._generated.data import TRANSFORM7_DATA, TRANSFORM12_BIG_INT_DATA
 from tools import recover_scalar_curve as curve
 from tools import recover_scalar_encodings as encoding
 from tools import scalar_ladder_model as ladder

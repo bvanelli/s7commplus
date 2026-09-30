@@ -9,7 +9,7 @@ from unittest.mock import patch
 
 import pytest
 
-from s7commplus.session_auth.family0 import transform7
+from old.family0 import transform7
 from tools.recover_monolith5_span_decoder import MODULUS, P
 from tools.recover_monolith6_span_identity import H
 from tools.recover_transform7_setup import SLOTS, targeted_base_point_probe

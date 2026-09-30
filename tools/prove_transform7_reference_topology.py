@@ -13,8 +13,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from unittest.mock import patch
 
-from s7commplus.session_auth.family0 import transform7
-from s7commplus.session_auth.family0._generated.data import TRANSFORM7_DATA
+from old.family0 import transform7
+from old.family0._generated.data import TRANSFORM7_DATA
 from tools import transform7_reference as reference
 from tools.recover_monolith5 import _literal
 

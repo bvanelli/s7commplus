@@ -36,7 +36,7 @@ def test_missing_manifest_entry_is_reported(tmp_path: Path) -> None:
 
 def test_shared_data_loader_is_manifested(tmp_path: Path) -> None:
     document = json.loads(DEFAULT_MANIFEST.read_text(encoding="utf-8"))
-    path = "s7commplus/session_auth/family0/_generated/data/__init__.py"
+    path = "old/family0/_generated/data/__init__.py"
     document["artifacts"] = [record for record in document["artifacts"] if record["path"] != path]
     manifest = tmp_path / "artifacts.json"
     _write_manifest(manifest, document)

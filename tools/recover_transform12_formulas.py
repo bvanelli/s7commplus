@@ -11,7 +11,7 @@ import argparse
 import json
 from dataclasses import asdict, dataclass
 
-from s7commplus.session_auth.family0._generated.data import TRANSFORM12_BIG_INT_DATA
+from old.family0._generated.data import TRANSFORM12_BIG_INT_DATA
 from tools.decompile_transform12 import Operand, Program, phase2_program, trace_outputs
 from tools.transform12_integer_model import CANDIDATE_MODULUS as MODULUS
 from tools.transform12_integer_model import decode

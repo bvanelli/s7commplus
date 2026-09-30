@@ -4,7 +4,7 @@ import random
 
 import pytest
 
-from s7commplus.session_auth.family0 import transform12
+from old.family0 import transform12
 from tools import recover_transform12_formulas as formulas
 from tools import transform12_integer_model as exact
 from tools.decompile_transform12 import dispatch_program, phase2_program, trace_outputs

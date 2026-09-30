@@ -15,7 +15,7 @@ import json
 from dataclasses import dataclass
 from functools import lru_cache
 
-from s7commplus.session_auth.family0._generated.data import TRANSFORM7_DATA
+from old.family0._generated.data import TRANSFORM7_DATA
 from tools import transform12_integer_model as arithmetic
 from tools.decompile_transform12 import Program, phase2_program, trace_outputs
 from tools.monolith_encoded_reference import execute as encoded

@@ -14,7 +14,7 @@ from dataclasses import dataclass, field as dataclass_field
 from functools import lru_cache
 from types import ModuleType
 
-from s7commplus.session_auth.family0._generated.data import TRANSFORM12_BIG_INT_DATA
+from old.family0._generated.data import TRANSFORM12_BIG_INT_DATA
 from tools import scalar_representative_rules as rules
 from tools import scalar_lift_categories as categories
 from tools import scalar_constant_lifts as constant_lifts

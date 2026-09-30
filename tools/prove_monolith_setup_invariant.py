@@ -108,7 +108,7 @@ def prove(timeout_ms: int = 10000, progress: bool = False) -> dict[str, Any]:
             rows.append(row)
             if progress:
                 print(json.dumps(row), file=sys.stderr, flush=True)
-    folder = Path(__file__).resolve().parents[1] / "s7commplus/session_auth/family0/_generated"
+    folder = Path(__file__).resolve().parents[1] / "old/family0/_generated"
     return {
         "scope": "local upper-zero encoding preservation under input B<2^166; Monolith3 additionally N<2^162",
         "source_sha256": {

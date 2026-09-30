@@ -15,7 +15,7 @@ REPOSITORY_ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_MANIFEST = REPOSITORY_ROOT / "s7commplus/session_auth/artifacts.json"
 # The transpiled monoliths and vendored tables, kept outside the package (see old/__init__.py).
 RETIRED_ROOT = REPOSITORY_ROOT / "old/family0/_generated"
-# The runtime ships only derived binary tables, such as the fingerprint gate network.
+# The runtime ships no binary tables; any .bin added there must be manifested.
 RUNTIME_ROOT = REPOSITORY_ROOT / "s7commplus/session_auth/family0"
 
 

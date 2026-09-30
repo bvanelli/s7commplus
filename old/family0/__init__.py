@@ -14,8 +14,8 @@
 - ``encoding`` and ``monolith11_compact``: decoders for the encoded values
   those ports exchange;
 - ``checksum_transform`` and ``lut_generator``: the table-driven checksum;
-- ``fingerprint``: the direct HarpoFingerprint port, and the builder of the
-  runtime's ``fingerprint_gates.bin``.
+- ``fingerprint``: the direct HarpoFingerprint port and its gate network, from which
+  ``tools/recover_fingerprint.py`` recovers the runtime cipher.
 
 The proof reports under ``tools/`` pin the SHA-256 of the monoliths,
 Transform7 and the BigInt helpers, so those files are byte-identical to their

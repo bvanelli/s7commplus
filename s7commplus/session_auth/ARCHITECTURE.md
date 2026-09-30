@@ -98,14 +98,24 @@ session_auth/
 │   ├── curve.py             The seed's 160-bit prime-order curve and x-only Montgomery ladder
 │   ├── present.py           The PRESENT-80 variant behind the seed and keys (Monolith9/10)
 │   ├── checksum.py          GF(2^128) multiply mod x^128+x^32+x^15+x^2+1 for the blob's checksum
-│   ├── fingerprint.py       8-byte challenge fingerprint (fixed network of 496 nibble lookup gates)
-│   └── fingerprint_gates.bin  The gate network, built by tools/build_fingerprint_gates.py
+│   └── fingerprint.py       8-byte challenge fingerprint: a 13-round SPN on AES's inverse S-box
 ```
 
-The runtime needs no vendored HarpoS7 table except the fingerprint network:
-the curve's generator and the fixed PRESENT-80 plaintexts are small enough to
-be constants in `curve.py` and `seed.py`, and tests check them against the
-original tables.
+The runtime needs no vendored HarpoS7 table: the curve's generator, the fixed
+PRESENT-80 plaintexts and the fingerprint cipher's keys and wiring are small
+enough to be constants in `curve.py`, `seed.py` and `fingerprint.py`, and tests
+check them against the original tables.
+
+HarpoS7's fingerprint is a white-boxed network of 496 nibble lookup gates.
+`tools/recover_fingerprint.py` strips the white-box encodings layer by layer:
+the first layer reads the challenge unencoded, so its S-box and key can be
+matched directly, and every later wire is labelled with the plain bits it
+determines. Underneath is `InvSubBytes(challenge ^ K)`, a fold of the 16 bytes
+to 8, and 13 rounds that transpose 2-bit crumbs within two groups of four
+bytes before a keyed inverse S-box, followed by fixed 4-bit output encodings.
+Every recovered key byte and wiring choice is the only one that fits, and the
+tests rerun the recovery and compare with the gate network and the HarpoS7
+port.
 
 ### Retired reference code (repository only, not distributed)
 
@@ -124,7 +134,7 @@ old/
     ├── encoding.py           Decoders for HarpoS7's encoded 160-bit values and spans
     ├── monolith11_compact.py  Proven-equivalent Monolith11 (used by encoding.decode)
     ├── checksum_transform.py, lut_generator.py  Table-driven checksum ports
-    ├── fingerprint.py        Direct HarpoFingerprint port and the gate-network builder
+    ├── fingerprint.py        Direct HarpoFingerprint port and its gate network
     ├── transform7.py         Original Transform7
     ├── transform7_compact.py  Integer setup + integer Transform12 + final monolith chain (reference for curve.py)
     ├── transform12.py, transform12_compact.py  Transform12 opcode dispatcher (packed and integer)
@@ -160,8 +170,7 @@ longer executed or distributed.
 
 [`artifacts.json`](artifacts.json) is the authoritative inventory for every
 Python module and binary table inside `old/family0/_generated/`, including
-handwritten glue, the runtime's derived `family0/fingerprint_gates.bin`, and
-all embedded public keys. It pins HarpoS7 v1.1.0 to
+handwritten glue, and all embedded public keys. It pins HarpoS7 v1.1.0 to
 commit `b4ba7fab14bcca4274e69a4d6524a5a61fcd329d` and records each artifact's
 classification, upstream source, generation method, byte size, and SHA-256.
 The `fp_data2.bin` table includes the one-element `Data2Collection[1]` repair
@@ -314,8 +323,8 @@ acceptance criteria. Start there before navigating generated programs.
   with a Montgomery ladder (see `MODEL_BENCHMARKS.md`).
 - `old/family0/_generated/data/`: `_constants.py` and the four `.bin` files
   are generated data; its `__init__.py` loader is human-maintained glue.
-- `family0/fingerprint_gates.bin` is derived data: rebuild it with
-  `python -m tools.build_fingerprint_gates --write`, never by hand.
+- `family0/fingerprint.py`'s constants are recovered data: check them with
+  `python -m tools.recover_fingerprint`, never edit them by hand.
 
 When generated output intentionally changes, keep that mechanical diff separate
 from handwritten behavior changes where practical. Regenerate from the pinned

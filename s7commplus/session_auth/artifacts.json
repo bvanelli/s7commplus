@@ -288,14 +288,6 @@
       "generation": "Generated with tools/transpile_harpo_monolith.py from the corresponding HarpoS7 C# Execute method.",
       "size": 249062,
       "sha256": "9ddfc61dc18ca516a135f287de37ff5aeabba0600a13d03df0c987d79ec38692"
-    },
-    {
-      "path": "s7commplus/session_auth/family0/fingerprint_gates.bin",
-      "category": "derived-binary-data",
-      "upstream_source": "HarpoS7/Fingerprint/{FingerprintConsts,ContextMutator}.cs via old/family0/_generated/data/{fp_data1.bin,fp_data2.bin,_constants.py}",
-      "generation": "Built by tools/build_fingerprint_gates.py from the vendored fingerprint tables; tests rebuild it byte-for-byte and check the runtime against the direct HarpoS7 port.",
-      "size": 66464,
-      "sha256": "10f78e8a2dc1cccb5d43a9a97b48c89ee3519a23ce00697ae849cffec28b0898"
     }
   ],
   "embedded_public_keys": [
@@ -451,7 +443,6 @@
     }
   ],
   "binary_formats": {
-    "fingerprint_gates.bin": "496 gate records of 134 bytes: little-endian uint16 input nibbles a and b and output nibble dst, then the 256-entry table indexed by a << 4 | b as 128 bytes of nibbles, high nibble first.",
     "fp_data1.bin": "20 little-endian uint32 lengths followed by concatenated little-endian uint16 arrays.",
     "fp_data2.bin": "20 little-endian uint32 lengths followed by concatenated little-endian uint16 arrays; includes the pinned repair.",
     "transform12_big_int_data.bin": "768 canonical 24-byte packed integer rows; six little-endian uint32 lanes per row.",

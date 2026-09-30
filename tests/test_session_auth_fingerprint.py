@@ -1,15 +1,14 @@
-"""The fingerprint gate network matches the direct HarpoS7 port it replaced."""
+"""The fingerprint SPN matches HarpoS7's gate network and the direct port it replaced."""
 
 from __future__ import annotations
 
-import collections
 import random
 
 import pytest
 
 from s7commplus.session_auth.family0 import fingerprint
 from old.family0 import fingerprint as harpo
-from tools import build_fingerprint_gates
+from tools import recover_fingerprint
 
 
 def _fingerprint(challenge: bytes) -> bytes:
@@ -24,9 +23,25 @@ def _reference(challenge: bytes, destination: bytes = bytes(8)) -> bytes:
     return bytes(output)
 
 
-def test_packaged_gates_are_built_from_the_harpo_tables() -> None:
-    assert build_fingerprint_gates.TARGET.read_bytes() == build_fingerprint_gates.build()
-    assert list(fingerprint._gates()) == harpo.gates()
+def test_constants_are_recovered_from_the_gate_network() -> None:
+    recovered = recover_fingerprint.recover(harpo.gates())
+    assert recovered.input_key == fingerprint.INPUT_KEY
+    assert recovered.round_keys == list(fingerprint.ROUND_KEYS)
+    assert recovered.round_wiring == [list(wiring) for wiring in fingerprint.ROUND_WIRING]
+    assert recovered.output == list(fingerprint.OUTPUT_CRUMBS)
+    assert recovered.output_encoding == list(fingerprint.OUTPUT_ENCODING)
+
+
+def test_inverse_sbox_is_aes() -> None:
+    assert list(fingerprint.INV_SBOX) == recover_fingerprint.inv_sbox_table()
+
+
+def test_matches_the_gate_network_on_random_challenges() -> None:
+    network = harpo.gates()
+    rng = random.Random(4603)
+    for _ in range(300):
+        challenge = rng.randbytes(18)
+        assert _fingerprint(challenge) == harpo.evaluate(network, challenge)
 
 
 def test_matches_the_harpo_port_on_random_challenges() -> None:
@@ -58,24 +73,19 @@ def test_only_challenge_bytes_2_to_18_are_used() -> None:
     assert _fingerprint(challenge) == _fingerprint(variant)
 
 
-def test_gate_network_shape() -> None:
-    gates = fingerprint._gates()
-    assert len(gates) == 496
-    written = collections.Counter(dst for _, _, dst, _ in gates)
-    assert min(written) >= 32 and max(written) < fingerprint._STATE_NIBBLES  # Challenge nibbles are never overwritten.
-    available = set(range(32))
-    for a, b, dst, table in gates:
-        assert {a, b} <= available  # No gate reads a nibble before it is written.
-        assert sorted(collections.Counter(table).values()) == [16] * 16  # Balanced.
-        available.add(dst)
-    assert set(fingerprint._OUTPUT) <= available
+def test_each_round_transposes_crumbs_within_two_groups_of_four_bytes() -> None:
+    for wiring in fingerprint.ROUND_WIRING:
+        groups = {sources for _, sources in wiring}
+        assert len(groups) == 2
+        assert sorted(byte for sources in groups for byte in sources) == list(range(8))
+        for group in groups:
+            assert sorted(j for j, sources in wiring if sources == group) == [0, 1, 2, 3]
 
 
-def test_every_output_nibble_depends_on_the_whole_challenge() -> None:
-    dependencies: dict[int, frozenset[int]] = {nibble: frozenset({nibble}) for nibble in range(32)}
-    for a, b, dst, _ in fingerprint._gates():
-        dependencies[dst] = dependencies[a] | dependencies[b]
-    assert all(dependencies[nibble] == frozenset(range(32)) for nibble in fingerprint._OUTPUT)
+def test_output_reads_every_crumb_of_the_final_state_once() -> None:
+    read = sorted((j, byte) for j, a, b in fingerprint.OUTPUT_CRUMBS for byte in (a, b))
+    assert read == [(j, byte) for j in range(4) for byte in range(8)]
+    assert all(sorted(table) == list(range(16)) for table in fingerprint.OUTPUT_ENCODING)
 
 
 def test_rejects_short_buffers() -> None:
@@ -83,16 +93,3 @@ def test_rejects_short_buffers() -> None:
         fingerprint.fingerprint_challenge(bytearray(7), bytes(18))
     with pytest.raises(ValueError, match="challenge"):
         fingerprint.fingerprint_challenge(bytearray(8), bytes(17))
-
-
-@pytest.mark.parametrize("data", [b"", bytes(133), bytes(135)])
-def test_rejects_empty_or_truncated_gate_data(data: bytes) -> None:
-    with pytest.raises(ValueError, match="empty or truncated"):
-        fingerprint._parse_gates(data)
-
-
-def test_rejects_out_of_range_gate_indices() -> None:
-    record = bytearray(build_fingerprint_gates.TARGET.read_bytes()[:134])
-    record[4:6] = (544).to_bytes(2, "little")
-    with pytest.raises(ValueError, match="out of range"):
-        fingerprint._parse_gates(bytes(record))

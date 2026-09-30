@@ -207,26 +207,48 @@ Authentication now executes no generated monolith; its remaining time is
 split between the two ladders, the challenge fingerprint and the PRESENT-80
 encryptions.
 
-## Challenge fingerprint as a gate network
+## Challenge fingerprint as a gate network, then as an SPN
 
 HarpoFingerprint's per-step formulas combine a FP_DATA2 nibble with a nibble
 of a context that ContextMutator changes between rounds, but that context
 never depends on the challenge. Each step is therefore a fixed gate
 `state[dst] = table[state[a] << 4 | state[b]]` over a 544-nibble state whose
-first 32 nibbles are `challenge[2:18]`. `family0/fingerprint.py` builds the
-496 tables once (about 19 ms on first use) and then evaluates the network.
-The fingerprint is 16 nibbles of the final state. The network has depth 29,
-and every output nibble depends on all 32 challenge nibbles. The tables are
-balanced and use all bits of both inputs, but none is XOR- or
-addition-separable; 240 of them have only four distinct rows and columns.
-This looks like white-box encodings, and the underlying primitive is not
-identified. `tests/test_session_auth_fingerprint.py` keeps the direct HarpoS7
-port verbatim and pins the network against it.
+first 32 nibbles are `challenge[2:18]`. The network has depth 29, and every
+output nibble depends on all 32 challenge nibbles. Its tables are balanced
+and none is XOR- or addition-separable, which is what white-box encodings
+look like.
 
-| Measurement | Before | After |
-| --- | ---: | ---: |
-| `fingerprint_challenge` (after the one-time table build) | 0.51 ms | 0.017 ms |
-| `legacy_auth.authenticate_real_plc` (S7-1500 key) | 2.0 ms | 1.6 ms |
+The layers give the cipher away. Gates come in pairs that read the same two
+nibbles, so each pair is a byte function; the depth-3 gates are Latin squares
+folding 32 nibbles to 16; and the other layers alternate between byte
+bijections of one shared shape and "shuffles" whose outputs read exactly two
+bits (a crumb) of each input nibble. The first layer reads the challenge
+unencoded, and for each challenge byte exactly one key byte makes every
+output crumb a bit pair `(j, j + 4)` of AES's inverse S-box. Labelling every
+wire with the plain crumbs it determines then identifies the rest (see
+`tools/recover_fingerprint.py`):
+
+- `y = InvSubBytes(challenge[2:18] ^ K)`, then the state is `y[0:8] ^ y[8:16]`;
+- 13 rounds, each splitting the 8 bytes into two groups of four, transposing
+  each group's 4x4 grid of crumbs, and applying the inverse S-box under a key
+  byte;
+- 16 fixed, non-affine 4-bit encodings of the final crumbs, which look like
+  the white-box's external output encoding.
+
+Each of the 120 key bytes and 104 S-box source orders is the only one that
+fits. The wiring and keys follow no evident schedule, so this is probably a
+generated cipher rather than a published one. `family0/fingerprint.py` now
+computes it directly. The tests rerun the recovery (about 4 s), compare the
+cipher with the gate network and with the verbatim HarpoS7 port, and check the
+transposition structure.
+
+| Measurement | Direct port | Gate network | SPN |
+| --- | ---: | ---: | ---: |
+| `fingerprint_challenge` | 0.51 ms | 0.018 ms (after a 19 ms table build) | 0.010 ms |
+| Runtime data | HarpoS7 tables | 66 KB `fingerprint_gates.bin` | about 1 KB of constants |
+| `legacy_auth.authenticate_real_plc` (S7-1500 key) | — | 1.44 ms | 1.33 ms |
+
+The authentication row is a median of 15 runs in one session.
 
 ## The blob checksum and HarpoAesCtr
 

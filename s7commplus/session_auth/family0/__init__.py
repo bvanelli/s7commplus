@@ -7,8 +7,8 @@
 - ``curve``: the 160-bit elliptic curve behind the seed's ECDH.
 - ``present``: the PRESENT-80 variant behind the seed and the keys.
 - ``checksum``: the GF(2^128) multiply for the blob's checksum.
-- ``fingerprint``: the challenge fingerprint for the session key, with its
-  gate network in ``fingerprint_gates.bin``.
+- ``fingerprint``: the challenge fingerprint for the session key, a fixed-key
+  SPN on AES's inverse S-box.
 
 HarpoS7's transpiled originals, their vendored tables and the ports these
 modules replace live in ``old/family0`` in the repository and are not

@@ -38,7 +38,7 @@ tested against an isolated, non-safety-critical controller.
   cryptographic algorithms
 - `s7commplus/session_auth/family0/`: the Family-0 blob builder and its
   recovered primitives (`seed`, `curve`, `present`, `checksum`, `fingerprint`);
-  `fingerprint_gates.bin` is derived by `tools/build_fingerprint_gates.py`
+  `fingerprint.py`'s constants are recovered by `tools/recover_fingerprint.py`
 - `old/`: retired, repository-only reference code (the transpiled HarpoS7
   monoliths, their vendored tables in `old/family0/_generated/data/`, and the
   Transform7/12/13 ports) that tests and `tools/` compare the runtime against;

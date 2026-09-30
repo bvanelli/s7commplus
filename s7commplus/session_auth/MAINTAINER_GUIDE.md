@@ -16,8 +16,8 @@ no transpiled code:
   original only where Transform7's arithmetic is not modular, which needs
   structured inputs (see `curve.py`).
 - `family0/checksum.py`: the blob checksum's GF(2^128) multiply.
-- `family0/fingerprint.py`: the challenge fingerprint, as a fixed gate network
-  in `fingerprint_gates.bin`.
+- `family0/fingerprint.py`: the challenge fingerprint, a fixed-key 13-round SPN
+  on AES's inverse S-box recovered from HarpoS7's white-boxed gate network.
 
 The transpiled monoliths, their vendored tables, and the HarpoS7 ports and
 compact intermediates they were checked against (Transform7/12/13, the BigInt
@@ -62,8 +62,9 @@ a family guard is not an implementation.
 
 - Outside `_generated/`: handwritten library APIs/orchestration and analysis
   documents. `keys.py` also contains source-inventoried vendored key values.
-  `family0/fingerprint_gates.bin` is derived data: rebuild it with
-  `python -m tools.build_fingerprint_gates --write`; a test fails if it is stale.
+  `family0/fingerprint.py`'s constants are recovered by
+  `python -m tools.recover_fingerprint`; a test reruns the recovery and fails if
+  they drift.
 - `old/`: retired, repository-only reference code. Proof reports under
   `tools/*.json` pin the SHA-256 of the monoliths, Transform7 and the BigInt
   helpers, so those files must stay byte-identical; do not edit them. `old/family0/monolith5_compact.py`
@@ -192,7 +193,7 @@ currently logged at INFO. Prefer sanitized fixtures and metadata-only reports.
 | Criterion | Local evidence |
 | --- | --- |
 | Handwritten flow and supported extension points are easy to identify | This guide, module map and actual connection entry path |
-| Every generated/binary runtime artifact has provenance/integrity | Complete 35-file inventory including the shared loader and the derived fingerprint network; 25 embedded-key records; binary formats |
+| Every generated/binary runtime artifact has provenance/integrity | Complete 34-file inventory including the shared loader; 25 embedded-key records; binary formats |
 | One verification workflow | `python -m tools.verify_session_auth`, with optional independent source/model checks |
 | Drift fails CI with actionable output | Verifier regression tests, pre-commit hook and explicit quality-job check |
 | Existing vectors/package/V1/TLS behavior retained | Full local suite/build checks; runtime functions and resource bytes unchanged |

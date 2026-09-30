@@ -1,13 +1,13 @@
-"""HarpoS7's challenge fingerprint, and the gate network the runtime ships.
+"""HarpoS7's challenge fingerprint and the white-boxed gate network it computes.
 
 ``harpo_fingerprint`` is the direct port of ``HarpoS7.Fingerprint.HarpoFingerprint``
 and ``ContextMutator``. HarpoS7 computes each gate's output from a
 ``fp_data2.bin`` nibble XOR a nibble of a 47-word context that ContextMutator
 changes between the 20 rounds. That context never depends on the challenge,
 so ``gates`` evaluates the same formulas once for all 256 inputs of every gate,
-and ``encode_gates`` writes the result as the runtime's
-``s7commplus/session_auth/family0/fingerprint_gates.bin``. Regenerate it with
-``python -m tools.build_fingerprint_gates --write``.
+and ``evaluate`` runs the resulting fixed network. ``tools/recover_fingerprint.py``
+recovers the cipher in ``s7commplus/session_auth/family0/fingerprint.py`` from
+that network.
 """
 
 from __future__ import annotations
@@ -167,9 +167,15 @@ def gates() -> list[Gate]:
     return result
 
 
-def encode_gates(network: list[Gate]) -> bytes:
-    """``fingerprint_gates.bin``: per gate, ``<3H`` a, b, dst, then 128 bytes of table nibbles, high nibble first."""
-    return b"".join(
-        struct.pack("<3H", a, b, dst) + bytes(table[i] << 4 | table[i + 1] for i in range(0, 256, 2))
-        for a, b, dst, table in network
-    )
+def evaluate(network: list[Gate], challenge: bytes) -> bytes:
+    """The fingerprint of ``challenge`` computed by the gate network."""
+    state = [0] * 544
+    for index, byte in enumerate(challenge[2:18]):
+        state[2 * index], state[2 * index + 1] = byte >> 4, byte & 0xF
+    for a, b, dst, table in network:
+        state[dst] = table[state[a] << 4 | state[b]]
+    return bytes(state[_OUTPUT[2 * i]] << 4 | state[_OUTPUT[2 * i + 1]] for i in range(FINGERPRINT_LENGTH))
+
+
+# Final-state nibbles that form the fingerprint, most significant first.
+_OUTPUT = (187, 448, 378, 107, 239, 173, 166, 66, 458, 117, 138, 331, 126, 178, 344, 495)

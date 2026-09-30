@@ -86,9 +86,9 @@ v1_session_key/              S7CommPlus V1 SessionKey handshake (not used for TL
 ├── key_derivation.py        SHA-256 KDFs (challenge key, seed key+IV, session key)
 ├── blob_metadata.py         SecurityKeyEncryptedKey blob header/metadata
 ├── utils.py                 Key-ID derivation (SHA-256 → 8 bytes)
-├── harpo_aes.py             AES-ECB wrapper (public API; not used by the handshake)
-├── harpo_aes_ctr.py         AES-GCM without associated data, with a 24-bit counter increment (public API)
-├── harpo_hash.py            GCM's GHASH multiplication, Shoup 8-bit tables (public API)
+├── aes_ecb.py               AesEcb: AES-128-ECB wrapper (HarpoS7's HarpoAes; public API, not used by the handshake)
+├── aes_gcm.py               AesGcm24: AES-GCM without associated data, 24-bit counter (HarpoS7's HarpoAesCtr; public API)
+├── ghash.py                 GCM's GHASH multiplication with Shoup 8-bit tables (HarpoS7's HarpoHash; public API)
 │
 └── real_plc/                The blob algorithm for real S7-1200/1500 keys (families 00 and 01)
     ├── __init__.py

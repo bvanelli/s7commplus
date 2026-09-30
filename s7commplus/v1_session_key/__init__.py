@@ -42,9 +42,9 @@ from .key_derivation import (
     derive_legitimation_challenge_key,
     derive_seed_encryption_key_and_iv,
 )
-from .harpo_aes import AES_BLOCK_SIZE, AES_KEY_LENGTH, HarpoAes
-from .harpo_aes_ctr import HarpoAesCtr
-from .harpo_hash import generate_lookup_table, hash_block, lut1
+from .aes_ecb import AES_BLOCK_SIZE, AES_KEY_LENGTH, AesEcb
+from .aes_gcm import AesGcm24
+from . import ghash
 from .keys import (
     KeyFamily,
     PUBLIC_KEY_LENGTH_REAL_PLC,
@@ -62,8 +62,8 @@ __all__ = [
     "AES_KEY_LENGTH",
     "ENCRYPTED_BLOB_LENGTH_PLCSIM",
     "ENCRYPTED_BLOB_LENGTH_REAL_PLC",
-    "HarpoAes",
-    "HarpoAesCtr",
+    "AesEcb",
+    "AesGcm24",
     "KeyFamily",
     "KEY_ID_LENGTH",
     "PUBLIC_KEY_LENGTH_REAL_PLC",
@@ -73,14 +73,12 @@ __all__ = [
     "derive_key_id",
     "derive_legitimation_challenge_key",
     "derive_seed_encryption_key_and_iv",
-    "generate_lookup_table",
     "fingerprints_for_family",
     "get_blob_length",
     "get_public_key",
     "get_public_key_flags",
     "get_symmetric_key_flags",
-    "hash_block",
-    "lut1",
+    "ghash",
     "parse_family_identifier",
     "parse_fingerprint",
     "write_metadata",

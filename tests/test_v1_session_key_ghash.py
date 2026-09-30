@@ -1,4 +1,4 @@
-"""Vector tests for the HarpoHash primitive.
+"""Vector tests for GHASH multiplication (HarpoS7's HarpoHash).
 
 Ground-truth bytes reproduced from
 ``HarpoS7.Tests/Aes/HarpoHashTests.cs``.
@@ -9,33 +9,33 @@ from __future__ import annotations
 import random
 import pytest
 
-from s7commplus.v1_session_key.harpo_hash import (
-    LUT_SEED,
-    generate_lookup_table,
-    hash_block,
-    lut1,
+from s7commplus.v1_session_key.ghash import (
+    REDUCTION_TABLE,
+    multiplication_table,
+    multiply,
+    times_x,
 )
 
 # Common test input across all three primitives.
 _KEY = bytes.fromhex("914FA2B1AEA05BA6548D1F242CA60124")
 
 
-class TestLutSeed:
+class TestReductionTable:
     def test_length(self) -> None:
-        assert len(LUT_SEED) == 512
+        assert len(REDUCTION_TABLE) == 512
 
 
-class TestLut1:
+class TestTimesX:
     def test_harpos7_vector(self) -> None:
         # HarpoHashTests.Lut1
-        assert lut1(_KEY) == bytes.fromhex("48A7D158D7502DD32A468F9216530092")
+        assert times_x(_KEY) == bytes.fromhex("48A7D158D7502DD32A468F9216530092")
 
     def test_wrong_input_size(self) -> None:
         with pytest.raises(ValueError, match="16 bytes"):
-            lut1(b"\x00" * 15)
+            times_x(b"\x00" * 15)
 
 
-class TestGenerateLookupTable:
+class TestMultiplicationTable:
     def test_harpos7_vector(self) -> None:
         # HarpoHashTests.GenerateLookupTableTest — full 4096-byte
         # expected output, vendored verbatim from the C# test.
@@ -107,29 +107,29 @@ class TestGenerateLookupTable:
         )
         expected = bytes.fromhex(expected_hex)
         assert len(expected) == 4096
-        assert generate_lookup_table(_KEY) == expected
+        assert multiplication_table(_KEY) == expected
 
     def test_wrong_key_size(self) -> None:
         with pytest.raises(ValueError, match="16 bytes"):
-            generate_lookup_table(b"\x00" * 15)
+            multiplication_table(b"\x00" * 15)
 
 
-class TestHashBlock:
+class TestMultiply:
     def test_harpos7_vector(self) -> None:
-        # HarpoHashTests.TbHashTest — runs hash_block over 16 bytes of
+        # HarpoHashTests.TbHashTest — runs multiply over 16 bytes of
         # 0xCC using the LUT generated from the standard test key.
-        lut = generate_lookup_table(_KEY)
-        result = hash_block(b"\xcc" * 16, lut)
+        lut = multiplication_table(_KEY)
+        result = multiply(b"\xcc" * 16, lut)
         assert result == bytes.fromhex("8350FA4DEE9E240BB13929CB4B020A14")
 
-    def test_wrong_data_size(self) -> None:
-        lut = generate_lookup_table(_KEY)
-        with pytest.raises(ValueError, match="data must be 16 bytes"):
-            hash_block(b"\x00" * 15, lut)
+    def test_wrong_block_size(self) -> None:
+        lut = multiplication_table(_KEY)
+        with pytest.raises(ValueError, match="block must be 16 bytes"):
+            multiply(b"\x00" * 15, lut)
 
-    def test_wrong_lut_size(self) -> None:
-        with pytest.raises(ValueError, match="lut must be 4096 bytes"):
-            hash_block(b"\x00" * 16, b"\x00" * 100)
+    def test_wrong_table_size(self) -> None:
+        with pytest.raises(ValueError, match="table must be 4096 bytes"):
+            multiply(b"\x00" * 16, b"\x00" * 100)
 
 
 def _ghash_multiply(x: int, y: int) -> int:
@@ -145,25 +145,25 @@ def _ghash_multiply(x: int, y: int) -> int:
 class TestIsGhash:
     """HarpoHash is GCM's GHASH multiplication with Shoup's 8-bit tables."""
 
-    def test_hash_block_multiplies_by_the_table_key(self) -> None:
+    def test_multiply_multiplies_by_the_table_key(self) -> None:
         rng = random.Random(4800)
         for _ in range(40):
             key, data = rng.randbytes(16), rng.randbytes(16)
             expected = _ghash_multiply(int.from_bytes(data, "big"), int.from_bytes(key, "big"))
-            assert hash_block(data, generate_lookup_table(key)) == expected.to_bytes(16, "big")
+            assert multiply(data, multiplication_table(key)) == expected.to_bytes(16, "big")
 
-    def test_lut1_multiplies_by_x(self) -> None:
+    def test_times_x_multiplies_by_x(self) -> None:
         rng = random.Random(4801)
         for _ in range(40):
             state = rng.randbytes(16)
             expected = _ghash_multiply(int.from_bytes(state, "big"), 1 << 126)
-            assert lut1(state) == expected.to_bytes(16, "big")
+            assert times_x(state) == expected.to_bytes(16, "big")
 
-    def test_lut_seed_is_the_ghash_reduction_table(self) -> None:
+    def test_reduction_table_is_the_ghash_reduction_table(self) -> None:
         # Entry i reduces the byte i shifted out below x^0: i * (0xE1 << 1) spread over 16 bits.
         for i in range(256):
             reduction = 0
             for bit in range(8):
                 if i >> bit & 1:
                     reduction ^= 0xE100 >> (7 - bit)
-            assert int.from_bytes(LUT_SEED[2 * i : 2 * i + 2], "big") == reduction
+            assert int.from_bytes(REDUCTION_TABLE[2 * i : 2 * i + 2], "big") == reduction

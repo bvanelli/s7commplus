@@ -268,9 +268,12 @@ tables, and HarpoAesCtr is AES-GCM without associated data, apart from a
 24-bit counter increment. Tests match both against a textbook GHASH and
 `cryptography`'s AES-GCM. Both modules are now written as that arithmetic
 rather than as ports of HarpoS7's 32-bit register code: the Shoup table is
-built from a bit-serial GCM multiply, `LUT_SEED` is computed from the
+built from a bit-serial GCM multiply, the reduction table is computed from the
 reduction rule, and HarpoAesCtr keeps `J0`, the counter, the running GHASH
 and the ciphertext length under those names. HarpoS7's known-answer
 vectors still pass unchanged, and a differential run against the previous
 port matched on 400 random sessions with split blocks, truncated tags and
-24-bit counter wraps.
+24-bit counter wraps. They have since dropped HarpoS7's names too: the
+modules are `ghash.py` (`times_x`, `multiplication_table`, `multiply`,
+`REDUCTION_TABLE`), `aes_gcm.py` (`AesGcm24` with `start`, `encrypt` and `tag`)
+and `aes_ecb.py` (`AesEcb`).

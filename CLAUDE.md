@@ -50,9 +50,11 @@ tested against an isolated, non-safety-critical controller.
 - `tests/`: unit, protocol conformance, emulator, TLS, authentication, and
   opt-in real-PLC tests
 
-Package data matters: `py.typed`, the V1 SessionKey documents,
-`LICENSE-HarpoS7` and `artifacts.json`, and zlib dictionary `.xml` files are
-included through `pyproject.toml`. The runtime currently ships no `.bin` tables;
+Package data matters: `py.typed`, the V1 SessionKey documents
+(`ARCHITECTURE.md`, `MAINTAINER_GUIDE.md`, `MODEL_BENCHMARKS.md`),
+`LICENSE-HarpoS7`, and zlib dictionary `.xml` files are included through
+`pyproject.toml`. The artifact manifest and the analyses of retired HarpoS7
+code live in `old/family0/` and are not distributed. The runtime currently ships no `.bin` tables;
 the `v1_session_key/**/*.bin` glob stays so that any manifested table added later
 is distributed. Do not move, rename, or omit package data from distributions
 accidentally.

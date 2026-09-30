@@ -44,13 +44,8 @@ s7commplus = [
     "v1_session_key/**/*.bin",
     "v1_session_key/ARCHITECTURE.md",
     "v1_session_key/MAINTAINER_GUIDE.md",
-    "v1_session_key/MONOLITH5_ANALYSIS.md",
-    "v1_session_key/MONOLITH7_ANALYSIS.md",
-    "v1_session_key/MONOLITH11_ANALYSIS.md",
-    "v1_session_key/TRANSFORM12_ANALYSIS.md",
     "v1_session_key/MODEL_BENCHMARKS.md",
     "v1_session_key/LICENSE-HarpoS7",
-    "v1_session_key/artifacts.json",
     "zlib_dicts/*.xml",
 ]
 

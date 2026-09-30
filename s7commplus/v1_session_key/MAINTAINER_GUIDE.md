@@ -96,7 +96,7 @@ This checks 35 runtime, retired and glue artifacts, 25 embedded public keys, 77 
 binary fixtures and both embedded Transform7 vector sets. Default verification
 uses only the standard library and does not import/execute the authentication
 package. The authoritative upstream revision and the fingerprint-table repair
-are in `artifacts.json`; binary layouts are recorded there too.
+are in `old/family0/artifacts.json`; binary layouts are recorded there too.
 
 For independent source correspondence, supply a **local** HarpoS7 checkout at
 the manifest's base revision, containing the recorded repair commit:
@@ -111,7 +111,7 @@ public keys and known-answer fixture bytes. The second additionally regenerates
 the saved Monolith5/7 Boolean models, checks setup proof accounting and checks
 the final-chain recipe's symbolic provenance against the actual source. It does
 not rerun all SMT obligations: install the optional `.[analysis]` extra and use
-the proof commands/tests in `MONOLITH5_ANALYSIS.md` for fresh solver runs.
+the proof commands/tests in `old/family0/MONOLITH5_ANALYSIS.md` for fresh solver runs.
 These commands are read-only; they never fetch source or contact a PLC.
 
 To regenerate binaries safely into a **new** inspection directory:
@@ -131,7 +131,7 @@ in commits, and run the full local release checks before every commit.
 
 ## Trace a constant or output to evidence
 
-`artifacts.json` supplies exact upstream source paths. Transform7 constants
+`old/family0/artifacts.json` supplies exact upstream source paths. Transform7 constants
 come from `HarpoS7.Family0/Data/Transform7Data.cs`; Transform12's constant row
 index corresponds to `Transform12Data.cs:BigIntData`. The opcode tape is copied
 from `Data/Blobs/Transform12Metadata.bin`, retaining its trailing byte.

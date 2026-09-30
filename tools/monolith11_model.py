@@ -1,7 +1,7 @@
 """Readable model of Monolith11.
 
 The equivalence proof in ``tests/test_v1_session_key_bitwise_analysis.py`` and
-``s7commplus/v1_session_key/MONOLITH11_ANALYSIS.md`` covers the implementation
+``old/family0/MONOLITH11_ANALYSIS.md`` covers the implementation
 in ``old.family0.monolith11_compact``; this module re-exports it so existing
 tools and tests that import ``tools.monolith11_model`` keep working unchanged.
 """

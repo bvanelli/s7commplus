@@ -168,7 +168,7 @@ longer executed or distributed.
 
 ## Artifact provenance and verification
 
-[`artifacts.json`](artifacts.json) is the authoritative inventory for every
+[`old/family0/artifacts.json`](../../old/family0/artifacts.json) is the authoritative inventory for every
 Python module and binary table inside `old/family0/_generated/`, including
 handwritten glue, and all embedded public keys. It pins HarpoS7 v1.1.0 to
 commit `b4ba7fab14bcca4274e69a4d6524a5a61fcd329d` and records each artifact's
@@ -256,7 +256,7 @@ for byte-exact vectors.
 
 For Monolith11, a separate exhaustive bitwise analysis recovered a compact,
 exact two-kernel form for all five output words. See
-[`MONOLITH11_ANALYSIS.md`](MONOLITH11_ANALYSIS.md) for the formula, proof
+[`old/family0/MONOLITH11_ANALYSIS.md`](../../old/family0/MONOLITH11_ANALYSIS.md) for the formula, proof
 boundary, and reproduction commands. Its compact form is
 `old/family0/monolith11_compact.py`; the runtime no longer needs either,
 because it passes decoded integers between transforms.
@@ -265,7 +265,7 @@ For Monolith5, fixed shifts make the bitwise-only method inapplicable. A
 symbolic ROBDD/ANF recovery yields an exact, compact model with 32 nine-input
 lane functions and a two-stream combination formula. Every lane function
 further separates into three identical choose/majority span gates and one
-symmetric combine. See [`MONOLITH5_ANALYSIS.md`](MONOLITH5_ANALYSIS.md) for
+symmetric combine. See [`old/family0/MONOLITH5_ANALYSIS.md`](../../old/family0/MONOLITH5_ANALYSIS.md) for
 the formula, proof boundary, and reproduction command. This is also migrated:
 `tools/compile_monolith5.py` unrolls the interpreted formula into the flat,
 mechanically generated `old/family0/monolith5_compact.py`. Both are
@@ -273,13 +273,13 @@ retired together with the rest of the Transform7 chain (see below).
 
 The same per-bit symbolic approach also recovers an exact decision model for
 all 1,152 Monolith7 output bits, alongside smaller readable models for words
-3–5 and 15–17. See [`MONOLITH7_ANALYSIS.md`](MONOLITH7_ANALYSIS.md) for coverage,
+3–5 and 15–17. See [`old/family0/MONOLITH7_ANALYSIS.md`](../../old/family0/MONOLITH7_ANALYSIS.md) for coverage,
 shared conditional-selection/majority cores, size tradeoffs, and verification.
 
 Transform12's dispatched opcode tape can be decompiled into versioned packed
 arithmetic equations and sliced across block boundaries. The 89 stages of its
 second phase have identical branch alternatives and form a fixed two-input
-arithmetic program. See [`TRANSFORM12_ANALYSIS.md`](TRANSFORM12_ANALYSIS.md)
+arithmetic program. See [`old/family0/TRANSFORM12_ANALYSIS.md`](../../old/family0/TRANSFORM12_ANALYSIS.md)
 for exact coverage and the distinction between tape equivalence and arithmetic
 or curve interpretation.
 
@@ -329,7 +329,7 @@ acceptance criteria. Start there before navigating generated programs.
 When generated output intentionally changes, keep that mechanical diff separate
 from handwritten behavior changes where practical. Regenerate from the pinned
 upstream revision, run the upstream-derived vector tests, then update the size
-and SHA-256 in `artifacts.json` in the same generated-output commit. Adding a new
+and SHA-256 in `old/family0/artifacts.json` in the same generated-output commit. Adding a new
 key family should start with a small authenticator interface parallel to
 `real_plc/authenticator.py`; callers should never import generated monoliths
 directly.

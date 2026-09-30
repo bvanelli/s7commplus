@@ -96,7 +96,7 @@ def _mutations(source: str) -> tuple[tuple[tuple[int, str, int], ...], ...]:
 
 def verify(upstream_root: Path, output_dir: Path | None = None) -> list[str]:
     """Compare pinned upstream inputs with every extracted Family-0 data table."""
-    manifest = json.loads((AUTH_ROOT / "artifacts.json").read_text(encoding="utf-8"))
+    manifest = json.loads((REPOSITORY_ROOT / "old/family0/artifacts.json").read_text(encoding="utf-8"))
     revision = manifest["upstream"]["revision"]
     try:
         actual_revision = subprocess.check_output(

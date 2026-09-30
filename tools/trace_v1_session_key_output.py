@@ -17,7 +17,7 @@ from typing import TypedDict
 
 _IGNORED_NAMES = {"_U32", "_shr"}
 REPOSITORY_ROOT = Path(__file__).resolve().parents[1]
-MANIFEST = REPOSITORY_ROOT / "s7commplus/v1_session_key/artifacts.json"
+MANIFEST = REPOSITORY_ROOT / "old/family0/artifacts.json"
 
 
 def _reference_sort_key(ref: str) -> tuple[int, int]:

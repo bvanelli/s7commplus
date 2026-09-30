@@ -14,7 +14,7 @@ import json
 from pathlib import Path
 
 REPOSITORY_ROOT = Path(__file__).resolve().parents[1]
-MANIFEST = REPOSITORY_ROOT / "s7commplus/v1_session_key/artifacts.json"
+MANIFEST = REPOSITORY_ROOT / "old/family0/artifacts.json"
 _BUFFERS = ("src_dwords", "dst_dwords", "locals_")
 
 

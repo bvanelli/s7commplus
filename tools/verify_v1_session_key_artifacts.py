@@ -12,7 +12,7 @@ from pathlib import Path
 from typing import Any
 
 REPOSITORY_ROOT = Path(__file__).resolve().parents[1]
-DEFAULT_MANIFEST = REPOSITORY_ROOT / "s7commplus/v1_session_key/artifacts.json"
+DEFAULT_MANIFEST = REPOSITORY_ROOT / "old/family0/artifacts.json"
 # The transpiled monoliths and vendored tables, kept outside the package (see old/__init__.py).
 RETIRED_ROOT = REPOSITORY_ROOT / "old/family0/_generated"
 # The runtime ships no binary tables; any .bin added there must be manifested.

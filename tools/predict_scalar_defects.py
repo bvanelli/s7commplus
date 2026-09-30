@@ -334,7 +334,7 @@ def source_hashes() -> dict[str, str]:
         "tools/transform7_setup_merge.py",
         "tools/transform7_reference.py",
         "tools/monolith_encoded_reference.py",
-        "s7commplus/v1_session_key/artifacts.json",
+        "old/family0/artifacts.json",
         "old/family0/_generated/data/_constants.py",
         "old/family0/_generated/data/transform12_metadata.bin",
         "old/family0/_generated/data/transform12_big_int_data.bin",

@@ -1964,7 +1964,7 @@ class S7CommPlusConnection:
             logger.info(f"Public key fingerprint captured: {attrs.public_key_fingerprint}")
         if attrs.session_challenge is not None:
             self._session_challenge = attrs.session_challenge
-            logger.info(f"Session challenge captured ({len(attrs.session_challenge)} bytes): {attrs.session_challenge.hex()}")
+            logger.info(f"Session challenge captured ({len(attrs.session_challenge)} bytes)")
 
     def _try_session_key_auth(self) -> Optional[tuple[bytes, bytes]]:
         """Attempt to generate the SecurityKey authentication blob.

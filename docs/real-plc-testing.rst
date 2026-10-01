@@ -28,8 +28,11 @@ block access`` for both DBs so the byte offsets match the versioned fixture.
 Defaults are rack 0, slot 1, and TCP port 102. Apply the least privilege that
 permits the selected scenarios.
 
-S7-1200 firmware V4.5+ and S7-1500 firmware V2.x+ use S7CommPlus V2 and require
-TLS. Pass ``--plc-use-tls`` for those controllers. If the PLC requires custom
+Pass ``--plc-use-tls`` for controllers configured for secure PG/PC
+communication. Newer firmware (for example S7-1200 V4.5+ and S7-1500 V2.9+)
+typically uses TLS, but older or legacy-configured controllers, such as an
+S7-1200 on V4.2 or an S7-1512SP on V2.6, use the non-TLS V1 SessionKey path.
+See :doc:`connections` for the firmware combinations reported so far. If the PLC requires custom
 client credentials or CA verification, also pass ``--plc-tls-cert``,
 ``--plc-tls-key``, and/or ``--plc-tls-ca``. Certificate paths and the PLC
 address are used for the connection but are redacted from reports; reports only

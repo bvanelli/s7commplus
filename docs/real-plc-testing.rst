@@ -28,8 +28,11 @@ block access`` for both DBs so the byte offsets match the versioned fixture.
 Defaults are rack 0, slot 1, and TCP port 102. Apply the least privilege that
 permits the selected scenarios.
 
-S7-1200 firmware V4.5+ and S7-1500 firmware V2.x+ use S7CommPlus V2 and require
-TLS. Pass ``--plc-use-tls`` for those controllers. If the PLC requires custom
+Pass ``--plc-use-tls`` for controllers configured for secure PG/PC
+communication. Newer firmware (for example S7-1200 V4.5+ and S7-1500 V2.9+)
+typically uses TLS, but older or legacy-configured controllers, such as an
+S7-1200 on V4.2 or an S7-1512SP on V2.6, use the non-TLS V1 SessionKey path.
+See :doc:`connections` for the firmware combinations reported so far. If the PLC requires custom
 client credentials or CA verification, also pass ``--plc-tls-cert``,
 ``--plc-tls-key``, and/or ``--plc-tls-ca``. Certificate paths and the PLC
 address are used for the connection but are redacted from reports; reports only
@@ -64,7 +67,9 @@ For a custom certificate setup, append paths that exist only on the test host:
    --plc-tls-ca /secure/plc-ca.pem
 
 The runner writes JUnit XML and schema-versioned JSON beneath
-``real-plc-results/``. Review both artifacts before publishing them. Add
+``real-plc-results/``. It replaces the tester machine's JUnit ``hostname``
+attribute with ``redacted`` after pytest finishes. Review both artifacts for
+other identifying or sensitive content before publishing them. Add
 ``--allow-write`` only after confirming DB2 is disposable scratch space.
 
 Result policy

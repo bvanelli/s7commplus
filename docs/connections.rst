@@ -55,6 +55,46 @@ request layouts only. Password legitimation over a TLS session is also
 available through ``authenticate``, and happens during ``connect`` when a
 ``password`` is given.
 
+Observed firmware and session paths
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+The negotiated path depends on firmware and on whether the TIA Portal project
+enables secure PG/PC communication (TLS), so a firmware version alone does not
+determine it. The following combinations have been reported on real hardware:
+
+.. list-table:: Hardware reports
+   :header-rows: 1
+   :widths: 34 14 24 28
+
+   * - Controller
+     - Firmware
+     - Session path
+     - Status
+   * - S7-1200 CPU 1212C
+     - V4.2.2
+     - V1, legacy SessionKey
+     - Validated
+   * - S7-1512SP (6ES7 512-1DK01-0AB0)
+     - V2.6
+     - V1, legacy SessionKey
+     - Validated with ``legacy_s7_1500=True``
+   * - S7-1515-2 PN
+     - V2.9
+     - V1, legacy SessionKey
+     - Not working; session setup is reset
+   * - S7-1200
+     - V4.1, V4.5, V4.7.3
+     - TLS
+     - Working
+   * - S7-1500 (e.g. 1511F-1 PN)
+     - V2.9.7, V2.9.8
+     - TLS
+     - Working
+
+Firmware not listed here has not been validated. "V1" in this documentation
+refers to the S7CommPlus protocol-version byte negotiated by the session, not
+to the protocol generations used in some academic literature.
+
 Legacy S7-1500 firmware 2.6
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~
 

@@ -842,7 +842,7 @@ class S7CommPlusAsyncClient:
         return catalog.resolve(name)
 
     async def read_tag(self, name: str) -> bytes:
-        """Read one symbolic tag by name, refreshing once if its CRC changed."""
+        """Read one symbolic tag by name."""
         result = (await self.read_tags([name]))[0]
         if result.error is not None:
             raise result.error
@@ -854,36 +854,13 @@ class S7CommPlusAsyncClient:
         if not names:
             return []
         tags = [await self.resolve_tag(name) for name in names]
-        values = await self.read_symbolic_multi([(tag.access_area, list(tag.lids), tag.symbol_crc) for tag in tags])
+        values = await self.read_symbolic_multi([(tag.access_area, list(tag.lids), 0) for tag in tags])
         results = [
             TagResult(tag=tag, value=value)
             if value is not None
             else TagResult(tag=tag, error=RuntimeError(f"Symbolic read failed for {tag.name!r}"))
             for tag, value in zip(tags, values)
         ]
-        retry_indices = [index for index, result in enumerate(results) if not result.success and result.tag.symbol_crc]
-        if not retry_indices:
-            return results
-
-        refreshed = await self.refresh_tag_catalog()
-        changed: list[tuple[int, SymbolicTag]] = []
-        for index in retry_indices:
-            try:
-                tag = refreshed.resolve(results[index].tag.name)
-            except KeyError:
-                continue
-            if tag.symbol_crc != results[index].tag.symbol_crc:
-                changed.append((index, tag))
-        if not changed:
-            return results
-
-        retry_values = await self.read_symbolic_multi([(tag.access_area, list(tag.lids), tag.symbol_crc) for _, tag in changed])
-        for (index, tag), value in zip(changed, retry_values):
-            results[index] = (
-                TagResult(tag=tag, value=value)
-                if value is not None
-                else TagResult(tag=tag, error=RuntimeError(f"Symbolic read failed for {tag.name!r} after CRC refresh"))
-            )
         return results
 
     async def write_tag(self, name: str, data: bytes) -> None:
@@ -903,7 +880,7 @@ class S7CommPlusAsyncClient:
         if unsupported:
             raise ValueError(f"No S7CommPlus wire datatype mapping for: {', '.join(unsupported)}")
         items: list[SymbolicWriteItem] = [
-            (tag.access_area, list(tag.lids), data, tag.symbol_crc, tag.datatype)
+            (tag.access_area, list(tag.lids), data, 0, tag.datatype)
             for tag, data in zip(tags, values.values())
             if tag.datatype is not None
         ]

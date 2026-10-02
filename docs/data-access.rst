@@ -120,10 +120,12 @@ the PLC rejects another item in the same request:
 
 The catalog is cached for the connection. Call ``refresh_tag_catalog`` to
 browse immediately or ``invalidate_tag_catalog`` to force a browse on the next
-name lookup. A failed read with a non-zero SymbolCRC is retried once only when a
-fresh browse reports that the tag's CRC changed. Writes are never retried after
-an ambiguous transport failure. Unknown names and unsupported PLC datatypes
-raise before a request is sent.
+name lookup. Named reads and writes send SymbolCRC 0, which disables the PLC's
+layout check: the ``symbol_crc`` reported by a browse is per-entry type
+metadata, not the access-path CRC the PLC validates, and real CPUs reject it.
+Failed items are reported per tag and never retried automatically; after a
+download that changes the PLC layout, call ``refresh_tag_catalog``. Unknown
+names and unsupported PLC datatypes raise before a request is sent.
 
 The async client provides the same methods as coroutines, except
 ``invalidate_tag_catalog``, which is immediate:

@@ -568,7 +568,7 @@ class S7CommPlusClient:
         return catalog.resolve(name)
 
     def read_tag(self, name: str) -> bytes:
-        """Read one symbolic tag by name, refreshing once if its CRC changed."""
+        """Read one symbolic tag by name."""
         result = self.read_tags([name])[0]
         if result.error is not None:
             raise result.error
@@ -578,43 +578,21 @@ class S7CommPlusClient:
     def read_tags(self, names: Sequence[str]) -> list[TagResult]:
         """Read names in one request and return a success/error for every item.
 
-        A failed read with a non-zero SymbolCRC causes one catalog refresh. Only
-        tags whose CRC actually changed are re-resolved and safely retried.
+        Requests carry SymbolCRC 0 (no layout check): the browsed per-entry CRC
+        is not the value the PLC validates, and real CPUs reject it. Failed
+        items are reported, not retried; call :meth:`refresh_tag_catalog` after
+        a PLC layout change.
         """
         if not names:
             return []
         tags = [self.resolve_tag(name) for name in names]
-        values = self.read_symbolic_multi([(tag.access_area, list(tag.lids), tag.symbol_crc) for tag in tags])
+        values = self.read_symbolic_multi([(tag.access_area, list(tag.lids), 0) for tag in tags])
         results = [
             TagResult(tag=tag, value=value)
             if value is not None
             else TagResult(tag=tag, error=RuntimeError(f"Symbolic read failed for {tag.name!r}"))
             for tag, value in zip(tags, values)
         ]
-
-        retry_indices = [index for index, result in enumerate(results) if not result.success and result.tag.symbol_crc]
-        if not retry_indices:
-            return results
-
-        refreshed = self.refresh_tag_catalog()
-        changed: list[tuple[int, SymbolicTag]] = []
-        for index in retry_indices:
-            try:
-                tag = refreshed.resolve(results[index].tag.name)
-            except KeyError:
-                continue
-            if tag.symbol_crc != results[index].tag.symbol_crc:
-                changed.append((index, tag))
-        if not changed:
-            return results
-
-        retry_values = self.read_symbolic_multi([(tag.access_area, list(tag.lids), tag.symbol_crc) for _, tag in changed])
-        for (index, tag), value in zip(changed, retry_values):
-            results[index] = (
-                TagResult(tag=tag, value=value)
-                if value is not None
-                else TagResult(tag=tag, error=RuntimeError(f"Symbolic read failed for {tag.name!r} after CRC refresh"))
-            )
         return results
 
     def write_tag(self, name: str, data: bytes) -> None:
@@ -638,7 +616,7 @@ class S7CommPlusClient:
         if unsupported:
             raise ValueError(f"No S7CommPlus wire datatype mapping for: {', '.join(unsupported)}")
         items: list[SymbolicWriteItem] = [
-            (tag.access_area, list(tag.lids), data, tag.symbol_crc, tag.datatype)
+            (tag.access_area, list(tag.lids), data, 0, tag.datatype)
             for tag, data in zip(tags, values.values())
             if tag.datatype is not None
         ]

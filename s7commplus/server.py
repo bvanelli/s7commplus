@@ -1086,12 +1086,17 @@ class S7CommPlusServer:
             return None
 
     def _write_item(self, item: Optional[tuple[int, int, int]], data: bytes) -> bool:
-        """Write one item. False, with nothing written, when the emulator cannot serve it."""
+        """Write one item. False, with nothing written, when the emulator cannot serve it.
+
+        That is an item ``_read_item`` would not serve, or a value that is not the
+        size its address names. Without the size check the range written would be
+        the value's, not the address's.
+        """
         if item is None:
             return False
-        db_num, byte_offset, _ = item
+        db_num, byte_offset, byte_size = item
         db = self._data_blocks.get(db_num)
-        if db is None:
+        if db is None or len(data) != byte_size:
             return False
         try:
             db.write(byte_offset, data)

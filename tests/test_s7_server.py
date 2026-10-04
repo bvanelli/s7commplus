@@ -770,6 +770,14 @@ OUTSIDE_THE_BLOCK = [
     pytest.param(200, 2, id="starts-far-past-the-end"),
 ]
 
+# Writes whose value is not the size the address names: (offset, size, value). The
+# last address runs past the end of the block while its shorter value would fit.
+WRONG_SIZE_WRITES = [
+    pytest.param(4, 4, b"\xaa\xbb", id="value-shorter-than-the-address"),
+    pytest.param(4, 2, b"\xaa\xbb\xcc\xdd", id="value-longer-than-the-address"),
+    pytest.param(14, 4, b"\xaa\xbb", id="address-past-the-end-value-fits"),
+]
+
 
 @pytest.fixture()
 def small_db_server() -> Generator[S7CommPlusServer, None, None]:
@@ -874,6 +882,20 @@ class TestServerRefusesItemsItCannotServe:
         # No partial write: the bytes that would have fitted are untouched.
         assert _db1(small_db_server) == before
 
+    @pytest.mark.parametrize(("offset", "size", "value"), WRONG_SIZE_WRITES)
+    def test_write_of_a_value_that_is_not_the_address_size_writes_nothing(
+        self, small_db_server: S7CommPlusServer, offset: int, size: int, value: bytes
+    ) -> None:
+        before = _db1(small_db_server)
+        client = S7CommPlusClient()
+        client.connect("127.0.0.1", port=TEST_PORT)
+        try:
+            with pytest.raises(RuntimeError, match="Write failed"):
+                client.write_symbolic(DB1_AREA, [BLOB, offset, size], value)
+        finally:
+            client.disconnect()
+        assert _db1(small_db_server) == before
+
     def test_write_inside_the_block_still_lands(self, small_db_server: S7CommPlusServer) -> None:
         client = S7CommPlusClient()
         client.connect("127.0.0.1", port=TEST_PORT)
@@ -905,6 +927,14 @@ class TestServerRefusesItemsItCannotServeAsync:
                 await client.write_symbolic(DB1_AREA, [1, 2], b"\xaa\xbb")
             with pytest.raises(RuntimeError):
                 await client.db_write(1, 14, b"\xaa\xbb\xcc\xdd")
+        assert _db1(small_db_server) == before
+
+    async def test_write_of_a_value_that_is_not_the_address_size_writes_nothing(self, small_db_server: S7CommPlusServer) -> None:
+        before = _db1(small_db_server)
+        async with S7CommPlusAsyncClient() as client:
+            await client.connect("127.0.0.1", port=TEST_PORT)
+            with pytest.raises(RuntimeError):
+                await client.write_symbolic(DB1_AREA, [BLOB, 4, 4], b"\xaa\xbb")
         assert _db1(small_db_server) == before
 
 

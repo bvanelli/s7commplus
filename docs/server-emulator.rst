@@ -50,7 +50,8 @@ Everything else is answered with an item error, never with a value:
 
 - an LID path that is not such a range,
 - a data block that is not registered,
-- a range that is not wholly inside the block.
+- a range that is not wholly inside the block,
+- a write whose value is not the size its address names.
 
 ``DataBlock.read`` and ``DataBlock.write`` raise ``IndexError`` for a range outside
 the block. A read is never padded, and a refused write changes nothing.

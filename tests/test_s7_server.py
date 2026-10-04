@@ -404,6 +404,15 @@ class TestAsyncClientServerIntegration:
             send.assert_awaited_once_with(FunctionCode.EXPLORE, expected_payload, integrity_tail=5, reassemble=True)
             assert [db["number"] for db in _parse_explore_datablocks(response)] == [1, 2]
 
+    async def test_explore_missing_object(self, server: S7CommPlusServer) -> None:
+        async with S7CommPlusAsyncClient() as client:
+            await client.connect("127.0.0.1", port=TEST_PORT)
+            response = await client.explore(Ids.DB_ACCESS_AREA_BASE | 99)
+            return_value, consumed = decode_uint64_vlq(response, 0)
+            # The ReturnValue a real S7-1500 sends for an object that does not exist: error code -12
+            assert return_value == 0x8020AB001992FFF4
+            assert response[consumed : consumed + 4] == b"\x00\x00\x00\x00"  # ExploreId echoed as 0
+
     async def test_concurrent_reads(self, server: S7CommPlusServer) -> None:
         """Test that asyncio.Lock prevents interleaved requests."""
         async with S7CommPlusAsyncClient() as client:

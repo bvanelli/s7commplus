@@ -246,13 +246,27 @@ class TestClientServerIntegration:
         finally:
             client.disconnect()
 
-    def test_explore(self, server: S7CommPlusServer) -> None:
+    @pytest.mark.parametrize(
+        "attributes, expected_hex",
+        [
+            # ExploreId=thePLCProgram (UInt32), RequestId, recursive/flag/parents/filters, 0 attributes, 5-byte trailer
+            (None, "000000030001010000000000000000"),
+            # Same layout with 2 attributes, InterfaceDescription (2544) and LineComments (2546), as VLQ
+            ([2544, 2546], "00000003000101000002937093720000000000"),
+        ],
+        ids=["all-attributes", "attribute-filter"],
+    )
+    def test_explore(self, server: S7CommPlusServer, attributes: list[int] | None, expected_hex: str) -> None:
         client = S7CommPlusClient()
         client.connect("127.0.0.1", port=TEST_PORT)
         try:
-            response = client.explore()
-            # Response should contain data about registered DBs
-            assert len(response) > 0
+            assert client._connection is not None
+            with patch.object(client._connection, "send_request", wraps=client._connection.send_request) as send:
+                response = client.explore(attributes=attributes)
+
+            expected_payload = bytes.fromhex(expected_hex)
+            send.assert_called_once_with(FunctionCode.EXPLORE, expected_payload, integrity_tail=5, reassemble=True)
+            assert [db["number"] for db in _parse_explore_datablocks(response)] == [1, 2]
         finally:
             client.disconnect()
 
@@ -370,14 +384,23 @@ class TestAsyncClientServerIntegration:
             assert await client.db_read(1, 10, 4) == b"beta"
             assert await client.db_read(2, 20, 5) == b"gamma"
 
-    async def test_explore(self, server: S7CommPlusServer) -> None:
+    @pytest.mark.parametrize(
+        "attributes, expected_hex",
+        [
+            # ExploreId=thePLCProgram (UInt32), RequestId, recursive/flag/parents/filters, 0 attributes, 5-byte trailer
+            (None, "000000030001010000000000000000"),
+            # Same layout with 2 attributes, InterfaceDescription (2544) and LineComments (2546), as VLQ
+            ([2544, 2546], "00000003000101000002937093720000000000"),
+        ],
+        ids=["all-attributes", "attribute-filter"],
+    )
+    async def test_explore(self, server: S7CommPlusServer, attributes: list[int] | None, expected_hex: str) -> None:
         async with S7CommPlusAsyncClient() as client:
             await client.connect("127.0.0.1", port=TEST_PORT)
             with patch.object(client, "_send_request", wraps=client._send_request) as send:
-                response = await client.explore()
+                response = await client.explore(attributes=attributes)
 
-            # ExploreId=thePLCProgram (UInt32), RequestId, recursive/flag/parents/filters, 0 attributes, 5-byte trailer
-            expected_payload = bytes.fromhex("000000030001010000000000000000")
+            expected_payload = bytes.fromhex(expected_hex)
             send.assert_awaited_once_with(FunctionCode.EXPLORE, expected_payload, integrity_tail=5, reassemble=True)
             assert [db["number"] for db in _parse_explore_datablocks(response)] == [1, 2]
 

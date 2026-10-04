@@ -6,14 +6,15 @@ import hmac
 import struct
 import time
 from collections.abc import Generator
+from unittest.mock import patch
 
 import pytest
 
 from s7commplus.error import S7ConnectionError, S7IntegrityError
 from s7commplus.async_client import S7CommPlusAsyncClient
-from s7commplus.client import S7CommPlusClient
+from s7commplus.client import S7CommPlusClient, _parse_explore_datablocks
 from s7commplus.connection import _parse_get_var_substreamed_response, _verify_v3_hmac
-from s7commplus.protocol import DataType, ElementID, Ids, LegitimationId, ObjectId, ProtocolVersion
+from s7commplus.protocol import DataType, ElementID, FunctionCode, Ids, LegitimationId, ObjectId, ProtocolVersion
 from s7commplus.server import CPUState, DataBlock, S7CommPlusServer
 from s7commplus.vlq import decode_uint64_vlq, encode_uint32_vlq
 
@@ -245,13 +246,39 @@ class TestClientServerIntegration:
         finally:
             client.disconnect()
 
-    def test_explore(self, server: S7CommPlusServer) -> None:
+    @pytest.mark.parametrize(
+        "attributes, expected_hex",
+        [
+            # ExploreId=thePLCProgram (UInt32), RequestId, recursive/flag/parents/filters, 0 attributes, 5-byte trailer
+            (None, "000000030001010000000000000000"),
+            # Same layout with 2 attributes, InterfaceDescription (2544) and LineComments (2546), as VLQ
+            ([2544, 2546], "00000003000101000002937093720000000000"),
+        ],
+        ids=["all-attributes", "attribute-filter"],
+    )
+    def test_explore(self, server: S7CommPlusServer, attributes: list[int] | None, expected_hex: str) -> None:
         client = S7CommPlusClient()
         client.connect("127.0.0.1", port=TEST_PORT)
         try:
-            response = client.explore()
-            # Response should contain data about registered DBs
-            assert len(response) > 0
+            assert client._connection is not None
+            with patch.object(client._connection, "send_request", wraps=client._connection.send_request) as send:
+                response = client.explore(attributes=attributes)
+
+            expected_payload = bytes.fromhex(expected_hex)
+            send.assert_called_once_with(FunctionCode.EXPLORE, expected_payload, integrity_tail=5, reassemble=True)
+            assert [db["number"] for db in _parse_explore_datablocks(response)] == [1, 2]
+        finally:
+            client.disconnect()
+
+    def test_explore_missing_object(self, server: S7CommPlusServer) -> None:
+        client = S7CommPlusClient()
+        client.connect("127.0.0.1", port=TEST_PORT)
+        try:
+            response = client.explore(0x12345678)
+            return_value, consumed = decode_uint64_vlq(response, 0)
+            # The ReturnValue a real S7-1500 sends for an object that does not exist: error code -12
+            assert return_value == 0x8020AB001992FFF4
+            assert response[consumed : consumed + 4] == b"\x00\x00\x00\x00"  # ExploreId echoed as 0
         finally:
             client.disconnect()
 
@@ -357,11 +384,34 @@ class TestAsyncClientServerIntegration:
             assert await client.db_read(1, 10, 4) == b"beta"
             assert await client.db_read(2, 20, 5) == b"gamma"
 
-    async def test_explore(self, server: S7CommPlusServer) -> None:
+    @pytest.mark.parametrize(
+        "attributes, expected_hex",
+        [
+            # ExploreId=thePLCProgram (UInt32), RequestId, recursive/flag/parents/filters, 0 attributes, 5-byte trailer
+            (None, "000000030001010000000000000000"),
+            # Same layout with 2 attributes, InterfaceDescription (2544) and LineComments (2546), as VLQ
+            ([2544, 2546], "00000003000101000002937093720000000000"),
+        ],
+        ids=["all-attributes", "attribute-filter"],
+    )
+    async def test_explore(self, server: S7CommPlusServer, attributes: list[int] | None, expected_hex: str) -> None:
         async with S7CommPlusAsyncClient() as client:
             await client.connect("127.0.0.1", port=TEST_PORT)
-            response = await client.explore()
-            assert len(response) > 0
+            with patch.object(client, "_send_request", wraps=client._send_request) as send:
+                response = await client.explore(attributes=attributes)
+
+            expected_payload = bytes.fromhex(expected_hex)
+            send.assert_awaited_once_with(FunctionCode.EXPLORE, expected_payload, integrity_tail=5, reassemble=True)
+            assert [db["number"] for db in _parse_explore_datablocks(response)] == [1, 2]
+
+    async def test_explore_missing_object(self, server: S7CommPlusServer) -> None:
+        async with S7CommPlusAsyncClient() as client:
+            await client.connect("127.0.0.1", port=TEST_PORT)
+            response = await client.explore(0x12345678)
+            return_value, consumed = decode_uint64_vlq(response, 0)
+            # The ReturnValue a real S7-1500 sends for an object that does not exist: error code -12
+            assert return_value == 0x8020AB001992FFF4
+            assert response[consumed : consumed + 4] == b"\x00\x00\x00\x00"  # ExploreId echoed as 0
 
     async def test_concurrent_reads(self, server: S7CommPlusServer) -> None:
         """Test that asyncio.Lock prevents interleaved requests."""

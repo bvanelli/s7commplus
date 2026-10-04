@@ -568,7 +568,7 @@ class S7CommPlusClient:
         return catalog.resolve(name)
 
     def read_tag(self, name: str) -> bytes:
-        """Read one symbolic tag by name, refreshing once if its CRC changed."""
+        """Read one symbolic tag by name."""
         result = self.read_tags([name])[0]
         if result.error is not None:
             raise result.error
@@ -578,43 +578,21 @@ class S7CommPlusClient:
     def read_tags(self, names: Sequence[str]) -> list[TagResult]:
         """Read names in one request and return a success/error for every item.
 
-        A failed read with a non-zero SymbolCRC causes one catalog refresh. Only
-        tags whose CRC actually changed are re-resolved and safely retried.
+        Requests carry SymbolCRC 0 (no layout check): the browsed per-entry CRC
+        is not the value the PLC validates, and real CPUs reject it. Failed
+        items are reported, not retried; call :meth:`refresh_tag_catalog` after
+        a PLC layout change.
         """
         if not names:
             return []
         tags = [self.resolve_tag(name) for name in names]
-        values = self.read_symbolic_multi([(tag.access_area, list(tag.lids), tag.symbol_crc) for tag in tags])
+        values = self.read_symbolic_multi([(tag.access_area, list(tag.lids), 0) for tag in tags])
         results = [
             TagResult(tag=tag, value=value)
             if value is not None
             else TagResult(tag=tag, error=RuntimeError(f"Symbolic read failed for {tag.name!r}"))
             for tag, value in zip(tags, values)
         ]
-
-        retry_indices = [index for index, result in enumerate(results) if not result.success and result.tag.symbol_crc]
-        if not retry_indices:
-            return results
-
-        refreshed = self.refresh_tag_catalog()
-        changed: list[tuple[int, SymbolicTag]] = []
-        for index in retry_indices:
-            try:
-                tag = refreshed.resolve(results[index].tag.name)
-            except KeyError:
-                continue
-            if tag.symbol_crc != results[index].tag.symbol_crc:
-                changed.append((index, tag))
-        if not changed:
-            return results
-
-        retry_values = self.read_symbolic_multi([(tag.access_area, list(tag.lids), tag.symbol_crc) for _, tag in changed])
-        for (index, tag), value in zip(changed, retry_values):
-            results[index] = (
-                TagResult(tag=tag, value=value)
-                if value is not None
-                else TagResult(tag=tag, error=RuntimeError(f"Symbolic read failed for {tag.name!r} after CRC refresh"))
-            )
         return results
 
     def write_tag(self, name: str, data: bytes) -> None:
@@ -638,7 +616,7 @@ class S7CommPlusClient:
         if unsupported:
             raise ValueError(f"No S7CommPlus wire datatype mapping for: {', '.join(unsupported)}")
         items: list[SymbolicWriteItem] = [
-            (tag.access_area, list(tag.lids), data, tag.symbol_crc, tag.datatype)
+            (tag.access_area, list(tag.lids), data, 0, tag.datatype)
             for tag, data in zip(tags, values.values())
             if tag.datatype is not None
         ]
@@ -655,11 +633,13 @@ class S7CommPlusClient:
             for index, tag in enumerate(tags, 1)
         ]
 
-    def explore(self, explore_id: int = 0) -> bytes:
+    def explore(self, explore_id: int = 0, attributes: Sequence[int] | None = None) -> bytes:
         """Browse the PLC object tree.
 
         Args:
-            explore_id: Object to explore (0 = root).
+            explore_id: RID of the object to explore. 0 explores the PLC program (`Ids.NATIVE_THE_PLC_PROGRAM_RID`).
+            attributes: Attribute IDs to request. None or empty returns every attribute. Ignored on V1 SessionKey
+                sessions, whose EXPLORE format carries no attribute list.
 
         Returns:
             Raw response payload.
@@ -670,11 +650,11 @@ class S7CommPlusClient:
         if self._connection._session_key is not None:
             payload = _build_explore_payload_v3(explore_id if explore_id else 0x38)
         else:
-            payload = _build_explore_payload(explore_id)
+            payload = _build_explore_request(explore_id or Ids.NATIVE_THE_PLC_PROGRAM_RID, list(attributes or []))
         response = self._connection.send_request(FunctionCode.EXPLORE, payload, integrity_tail=5, reassemble=True)
         return response
 
-    def explore_xml(self, explore_id: int = 0) -> str | None:
+    def explore_xml(self, explore_id: int = 0, attributes: Sequence[int] | None = None) -> str | None:
         """EXPLORE a PLC object and decompress the XML metadata from the response.
 
         S7-1200/1500 PLCs (FW V4.5+) compress XML metadata — tag definitions,
@@ -685,13 +665,14 @@ class S7CommPlusClient:
         .. warning:: This method is **experimental** and may change.
 
         Args:
-            explore_id: Object to explore (0 = root).
+            explore_id: RID of the object to explore. 0 explores the PLC program.
+            attributes: Attribute IDs to request. None or empty returns every attribute.
 
         Returns:
             Decompressed XML as a UTF-8 string, or ``None`` if the response
             contains no recognisable zlib stream.
         """
-        raw = self.explore(explore_id)
+        raw = self.explore(explore_id, attributes)
         return find_and_decompress(raw)
 
     def set_plc_operating_state(self, state: int) -> None:
@@ -1450,20 +1431,6 @@ def _build_multi_symbolic_write_payload(items: Sequence[SymbolicWriteItem], prot
     payload += bytes([0x00])
     payload += encode_object_qualifier(protocol_version=protocol_version)
     payload += struct.pack(">I", 0)
-    return bytes(payload)
-
-
-def _build_explore_payload(explore_id: int = 0) -> bytes:
-    """Build an EXPLORE request payload.
-
-    Args:
-        explore_id: Object to explore (0 = root, other values
-            explore a specific object by RID).
-    """
-    if explore_id == 0:
-        return b""
-    payload = bytearray()
-    payload += encode_uint32_vlq(explore_id)
     return bytes(payload)
 
 

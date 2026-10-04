@@ -828,6 +828,18 @@ def _frame_request(request: bytes, protocol_version: int, session_key: Optional[
     return frame + struct.pack(">BBH", 0x72, protocol_version, 0x0000)
 
 
+def _v1_session_key_profile(override: Optional[bool], session_key: Optional[bytes], protocol_version: int) -> bool:
+    """Whether the non-TLS V1 SessionKey request profile applies.
+
+    Both PLCs validated on hardware (S7-1500 FW 2.6, S7-1200 FW V4.2) need it,
+    so it is the default for every V1 SessionKey session; ``override=False``
+    selects the classic layout instead. V2/V3 sessions never use it.
+    """
+    if session_key is None or protocol_version != ProtocolVersion.V1:
+        return False
+    return override is not False
+
+
 def _strip_response_integrity_id(function_code: int, payload: bytes, session_key_active: bool, legacy_s7_1500: bool) -> bytes:
     """Remove the IntegrityId that leads SessionKey response payloads.
 
@@ -861,7 +873,7 @@ class S7CommPlusConnection:
         host: str,
         port: int = 102,
         *,
-        legacy_s7_1500: bool = False,
+        legacy_s7_1500: bool | None = None,
     ):
         self._legacy_s7_1500 = legacy_s7_1500
         self._last_raw_response_payload: Optional[bytes] = None
@@ -972,8 +984,8 @@ class S7CommPlusConnection:
 
     @property
     def legacy_s7_1500(self) -> bool:
-        """Whether the opt-in profile is active on a SessionKey connection."""
-        return self._legacy_s7_1500 and self._session_key is not None
+        """Whether the V1 SessionKey profile is active (automatic unless overridden)."""
+        return _v1_session_key_profile(self._legacy_s7_1500, self._session_key, self._protocol_version)
 
     @property
     def object_qualifier_version(self) -> int:
@@ -2095,7 +2107,7 @@ class S7CommPlusConnection:
         same PLC rejects a session activation sent with id 1. S7-1500 FW 2.6
         does not need the skip.
         """
-        if self._v1_session_key_family == KeyFamily.S7_1200:
+        if self.legacy_s7_1500 and self._v1_session_key_family == KeyFamily.S7_1200:
             self._integrity_id_read = (self._integrity_id_read + 1) & 0xFFFFFFFF
             self._integrity_id_write = (self._integrity_id_write + 1) & 0xFFFFFFFF
 

@@ -135,7 +135,7 @@ class S7CommPlusClient:
         allow_legacy_key_fallback: bool = True,
         legacy_session_key_refresh_interval: Optional[float] = 25 * 60.0,
         *,
-        legacy_s7_1500: bool = False,
+        legacy_s7_1500: bool | None = None,
     ) -> None:
         """Connect to an S7-1200/1500 PLC using S7CommPlus.
 
@@ -153,8 +153,12 @@ class S7CommPlusClient:
                 fresh sessions when a legacy PLC omits its key id.
             legacy_session_key_refresh_interval: Seconds between legacy
                 SessionKey renewals, or ``None`` to disable them.
-            legacy_s7_1500: Enable the non-TLS S7-1500 FW 2.6 browse/read
-                profile validated in issue #12.
+            legacy_s7_1500: Override the non-TLS V1 SessionKey profile (structured
+                browse, V2 object qualifier, trailing IntegrityId, chained fragment
+                HMAC). ``None`` (default) selects it automatically for every V1
+                SessionKey session, as the S7-1500 FW 2.6 (issue #12) and S7-1200
+                FW V4.2 controllers need it; ``False`` forces the classic layout and
+                ``True`` is only an explicit spelling of the automatic choice.
         """
         if legacy_s7_1500 and use_tls:
             raise ValueError("legacy_s7_1500 requires use_tls=False")

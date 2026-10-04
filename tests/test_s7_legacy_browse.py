@@ -48,10 +48,21 @@ def _legacy_fragments() -> list[bytes]:
     ]
 
 
-@pytest.mark.parametrize("enabled", [False, True])
+@pytest.mark.parametrize("override, expected", [(None, True), (True, True), (False, False)])
 @pytest.mark.parametrize("key", [False, True])
-def test_profile_requires_explicit_opt_in_and_session_key(enabled: bool, key: bool) -> None:
-    assert _connection(enabled, key=key).legacy_s7_1500 is (enabled and key)
+def test_profile_is_automatic_for_v1_session_key_and_can_be_overridden(override: bool | None, expected: bool, key: bool) -> None:
+    conn = S7CommPlusConnection("127.0.0.1", legacy_s7_1500=override)
+    conn._session_key = _KEY if key else None
+    conn._protocol_version = ProtocolVersion.V1
+    assert conn.legacy_s7_1500 is (expected and key)
+
+
+@pytest.mark.parametrize("version", [ProtocolVersion.V2, ProtocolVersion.V3])
+def test_profile_never_applies_outside_v1(version: int) -> None:
+    conn = S7CommPlusConnection("127.0.0.1")
+    conn._session_key = _KEY
+    conn._protocol_version = version
+    assert conn.legacy_s7_1500 is False
 
 
 @pytest.mark.parametrize("enabled", [False, True])
@@ -227,9 +238,13 @@ async def test_async_raw_db_reads_use_profile_qualifier(enabled: bool) -> None:
 
 @pytest.mark.parametrize("family, skipped", [(KeyFamily.S7_1200, 1), (KeyFamily.S7_1500, 0)])
 def test_s7_1200_legitimation_skips_one_integrity_id(family: KeyFamily, skipped: int) -> None:
+    """Applies to family 01 under the V1 SessionKey profile only."""
     from s7commplus.async_client import S7CommPlusAsyncClient
 
-    for client in (_connection(), S7CommPlusAsyncClient()):
+    async_client = S7CommPlusAsyncClient()
+    async_client._session_key = _KEY
+    async_client._protocol_version = ProtocolVersion.V1
+    for client in (_connection(), async_client):
         client._v1_session_key_family = family
         client._integrity_id_read, client._integrity_id_write = 1, 2
         client._skip_integrity_ids_after_legitimation()
@@ -246,3 +261,12 @@ async def test_async_system_event_between_fragments_is_skipped() -> None:
     client = S7CommPlusAsyncClient()
     client._recv_cotp_dt = AsyncMock(side_effect=[frag(b"abc"), event, frag(b"de") + b"\x72\x02\0\0"])  # type: ignore[method-assign]
     assert await client._recv_reassembled_payload() == b"abcde"
+
+
+@pytest.mark.parametrize("enabled", [False, True])
+def test_classic_override_does_not_skip_integrity_ids(enabled: bool) -> None:
+    conn = _connection(enabled)
+    conn._v1_session_key_family = KeyFamily.S7_1200
+    conn._integrity_id_read = conn._integrity_id_write = 1
+    conn._skip_integrity_ids_after_legitimation()
+    assert conn._integrity_id_read == (2 if enabled else 1)

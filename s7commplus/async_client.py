@@ -80,6 +80,7 @@ from .connection import (
     _session_setup_accepted,
     _set_s7_groups,
     _strip_response_integrity_id,
+    _v1_session_key_profile,
     _v1_integrity_tail,
     _validate_response_header,
     _verify_v3_hmac,
@@ -171,7 +172,7 @@ class S7CommPlusAsyncClient:
         self._protection_level: Optional[int] = None
 
         # V1 SessionKey state (non-TLS V1 sessions only), as in S7CommPlusConnection.
-        self._legacy_s7_1500 = False
+        self._legacy_s7_1500: bool | None = None
         self._last_raw_response_payload: bytes | None = None
         self._public_key_fingerprint: Optional[str] = None
         self._session_challenge: Optional[bytes] = None
@@ -222,8 +223,8 @@ class S7CommPlusAsyncClient:
 
     @property
     def legacy_s7_1500(self) -> bool:
-        """Whether the opt-in profile is active on a SessionKey connection."""
-        return self._legacy_s7_1500 and self._session_key is not None
+        """Whether the V1 SessionKey profile is active (automatic unless overridden)."""
+        return _v1_session_key_profile(self._legacy_s7_1500, self._session_key, self._protocol_version)
 
     @property
     def object_qualifier_version(self) -> int:
@@ -248,7 +249,7 @@ class S7CommPlusAsyncClient:
         password: Optional[str] = None,
         allow_legacy_key_fallback: bool = True,
         legacy_session_key_refresh_interval: Optional[float] = _DEFAULT_LEGACY_SESSION_KEY_REFRESH_INTERVAL,
-        legacy_s7_1500: bool = False,
+        legacy_s7_1500: bool | None = None,
     ) -> None:
         """Connect to an S7-1200/1500 PLC using S7CommPlus.
 
@@ -268,8 +269,12 @@ class S7CommPlusAsyncClient:
                 fresh sessions when a legacy PLC omits its key id.
             legacy_session_key_refresh_interval: Seconds between legacy
                 SessionKey renewals, or ``None`` to disable them.
-            legacy_s7_1500: Enable the non-TLS S7-1500 FW 2.6 browse/read
-                profile validated in issue #12.
+            legacy_s7_1500: Override the non-TLS V1 SessionKey profile (structured
+                browse, V2 object qualifier, trailing IntegrityId, chained fragment
+                HMAC). ``None`` (default) selects it automatically for every V1
+                SessionKey session, as the S7-1500 FW 2.6 (issue #12) and S7-1200
+                FW V4.2 controllers need it; ``False`` forces the classic layout and
+                ``True`` is only an explicit spelling of the automatic choice.
         """
         if legacy_s7_1500 and use_tls:
             raise ValueError("legacy_s7_1500 requires use_tls=False")
@@ -1708,7 +1713,7 @@ class S7CommPlusAsyncClient:
         same PLC rejects a session activation sent with id 1. S7-1500 FW 2.6
         does not need the skip.
         """
-        if self._v1_session_key_family == KeyFamily.S7_1200:
+        if self.legacy_s7_1500 and self._v1_session_key_family == KeyFamily.S7_1200:
             self._integrity_id_read = (self._integrity_id_read + 1) & 0xFFFFFFFF
             self._integrity_id_write = (self._integrity_id_write + 1) & 0xFFFFFFFF
 

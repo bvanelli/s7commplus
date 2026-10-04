@@ -791,14 +791,26 @@ def _build_v1_legitimation_payload(session_id: int, sequence_number: int, legiti
     return payload
 
 
-def _check_v1_legitimation_response(payload: bytes) -> None:
-    """Raise when the PLC rejects the legitimation blob with a negative return value."""
-    if len(payload) >= 1:
-        return_value, _ = decode_uint64_vlq(payload, 0)
+def _check_v1_legitimation_response(payload: bytes, raw_payload: Optional[bytes] = None) -> None:
+    """Raise when the PLC rejects the legitimation blob with a negative return value.
+
+    ``payload`` has had a leading IntegrityId stripped, but this PLC family may
+    send the return value first, so the stripped bytes can start inside it.
+    ``raw_payload`` is the response before stripping; a negative return value
+    in either reading is a rejection (an IntegrityId never decodes as one).
+    """
+    for candidate in (raw_payload, payload):
+        if not candidate:
+            continue
+        try:
+            return_value, _ = decode_uint64_vlq(candidate, 0)
+        except ValueError:
+            continue
         signed = return_value if return_value < (1 << 63) else return_value - (1 << 64)
         if signed < 0:
             raise S7ConnectionError(f"Post-auth legitimation rejected by PLC: return_value=0x{return_value:X}")
-        logger.debug(f"Legitimation write return_value=0x{return_value:X}")
+    if payload:
+        logger.debug("Legitimation response accepted")
 
 
 def _frame_request(request: bytes, protocol_version: int, session_key: Optional[bytes]) -> bytes:
@@ -852,6 +864,7 @@ class S7CommPlusConnection:
         legacy_s7_1500: bool = False,
     ):
         self._legacy_s7_1500 = legacy_s7_1500
+        self._last_raw_response_payload: Optional[bytes] = None
         self.host = host
         self.port = port
 
@@ -961,6 +974,15 @@ class S7CommPlusConnection:
     def legacy_s7_1500(self) -> bool:
         """Whether the opt-in profile is active on a SessionKey connection."""
         return self._legacy_s7_1500 and self._session_key is not None
+
+    @property
+    def object_qualifier_version(self) -> int:
+        """Protocol version whose ObjectQualifier layout data requests use.
+
+        The opt-in non-TLS profile sends the V2 layout although the session
+        negotiated V1; its PLCs reset the connection on the V1 layout.
+        """
+        return ProtocolVersion.V2 if self.legacy_s7_1500 else self._protocol_version
 
     @property
     def requires_substreamed(self) -> bool:
@@ -1089,6 +1111,7 @@ class S7CommPlusConnection:
             if self._session_key is not None and self._session_setup_ok:
                 self._session_activate()
                 self._post_auth_legitimation(password=self._connect_password)
+                self._skip_integrity_ids_after_legitimation()
 
             # Only a session that completed setup answers attribute reads; the
             # V1-initial band falls back to legacy PUT/GET and never gets here.
@@ -1567,6 +1590,7 @@ class S7CommPlusConnection:
 
     def _response_payload(self, function_code: int, payload: bytes) -> bytes:
         """Preserve legacy return values where IntegrityId follows the body."""
+        self._last_raw_response_payload = payload
         return _strip_response_integrity_id(function_code, payload, self._session_key is not None, self.legacy_s7_1500)
 
     def _verified_incoming_data(self, frame: bytes) -> bytes:
@@ -1685,6 +1709,7 @@ class S7CommPlusConnection:
 
         data = bytearray()
         fragments = 0
+        system_events = 0
         expected_version: int | None = None
         from ._fragment_hmac import FragmentHMACVerifier
 
@@ -1695,6 +1720,20 @@ class S7CommPlusConnection:
             if buf[0] != 0x72:
                 raise S7ConnectionError("Expected S7CommPlus fragment header (0x72)")
             fragment_version = buf[1]
+            if fragment_version == ProtocolVersion.SYSTEM_EVENT:
+                # PLCs interleave SystemEvents between the fragments of a large
+                # response (seen on S7-1200 FW V4.2); skip them like the receive path.
+                event_len = (buf[2] << 8) | buf[3]
+                ensure(4 + event_len)
+                event = bytes(buf[4 : 4 + event_len])
+                del buf[: 4 + event_len]
+                _check_system_event(event)
+                system_events += 1
+                if system_events > _MAX_SYSTEM_EVENTS_PER_RESPONSE:
+                    from .error import S7ProtocolError
+
+                    raise S7ProtocolError("Too many S7CommPlus SystemEvents during response reassembly")
+                continue
             if self._session_key is not None and fragment_version != ProtocolVersion.V3:
                 self._invalidate_integrity_failure()
                 raise S7IntegrityError(
@@ -2047,6 +2086,19 @@ class S7CommPlusConnection:
         self.send_request(FunctionCode.SET_VARIABLE, payload, integrity_tail=3)
         logger.info("Session activation completed")
 
+    def _skip_integrity_ids_after_legitimation(self) -> None:
+        """Skip one IntegrityId on both counters after the S7-1200 legitimation.
+
+        An S7-1215C on FW V4.2 resets the connection when the first data
+        request after legitimation carries the next id of either counter, and
+        accepts it one id later. The handshake itself must start at id 0: the
+        same PLC rejects a session activation sent with id 1. S7-1500 FW 2.6
+        does not need the skip.
+        """
+        if self._v1_session_key_family == KeyFamily.S7_1200:
+            self._integrity_id_read = (self._integrity_id_read + 1) & 0xFFFFFFFF
+            self._integrity_id_write = (self._integrity_id_write + 1) & 0xFFFFFFFF
+
     def _post_auth_legitimation(self, password: str = "") -> None:
         """Perform the post-SessionKey legitimation handshake.
 
@@ -2090,7 +2142,8 @@ class S7CommPlusConnection:
         # Step 3: Write solved blob via SET_VAR_SUBSTREAMED to address 1846
         logger.debug("Post-auth legitimation: writing solved blob to address 1846")
         payload = _build_v1_legitimation_payload(self._session_id, self._sequence_number, legit_blob)
-        _check_v1_legitimation_response(self.send_request(FunctionCode.SET_VAR_SUBSTREAMED, payload, integrity_tail=3))
+        response = self.send_request(FunctionCode.SET_VAR_SUBSTREAMED, payload, integrity_tail=3)
+        _check_v1_legitimation_response(response, self._last_raw_response_payload)
         logger.info("Post-auth legitimation completed")
 
     def _encode_security_key_struct(self, blob: bytes, session_key: bytes) -> bytes:

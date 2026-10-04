@@ -5,14 +5,15 @@ import hmac
 import json
 import struct
 from pathlib import Path
-from unittest.mock import Mock, patch
+from unittest.mock import AsyncMock, Mock, patch
 
 import pytest
 
 from s7commplus import Client
 from s7commplus.client import _parse_read_response
 from s7commplus.connection import S7CommPlusConnection
-from s7commplus.protocol import FunctionCode, ProtocolVersion
+from s7commplus.protocol import DataType, FunctionCode, ProtocolVersion
+from s7commplus.v1_session_key.keys import KeyFamily
 from s7commplus.error import S7ConnectionError, S7IntegrityError
 
 _KEY = bytes(range(24))
@@ -188,3 +189,60 @@ def test_reassembly_still_enforces_size_limit() -> None:
     conn._MAX_REASSEMBLED_BYTES = 8
     with pytest.raises(S7ConnectionError, match="exceeds limits"):
         conn._recv_reassembled_payload(_frame(_legacy_fragments()[0]) + b"\x72\x03\0\0")
+
+
+_DB_READ_ITEM = (10, 0, 4)
+
+
+@pytest.mark.parametrize("enabled", [False, True])
+def test_raw_db_reads_and_writes_use_profile_qualifier(enabled: bool) -> None:
+    from s7commplus.client import _build_read_payload, _build_write_payload
+
+    client = Client()
+    conn = _connection(enabled)
+    client._connection = conn
+    version = ProtocolVersion.V2 if enabled else ProtocolVersion.V1
+    conn.send_request = Mock(return_value=_RID_VALUE)
+    client.db_read(*_DB_READ_ITEM)
+    assert conn.send_request.call_args.args[1] == _build_read_payload([_DB_READ_ITEM], version)
+    conn.send_request = Mock(return_value=b"\x00")
+    client.db_write(10, 0, b"\x3f\x80\x00\x00")
+    assert conn.send_request.call_args.args[1] == _build_write_payload([(10, 0, b"\x3f\x80\x00\x00", DataType.BLOB)], version)
+
+
+@pytest.mark.parametrize("enabled", [False, True])
+async def test_async_raw_db_reads_use_profile_qualifier(enabled: bool) -> None:
+    from s7commplus.async_client import S7CommPlusAsyncClient
+    from s7commplus.client import _build_read_payload
+
+    client = S7CommPlusAsyncClient()
+    client._legacy_s7_1500 = enabled
+    client._session_key = _KEY
+    client._protocol_version = ProtocolVersion.V1
+    client._send_request = AsyncMock(return_value=_RID_VALUE)  # type: ignore[method-assign]
+    await client.db_read(*_DB_READ_ITEM)
+    version = ProtocolVersion.V2 if enabled else ProtocolVersion.V1
+    assert client._send_request.call_args.args[1] == _build_read_payload([_DB_READ_ITEM], version)
+
+
+@pytest.mark.parametrize("family, skipped", [(KeyFamily.S7_1200, 1), (KeyFamily.S7_1500, 0)])
+def test_s7_1200_legitimation_skips_one_integrity_id(family: KeyFamily, skipped: int) -> None:
+    from s7commplus.async_client import S7CommPlusAsyncClient
+
+    for client in (_connection(), S7CommPlusAsyncClient()):
+        client._v1_session_key_family = family
+        client._integrity_id_read, client._integrity_id_write = 1, 2
+        client._skip_integrity_ids_after_legitimation()
+        assert (client._integrity_id_read, client._integrity_id_write) == (1 + skipped, 2 + skipped)
+
+
+async def test_async_system_event_between_fragments_is_skipped() -> None:
+    from s7commplus.async_client import S7CommPlusAsyncClient
+
+    def frag(data: bytes) -> bytes:
+        return _frame(data, ProtocolVersion.V2)
+
+    event = bytes([0x72, ProtocolVersion.SYSTEM_EVENT, 0x00, 0x10]) + bytes(16)
+    client = S7CommPlusAsyncClient()
+    client._recv_cotp_dt = AsyncMock(side_effect=[frag(b"abc"), event, frag(b"de") + b"\x72\x02\0\0"])  # type: ignore[method-assign]
+    assert await client._recv_reassembled_payload() == b"abcde"

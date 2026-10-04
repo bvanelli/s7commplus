@@ -295,7 +295,7 @@ class S7CommPlusClient:
         if self._connection.requires_substreamed:
             return self._db_read_substreamed(db_number, start, size)
 
-        payload = _build_read_payload([(db_number, start, size)], self._connection.protocol_version)
+        payload = _build_read_payload([(db_number, start, size)], self._connection.object_qualifier_version)
         response = self._connection.send_request(FunctionCode.GET_MULTI_VARIABLES, payload)
         results = _parse_read_response(response)
         if not results:
@@ -346,7 +346,7 @@ class S7CommPlusClient:
                 self._db_write_substreamed(db_number, start, data, datatype)
             return
 
-        payload = _build_write_payload(items, self._connection.protocol_version)
+        payload = _build_write_payload(items, self._connection.object_qualifier_version)
         response = self._connection.send_request(FunctionCode.SET_MULTI_VARIABLES, payload)
         _parse_write_response(response)
 
@@ -382,7 +382,7 @@ class S7CommPlusClient:
         if self._connection.requires_substreamed:
             return [self._db_read_substreamed(db, start, size) for db, start, size in items]
 
-        payload = _build_read_payload(items, self._connection.protocol_version)
+        payload = _build_read_payload(items, self._connection.object_qualifier_version)
         response = self._connection.send_request(FunctionCode.GET_MULTI_VARIABLES, payload)
         parsed = _parse_read_response(response)
         return [r if r is not None else b"" for r in parsed]
@@ -412,7 +412,7 @@ class S7CommPlusClient:
             response = self._connection.send_request(FunctionCode.GET_VAR_SUBSTREAMED, payload)
             return _parse_substreamed_read_response(response)
 
-        payload = _build_area_read_payload(area_rid, start, size, self._connection.protocol_version)
+        payload = _build_area_read_payload(area_rid, start, size, self._connection.object_qualifier_version)
         response = self._connection.send_request(FunctionCode.GET_MULTI_VARIABLES, payload)
         results = _parse_read_response(response)
         if not results or results[0] is None:
@@ -444,7 +444,7 @@ class S7CommPlusClient:
             self._connection.send_request(FunctionCode.SET_VAR_SUBSTREAMED, payload)
             return
 
-        payload = _build_area_write_payload(area_rid, start, data, self._connection.protocol_version, datatype=datatype)
+        payload = _build_area_write_payload(area_rid, start, data, self._connection.object_qualifier_version, datatype=datatype)
         response = self._connection.send_request(FunctionCode.SET_MULTI_VARIABLES, payload)
         _parse_write_response(response)
 
@@ -485,8 +485,7 @@ class S7CommPlusClient:
         if self._connection is None:
             raise RuntimeError("Not connected")
 
-        version = ProtocolVersion.V2 if self._connection.legacy_s7_1500 else self._connection.protocol_version
-        payload = _build_symbolic_read_payload(access_area, lids, symbol_crc, version)
+        payload = _build_symbolic_read_payload(access_area, lids, symbol_crc, self._connection.object_qualifier_version)
         response = self._connection.send_request(FunctionCode.GET_MULTI_VARIABLES, payload)
         results = _parse_read_response(response)
         if not results or results[0] is None:
@@ -513,8 +512,7 @@ class S7CommPlusClient:
         if not items:
             return []
 
-        version = ProtocolVersion.V2 if self._connection.legacy_s7_1500 else self._connection.protocol_version
-        payload = _build_multi_symbolic_read_payload(items, version)
+        payload = _build_multi_symbolic_read_payload(items, self._connection.object_qualifier_version)
         response = self._connection.send_request(FunctionCode.GET_MULTI_VARIABLES, payload)
         results = _parse_read_response(response, expected_count=len(items))
         if len(results) != len(items):
@@ -620,7 +618,7 @@ class S7CommPlusClient:
             for tag, data in zip(tags, values.values())
             if tag.datatype is not None
         ]
-        payload = _build_multi_symbolic_write_payload(items, self._connection.protocol_version)
+        payload = _build_multi_symbolic_write_payload(items, self._connection.object_qualifier_version)
         response = self._connection.send_request(FunctionCode.SET_MULTI_VARIABLES, payload)
         try:
             errors = _parse_write_response_errors(response, expected_count=len(tags))

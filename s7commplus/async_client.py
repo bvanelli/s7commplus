@@ -172,6 +172,7 @@ class S7CommPlusAsyncClient:
 
         # V1 SessionKey state (non-TLS V1 sessions only), as in S7CommPlusConnection.
         self._legacy_s7_1500 = False
+        self._last_raw_response_payload: bytes | None = None
         self._public_key_fingerprint: Optional[str] = None
         self._session_challenge: Optional[bytes] = None
         self._session_key: Optional[bytes] = None
@@ -223,6 +224,15 @@ class S7CommPlusAsyncClient:
     def legacy_s7_1500(self) -> bool:
         """Whether the opt-in profile is active on a SessionKey connection."""
         return self._legacy_s7_1500 and self._session_key is not None
+
+    @property
+    def object_qualifier_version(self) -> int:
+        """Protocol version whose ObjectQualifier layout data requests use.
+
+        The opt-in non-TLS profile sends the V2 layout although the session
+        negotiated V1; its PLCs reset the connection on the V1 layout.
+        """
+        return ProtocolVersion.V2 if self.legacy_s7_1500 else self._protocol_version
 
     async def connect(
         self,
@@ -415,6 +425,7 @@ class S7CommPlusAsyncClient:
             if self._session_key is not None:
                 await self._session_activate()
                 await self._post_auth_legitimation(p["password"] or "")
+                self._skip_integrity_ids_after_legitimation()
 
             self._protection_level = await self._get_effective_protection_level()
             if self._protection_level is not None:
@@ -772,7 +783,7 @@ class S7CommPlusAsyncClient:
 
     async def db_read(self, db_number: int, start: int, size: int) -> bytes:
         """Read raw bytes from a data block."""
-        payload = _build_read_payload([(db_number, start, size)], self._protocol_version)
+        payload = _build_read_payload([(db_number, start, size)], self.object_qualifier_version)
         response = await self._send_request(FunctionCode.GET_MULTI_VARIABLES, payload)
 
         results = _parse_read_response(response)
@@ -788,7 +799,7 @@ class S7CommPlusAsyncClient:
 
     async def db_write_multi(self, items: list[DBWriteItem]) -> None:
         """Write (db_number, start_offset, data, datatype) tuples matching the PLC target types."""
-        payload = _build_write_payload(items, self._protocol_version)
+        payload = _build_write_payload(items, self.object_qualifier_version)
         response = await self._send_request(FunctionCode.SET_MULTI_VARIABLES, payload)
         _parse_write_response(response)
 
@@ -798,14 +809,14 @@ class S7CommPlusAsyncClient:
 
     async def db_read_multi(self, items: list[tuple[int, int, int]]) -> list[bytes]:
         """Read multiple data block regions in a single request."""
-        payload = _build_read_payload(items, self._protocol_version)
+        payload = _build_read_payload(items, self.object_qualifier_version)
         response = await self._send_request(FunctionCode.GET_MULTI_VARIABLES, payload)
         parsed = _parse_read_response(response)
         return [r if r is not None else b"" for r in parsed]
 
     async def read_area(self, area_rid: int, start: int, size: int) -> bytes:
         """Read raw bytes from a controller memory area (M, I, Q, counters, timers)."""
-        payload = _build_area_read_payload(area_rid, start, size, self._protocol_version)
+        payload = _build_area_read_payload(area_rid, start, size, self.object_qualifier_version)
         response = await self._send_request(FunctionCode.GET_MULTI_VARIABLES, payload)
         results = _parse_read_response(response)
         if not results or results[0] is None:
@@ -814,7 +825,7 @@ class S7CommPlusAsyncClient:
 
     async def write_area(self, area_rid: int, start: int, data: bytes, *, datatype: DataType = DataType.BLOB) -> None:
         """Write a controller memory area, specifying the target datatype for scalar writes."""
-        payload = _build_area_write_payload(area_rid, start, data, self._protocol_version, datatype=datatype)
+        payload = _build_area_write_payload(area_rid, start, data, self.object_qualifier_version, datatype=datatype)
         response = await self._send_request(FunctionCode.SET_MULTI_VARIABLES, payload)
         _parse_write_response(response)
 
@@ -1006,8 +1017,7 @@ class S7CommPlusAsyncClient:
 
         .. warning:: This method is **experimental** and may change.
         """
-        version = ProtocolVersion.V2 if self.legacy_s7_1500 else self._protocol_version
-        payload = _build_symbolic_read_payload(access_area, lids, symbol_crc, version)
+        payload = _build_symbolic_read_payload(access_area, lids, symbol_crc, self.object_qualifier_version)
         response = await self._send_request(FunctionCode.GET_MULTI_VARIABLES, payload)
         results = _parse_read_response(response)
         if not results or results[0] is None:
@@ -1031,8 +1041,7 @@ class S7CommPlusAsyncClient:
         """
         if not items:
             return []
-        version = ProtocolVersion.V2 if self.legacy_s7_1500 else self._protocol_version
-        payload = _build_multi_symbolic_read_payload(items, version)
+        payload = _build_multi_symbolic_read_payload(items, self.object_qualifier_version)
         response = await self._send_request(FunctionCode.GET_MULTI_VARIABLES, payload)
         results = _parse_read_response(response, expected_count=len(items))
         if len(results) != len(items):
@@ -1110,7 +1119,7 @@ class S7CommPlusAsyncClient:
             for tag, data in zip(tags, values.values())
             if tag.datatype is not None
         ]
-        payload = _build_multi_symbolic_write_payload(items, self._protocol_version)
+        payload = _build_multi_symbolic_write_payload(items, self.object_qualifier_version)
         response = await self._send_request(FunctionCode.SET_MULTI_VARIABLES, payload)
         try:
             errors = _parse_write_response_errors(response, expected_count=len(tags))
@@ -1341,6 +1350,7 @@ class S7CommPlusAsyncClient:
 
     def _response_payload(self, function_code: int, payload: bytes) -> bytes:
         """Preserve legacy return values where IntegrityId follows the body."""
+        self._last_raw_response_payload = payload
         return _strip_response_integrity_id(function_code, payload, self._session_key is not None, self.legacy_s7_1500)
 
     async def _verified_incoming_data(self, frame: bytes) -> bytes:
@@ -1425,12 +1435,24 @@ class S7CommPlusAsyncClient:
         digest_state = hmac.new(session_key[:24], digestmod=hashlib.sha256) if session_key is not None else None
         data = bytearray()
         fragments = 0
+        system_events = 0
         expected_version: int | None = None
         while True:
             await ensure(4)
             if buf[0] != 0x72:
                 raise S7ConnectionError("Expected S7CommPlus fragment header (0x72)")
             fragment_version = buf[1]
+            if fragment_version == ProtocolVersion.SYSTEM_EVENT:
+                # See S7CommPlusConnection._recv_reassembled_payload.
+                event_len = (buf[2] << 8) | buf[3]
+                await ensure(4 + event_len)
+                event = bytes(buf[4 : 4 + event_len])
+                del buf[: 4 + event_len]
+                _check_system_event(event)
+                system_events += 1
+                if system_events > _MAX_SYSTEM_EVENTS_PER_RESPONSE:
+                    raise S7ProtocolError("Too many S7CommPlus SystemEvents during response reassembly")
+                continue
             if session_key is not None and fragment_version != ProtocolVersion.V3:
                 await self._invalidate_integrity_failure()
                 raise S7IntegrityError(
@@ -1677,6 +1699,19 @@ class S7CommPlusAsyncClient:
             return True
         return False
 
+    def _skip_integrity_ids_after_legitimation(self) -> None:
+        """Skip one IntegrityId on both counters after the S7-1200 legitimation.
+
+        An S7-1215C on FW V4.2 resets the connection when the first data
+        request after legitimation carries the next id of either counter, and
+        accepts it one id later. The handshake itself must start at id 0: the
+        same PLC rejects a session activation sent with id 1. S7-1500 FW 2.6
+        does not need the skip.
+        """
+        if self._v1_session_key_family == KeyFamily.S7_1200:
+            self._integrity_id_read = (self._integrity_id_read + 1) & 0xFFFFFFFF
+            self._integrity_id_write = (self._integrity_id_write + 1) & 0xFFFFFFFF
+
     async def _session_activate(self) -> None:
         """Activate the V3 session after the SecurityKey handshake (SET_VARIABLE addr 323 = USINT(5))."""
         async with self._lock:
@@ -1712,7 +1747,7 @@ class S7CommPlusAsyncClient:
         async with self._lock:
             payload = _build_v1_legitimation_payload(self._session_id, self._sequence_number, blob)
             response = await self._send_request_locked(FunctionCode.SET_VAR_SUBSTREAMED, payload, integrity_tail=3)
-        _check_v1_legitimation_response(response)
+        _check_v1_legitimation_response(response, self._last_raw_response_payload)
         logger.info("Post-auth legitimation completed")
 
     async def _delete_session(self) -> None:

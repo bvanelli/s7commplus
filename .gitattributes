@@ -1,0 +1,5 @@
+# Keep checked-in bytes identical on every platform: the generated session-auth
+# artifacts are verified against a size/hash manifest, and the zlib preset
+# dictionaries and test fixtures are byte-exact protocol data.
+* text=auto eol=lf
+*.bin binary

@@ -37,7 +37,7 @@ def _ruff_format(source: str) -> str:
         [sys.executable, "-m", "ruff", "format", "-"],
         input=source,
         capture_output=True,
-        text=True,
+        encoding="utf-8",  # the generated source holds non-ASCII text; Windows defaults to the ANSI code page
         check=True,
     )
     return result.stdout

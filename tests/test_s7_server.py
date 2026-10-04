@@ -274,7 +274,7 @@ class TestClientServerIntegration:
         client = S7CommPlusClient()
         client.connect("127.0.0.1", port=TEST_PORT)
         try:
-            response = client.explore(Ids.DB_ACCESS_AREA_BASE | 99)
+            response = client.explore(0x12345678)
             return_value, consumed = decode_uint64_vlq(response, 0)
             # The ReturnValue a real S7-1500 sends for an object that does not exist: error code -12
             assert return_value == 0x8020AB001992FFF4
@@ -407,7 +407,7 @@ class TestAsyncClientServerIntegration:
     async def test_explore_missing_object(self, server: S7CommPlusServer) -> None:
         async with S7CommPlusAsyncClient() as client:
             await client.connect("127.0.0.1", port=TEST_PORT)
-            response = await client.explore(Ids.DB_ACCESS_AREA_BASE | 99)
+            response = await client.explore(0x12345678)
             return_value, consumed = decode_uint64_vlq(response, 0)
             # The ReturnValue a real S7-1500 sends for an object that does not exist: error code -12
             assert return_value == 0x8020AB001992FFF4

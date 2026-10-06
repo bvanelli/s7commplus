@@ -15,9 +15,12 @@ Usage::
 """
 
 import logging
+import xml.etree.ElementTree as ET
 import zlib
+from collections.abc import Iterator
+from dataclasses import dataclass
 
-from .zlib_dicts import ZLIB_DICTIONARIES, ZLIB_DICT_NAMES
+from .zlib_dicts import ZLIB_DICTIONARIES, ZLIB_DICT_NAMES, ZLIB_DICT_IDENTITIES, PresetIdentity
 
 logger = logging.getLogger(__name__)
 
@@ -62,6 +65,65 @@ def decompress_blob(data: bytes, offset: int = 0) -> str:
     # Skip the 6-byte zlib header (2 magic + 4 dict adler)
     result = dobj.decompress(stream[6:])
     return result.decode("utf-8")
+
+
+@dataclass(frozen=True)
+class PresetStream:
+    """A decompressed preset-dictionary zlib stream.
+
+    :param preset: The preset dictionary the stream was compressed against.
+    :param text: The decompressed XML document.
+    """
+
+    preset: PresetIdentity
+    text: str
+
+    @property
+    def xml(self) -> ET.Element:
+        """Parse `text` into an element tree; every access parses anew."""
+        return ET.fromstring(self.text)
+
+
+def iter_preset_headers(data: bytes) -> Iterator[tuple[int, PresetIdentity]]:
+    """Yield the offset and dictionary of every preset-dictionary zlib header in `data`.
+
+    Only the 6-byte headers are read; nothing is decompressed. A header must
+    have the FDICT flag set, pass zlib's FCHECK rule and name a known
+    dictionary. A match can still be a coincidence inside compressed data, which
+    only shows when decompressing from it fails.
+
+    :param data: Raw EXPLORE response payload (possibly multi-fragment).
+    :returns: An iterator of `(offset, preset)` in the order the headers appear.
+    """
+    # CMF 0x78 is deflate with a 32K window, the only CMF the PLC emits.
+    position = data.find(0x78)
+    while position >= 0:
+        header = data[position : position + 6]
+        # FDICT flag (bit 5) set and the two header bytes a multiple of 31 (zlib's FCHECK rule).
+        if len(header) == 6 and header[1] & 0x20 and int.from_bytes(header[:2], "big") % 31 == 0:
+            preset = ZLIB_DICT_IDENTITIES.get(int.from_bytes(header[2:], "big"))
+            if preset is not None:
+                yield position, preset
+        position = data.find(0x78, position + 1)
+
+
+def iter_preset_streams(data: bytes) -> Iterator[PresetStream]:
+    """Yield every preset-dictionary zlib stream in `data`, in the order they appear.
+
+    Decompresses each header from `iter_preset_headers`. A header that falls
+    inside compressed data fails to decode and is skipped, as is a stream that
+    decompresses to an empty document.
+
+    :param data: Raw EXPLORE response payload (possibly multi-fragment).
+    :returns: An iterator of `PresetStream` for each decodable stream.
+    """
+    for offset, preset in iter_preset_headers(data):
+        try:
+            text = decompress_blob(data, offset=offset)
+        except (ValueError, zlib.error):
+            continue
+        if text:
+            yield PresetStream(preset, text)
 
 
 def find_and_decompress(data: bytes) -> str | None:

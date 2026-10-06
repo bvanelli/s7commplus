@@ -46,3 +46,25 @@ def authenticate_real_plc(
     session_key = derive_session_key(key2, challenge)
 
     return bytes(blob), session_key
+
+
+def authenticate_plcsim(challenge: bytes, public_key: bytes) -> tuple[bytes, bytes]:
+    """Build the 216-byte PLCSIM blob and derive the session key (key family 03).
+
+    Args:
+        challenge: 20-byte PLC challenge from the CreateObject response.
+        public_key: 64-byte family-03 public key.
+
+    Returns:
+        (encrypted_blob, session_key) — 216-byte blob and 24-byte key.
+    """
+    from .plcsim.authenticator import authenticate
+
+    return authenticate(challenge, public_key)
+
+
+def authenticate_session_key(challenge: bytes, public_key: bytes, key_family: KeyFamily) -> tuple[bytes, bytes]:
+    """Build the blob and session key for any supported key family."""
+    if key_family == KeyFamily.PLCSIM:
+        return authenticate_plcsim(challenge, public_key)
+    return authenticate_real_plc(challenge, public_key, key_family)

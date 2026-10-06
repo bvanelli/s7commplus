@@ -29,9 +29,10 @@ distributed.
 ## Start at the handwritten boundary
 
 `connection.py` owns negotiation, sequencing and network frames; it calls
-`handshake.authenticate_real_plc(challenge, public_key, family)`. That function
-returns the **180-byte blob and 24-byte SessionKey**. It accepts families 00/01;
-the key catalogue's family03 entries do not implement PLCSIM authentication.
+`handshake.authenticate_session_key(challenge, public_key, family)`. For
+families 00/01 that is `authenticate_real_plc`, which returns the **180-byte
+blob and 24-byte SessionKey**; family 03 (PLCSIM) goes to `authenticate_plcsim`
+and returns a 216-byte blob (emulator-tested only, see `ARCHITECTURE.md`).
 
 The synchronous path is `connect` → CreateObject attributes →
 `_try_session_key_auth` / `_setup_session` → `_session_activate` →

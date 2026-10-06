@@ -615,7 +615,7 @@ class S7CommPlusAsyncClient:
             attributes: Attribute IDs to request. None or empty returns every attribute.
 
         Returns:
-            Raw response payload.
+            Raw response payload. Read the compressed XML documents in it with `s7commplus.iter_preset_streams`.
         """
         payload = _build_explore_request(explore_id or Ids.NATIVE_THE_PLC_PROGRAM_RID, list(attributes or []))
         return await self._send_request(FunctionCode.EXPLORE, payload, integrity_tail=5, reassemble=True)

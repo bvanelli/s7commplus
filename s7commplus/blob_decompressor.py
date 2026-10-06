@@ -87,10 +87,9 @@ class PresetStream:
 def iter_preset_headers(data: bytes) -> Iterator[tuple[int, PresetIdentity]]:
     """Yield the offset and dictionary of every preset-dictionary zlib header in `data`.
 
-    Only the 6-byte headers are read; nothing is decompressed. A header must
-    have the FDICT flag set, pass zlib's FCHECK rule and name a known
-    dictionary. A match can still be a coincidence inside compressed data, which
-    only shows when decompressing from it fails.
+    Lets a caller pick a stream by its dictionary before decompressing anything. A match can
+    still be a coincidence inside compressed data, which only shows when decompressing from it
+    fails.
 
     :param data: Raw EXPLORE response payload (possibly multi-fragment).
     :returns: An iterator of `(offset, preset)` in the order the headers appear.
@@ -113,6 +112,20 @@ def iter_preset_streams(data: bytes) -> Iterator[PresetStream]:
     Decompresses each header from `iter_preset_headers`. A header that falls
     inside compressed data fails to decode and is skipped, as is a stream that
     decompresses to an empty document.
+
+    ```python
+    from s7commplus import Client, iter_preset_streams
+    from s7commplus.protocol import Ids
+
+    with Client() as client:
+        client.connect("192.168.1.10", use_tls=True)
+        raw = client.explore(Ids.NATIVE_THE_PLC_PROGRAM_RID, [Ids.DATA_INTERFACE_LINE_COMMENTS])
+        for stream in iter_preset_streams(raw):
+            if stream.preset.kind == "LineComm":
+                for comment in stream.xml.iter("Comment"):
+                    for entry in comment.iter("DictEntry"):
+                        print(comment.get("Path"), entry.get("Language"), entry.text)
+    ```
 
     :param data: Raw EXPLORE response payload (possibly multi-fragment).
     :returns: An iterator of `PresetStream` for each decodable stream.

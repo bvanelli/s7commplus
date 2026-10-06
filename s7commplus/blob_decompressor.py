@@ -113,19 +113,19 @@ def iter_preset_streams(data: bytes) -> Iterator[PresetStream]:
     inside compressed data fails to decode and is skipped, as is a stream that
     decompresses to an empty document.
 
-    ```python
-    from s7commplus import Client, iter_preset_streams
-    from s7commplus.protocol import Ids
+    Example::
 
-    with Client() as client:
-        client.connect("192.168.1.10", use_tls=True)
-        raw = client.explore(Ids.NATIVE_THE_PLC_PROGRAM_RID, [Ids.DATA_INTERFACE_LINE_COMMENTS])
-        for stream in iter_preset_streams(raw):
-            if stream.preset.kind == "LineComm":
-                for comment in stream.xml.iter("Comment"):
-                    for entry in comment.iter("DictEntry"):
-                        print(comment.get("Path"), entry.get("Language"), entry.text)
-    ```
+        from s7commplus import Client, iter_preset_streams
+        from s7commplus.protocol import Ids
+
+        with Client() as client:
+            client.connect("192.168.1.10", use_tls=True)
+            raw = client.explore(Ids.NATIVE_THE_PLC_PROGRAM_RID, [Ids.DATA_INTERFACE_LINE_COMMENTS])
+            for stream in iter_preset_streams(raw):
+                if stream.preset.kind == "LineComm":
+                    for comment in stream.xml.iter("Comment"):
+                        for entry in comment.iter("DictEntry"):
+                            print(comment.get("Path"), entry.get("Language"), entry.text)
 
     :param data: Raw EXPLORE response payload (possibly multi-fragment).
     :returns: An iterator of `PresetStream` for each decodable stream.

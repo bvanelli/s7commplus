@@ -153,20 +153,28 @@ class DataBlock:
         self.variables[name] = DBVariable(name, soft_type, byte_offset)
 
     def read(self, offset: int, size: int) -> bytes:
-        """Read bytes from the data block."""
+        """Read bytes from the data block.
+
+        Raises:
+            IndexError: If the range is not wholly inside the block.
+        """
         with self.lock:
-            end = min(offset + size, len(self.data))
-            result = bytes(self.data[offset:end])
-            # Pad with zeros if reading past end
-            if len(result) < size:
-                result += b"\x00" * (size - len(result))
-            return result
+            self._check_range(offset, size)
+            return bytes(self.data[offset : offset + size])
 
     def write(self, offset: int, data: bytes) -> None:
-        """Write bytes to the data block."""
+        """Write bytes to the data block.
+
+        Raises:
+            IndexError: If the range is not wholly inside the block. Nothing is written.
+        """
         with self.lock:
-            end = min(offset + len(data), len(self.data))
-            self.data[offset:end] = data[: end - offset]
+            self._check_range(offset, len(data))
+            self.data[offset : offset + len(data)] = data
+
+    def _check_range(self, offset: int, size: int) -> None:
+        if offset < 0 or size < 0 or offset + size > len(self.data):
+            raise IndexError(f"DB{self.number}: bytes {offset}..{offset + size} are outside the block ({len(self.data)} bytes)")
 
     def read_variable(self, name: str) -> tuple[int, bytes]:
         """Read a named variable.
@@ -469,7 +477,12 @@ class S7CommPlusServer:
                             session_id = struct.unpack_from(">I", response, 9)[0]
                         if request_version == ProtocolVersion.V3 and func_code is not None:
                             response_integrity_id = integrity_id_read if func_code in READ_FUNCTION_CODES else integrity_id_write
-                            response = response[:10] + encode_uint32_vlq(response_integrity_id) + response[10:]
+                            if func_code == FunctionCode.GET_MULTI_VARIABLES and self._protocol_version == ProtocolVersion.V1:
+                                # V1 SessionKey PLCs (S7-1200 FW V4.2, S7-1500 FW 2.6) put the
+                                # IntegrityId after the body, in place of the legacy zero id.
+                                response = response[:-1] + encode_uint32_vlq(response_integrity_id)
+                            else:
+                                response = response[:10] + encode_uint32_vlq(response_integrity_id) + response[10:]
                         send_app_frame(
                             response, request_version if request_version == ProtocolVersion.V3 else self._protocol_version
                         )
@@ -800,7 +813,7 @@ class S7CommPlusServer:
             response += self._session_challenge
 
             # ServerSessionVersion (306) as Struct — triggers the V1-initial
-            # code path in the client (Struct type = session_auth required).
+            # code path in the client (Struct type = v1_session_key required).
             # Minimal struct: Struct(314) with element 319 as empty WString.
             response += bytes([ElementID.ATTRIBUTE])
             response += encode_uint32_vlq(ObjectId.SERVER_SESSION_VERSION)
@@ -867,6 +880,17 @@ class S7CommPlusServer:
         """Handle Explore -- return the object tree (registered data blocks)."""
         response = bytearray()
         response += self._build_response_header(FunctionCode.EXPLORE, seq_num)
+
+        # The ExploreId is a fixed UInt32 at the start of the request.
+        if len(request_data) >= 4 and not self._explore_object_exists(struct.unpack_from(">I", request_data)[0]):
+            # ReturnValue a real S7-1500 sends for an EXPLORE of an object that does not exist, RID 0 included:
+            # error flag (bit 63) set, no error extension (bit 62 clear), error code -12 in the low 16 bits.
+            _EXPLORE_NO_SUCH_OBJECT = 0x8020AB001992FFF4
+            response += encode_uint64_vlq(_EXPLORE_NO_SUCH_OBJECT)
+            response += struct.pack(">I", 0)  # ExploreId, echoed as 0 on error
+            response += struct.pack(">I", 0)
+            return bytes(response)
+
         response += encode_uint32_vlq(0)  # Return code: success
 
         # Return list of data blocks as objects using the real S7-1500 IDs:
@@ -923,6 +947,28 @@ class S7CommPlusServer:
         response += struct.pack(">I", 0)
         return bytes(response)
 
+    def _explore_object_exists(self, explore_id: int) -> bool:
+        """Whether an EXPLORE target names an object this emulator has.
+
+        These are the native objects the clients and examples explore, plus one
+        object per registered data block. A real PLC rejects any other id.
+        """
+        if explore_id in (
+            Ids.NATIVE_THE_PLC_PROGRAM_RID,
+            Ids.NATIVE_THE_ALARM_SUBSYSTEM_RID,
+            Ids.NATIVE_THE_CPU_EXEC_UNIT_RID,
+            Ids.NATIVE_THE_I_AREA_RID,
+            Ids.NATIVE_THE_Q_AREA_RID,
+            Ids.NATIVE_THE_M_AREA_RID,
+            Ids.NATIVE_THE_S7_COUNTERS_RID,
+            Ids.NATIVE_THE_S7_TIMERS_RID,
+            Ids.OBJECT_OMS_TYPE_INFO_CONTAINER,
+            0x38,  # explored by the SessionKey path of Client.explore()
+            0x8A11FFFF,  # DB wildcard explored by the SessionKey path of Client.list_datablocks()
+        ):
+            return True
+        return explore_id & 0xFFFF0000 == Ids.DB_ACCESS_AREA_BASE and explore_id & 0xFFFF in self._data_blocks
+
     def _handle_get_multi_variables(self, seq_num: int, session_id: int, request_data: bytes) -> bytes:
         """Handle GetMultiVariables -- read variables from data blocks.
 
@@ -941,11 +987,11 @@ class S7CommPlusServer:
         # ReturnValue: success
         response += encode_uint64_vlq(0)
 
+        results = [self._read_item(item) for item in items]
+
         # Value list: ItemNumber (1-based) + PValue, terminated by ItemNumber=0
-        for i, (db_num, byte_offset, byte_size) in enumerate(items, 1):
-            db = self._data_blocks.get(db_num)
-            if db is not None:
-                data = db.read(byte_offset, byte_size)
+        for i, data in enumerate(results, 1):
+            if data is not None:
                 response += encode_uint32_vlq(i)  # ItemNumber
                 response += encode_pvalue_blob(data)  # Value as BLOB
             # Errors handled in error list below
@@ -954,11 +1000,10 @@ class S7CommPlusServer:
         response += encode_uint32_vlq(0)
 
         # Error list
-        for i, (db_num, byte_offset, byte_size) in enumerate(items, 1):
-            db = self._data_blocks.get(db_num)
-            if db is None:
+        for i, data in enumerate(results, 1):
+            if data is None:
                 response += encode_uint32_vlq(i)  # ErrorItemNumber
-                response += encode_uint64_vlq(0x8104)  # Error: object not found
+                response += encode_uint64_vlq(_ITEM_ERROR)
 
         # Terminate error list
         response += encode_uint32_vlq(0)
@@ -1007,12 +1052,9 @@ class S7CommPlusServer:
 
         # Write data
         errors: list[tuple[int, int]] = []
-        for i, ((db_num, byte_offset, _), data) in enumerate(zip(items, values), 1):
-            db = self._data_blocks.get(db_num)
-            if db is not None:
-                db.write(byte_offset, data)
-            else:
-                errors.append((i, 0x8104))  # Object not found
+        for i, (item, data) in enumerate(zip(items, values), 1):
+            if not self._write_item(item, data):
+                errors.append((i, _ITEM_ERROR))
 
         # ReturnValue: success
         response += encode_uint64_vlq(0)
@@ -1029,6 +1071,43 @@ class S7CommPlusServer:
             response += encode_uint32_vlq(0)  # Legacy V1 IntegrityId
 
         return bytes(response)
+
+    def _read_item(self, item: Optional[tuple[int, int, int]]) -> Optional[bytes]:
+        """The bytes one item addresses, or None when the emulator cannot serve it.
+
+        That is an address the parser could not resolve, a data block that is not
+        registered, or a range not wholly inside the block. The emulator never
+        answers such an item with a value.
+        """
+        if item is None:
+            return None
+        db_num, byte_offset, byte_size = item
+        db = self._data_blocks.get(db_num)
+        if db is None:
+            return None
+        try:
+            return db.read(byte_offset, byte_size)
+        except IndexError:
+            return None
+
+    def _write_item(self, item: Optional[tuple[int, int, int]], data: bytes) -> bool:
+        """Write one item. False, with nothing written, when the emulator cannot serve it.
+
+        That is an item ``_read_item`` would not serve, or a value that is not the
+        size its address names. Without the size check the range written would be
+        the value's, not the address's.
+        """
+        if item is None:
+            return False
+        db_num, byte_offset, byte_size = item
+        db = self._data_blocks.get(db_num)
+        if db is None or len(data) != byte_size:
+            return False
+        try:
+            db.write(byte_offset, data)
+        except IndexError:
+            return False
+        return True
 
     @staticmethod
     def _is_session_setup_write(request_data: bytes) -> bool:
@@ -1060,9 +1139,9 @@ class S7CommPlusServer:
             return False
 
         try:
-            from .session_auth.blob_metadata import get_public_key_flags, get_symmetric_key_flags
-            from .session_auth.keys import get_public_key, parse_fingerprint
-            from .session_auth.utils import derive_key_id
+            from .v1_session_key.blob_metadata import get_public_key_flags, get_symmetric_key_flags
+            from .v1_session_key.keys import get_public_key, parse_fingerprint
+            from .v1_session_key.utils import derive_key_id
 
             family, _ = parse_fingerprint(self._public_key_fingerprint)
             public_key = get_public_key(self._public_key_fingerprint)
@@ -1231,20 +1310,44 @@ class S7CommPlusServer:
 # -- Server-side request parsers --
 
 
-def _server_parse_read_request(request_data: bytes) -> list[tuple[int, int, int]]:
+#: The error the emulator returns for an item it cannot serve.
+_ITEM_ERROR = 0x8104
+
+
+def _resolve_classic_blob(access_area: int, lids: list[int]) -> Optional[tuple[int, int, int]]:
+    """The byte range an ItemAddress names, or None when the emulator cannot resolve it.
+
+    The emulator holds a data block as bytes, so the one path it can serve is a
+    ClassicBlob range: the marker, a zero-based byte offset and a size. Any other
+    path names something only a real PLC's symbol tree could resolve.
+
+    Args:
+        access_area: The item's AccessArea
+        lids: The LIDs after the AccessSubArea
+
+    Returns:
+        (db_number, byte_offset, byte_size), or None
+    """
+    if len(lids) != 3 or lids[0] != Ids.LID_OMS_STB_CLASSIC_BLOB:
+        return None
+    return access_area & 0xFFFF, lids[1], lids[2]
+
+
+def _server_parse_read_request(request_data: bytes) -> list[Optional[tuple[int, int, int]]]:
     """Parse a GetMultiVariables request payload on the server side.
 
     Extracts (db_number, byte_offset, byte_size) for each item from the
     S7CommPlus ItemAddress format.
 
     Returns:
-        List of (db_number, byte_offset, byte_size) tuples
+        One entry per item, in request order: (db_number, byte_offset, byte_size),
+        or None for an address the emulator cannot resolve
     """
     if not request_data:
         return []
 
     offset = 0
-    items: list[tuple[int, int, int]] = []
+    items: list[Optional[tuple[int, int, int]]] = []
 
     # LinkId (UInt32 fixed)
     if offset + 4 > len(request_data):
@@ -1289,24 +1392,18 @@ def _server_parse_read_request(request_data: bytes) -> list[tuple[int, int, int]
             offset += consumed
             lids.append(lid_val)
 
-        # Extract db_number from AccessArea
-        db_num = access_area & 0xFFFF
-
-        # lids[0] is the ClassicBlob marker; offsets are zero-based.
-        byte_offset = lids[1] if len(lids) > 1 else 0
-        byte_size = lids[2] if len(lids) > 2 else 1
-
-        items.append((db_num, byte_offset, byte_size))
+        items.append(_resolve_classic_blob(access_area, lids))
 
     return items
 
 
-def _server_parse_write_request(request_data: bytes) -> tuple[list[tuple[int, int, int]], list[bytes]]:
+def _server_parse_write_request(request_data: bytes) -> tuple[list[Optional[tuple[int, int, int]]], list[bytes]]:
     """Parse a SetMultiVariables request payload on the server side.
 
     Returns:
-        Tuple of (items, values) where items is list of (db_number, byte_offset, byte_size)
-        and values is list of raw bytes to write
+        Tuple of (items, values) where items holds, per item in request order,
+        (db_number, byte_offset, byte_size) or None for an address the emulator
+        cannot resolve, and values is list of raw bytes to write
     """
     if not request_data:
         return [], []
@@ -1327,7 +1424,7 @@ def _server_parse_write_request(request_data: bytes) -> tuple[list[tuple[int, in
     offset += consumed
 
     # Parse each ItemAddress
-    items: list[tuple[int, int, int]] = []
+    items: list[Optional[tuple[int, int, int]]] = []
     for _ in range(item_count):
         if offset >= len(request_data):
             break
@@ -1357,10 +1454,7 @@ def _server_parse_write_request(request_data: bytes) -> tuple[list[tuple[int, in
             offset += consumed
             lids.append(lid_val)
 
-        db_num = access_area & 0xFFFF
-        byte_offset = lids[1] if len(lids) > 1 else 0  # lids[0] is the ClassicBlob marker
-        byte_size = lids[2] if len(lids) > 2 else 1
-        items.append((db_num, byte_offset, byte_size))
+        items.append(_resolve_classic_blob(access_area, lids))
 
     # Parse value list: ItemNumber (VLQ, 1-based) + PValue
     values: list[bytes] = []

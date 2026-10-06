@@ -78,18 +78,31 @@ class TestNamedTagIO:
         assert results[0].success and results[0].value == b"\x00\x01"
         assert not results[1].success and results[1].error is not None
 
-    def test_failed_read_refreshes_and_retries_only_when_crc_changed(self) -> None:
+    def test_read_sends_zero_symbol_crc_despite_browsed_crc(self) -> None:
+        # Regression: real CPUs (S7-1512 FW 2.9.8) reject the browsed per-entry CRC.
         client = S7CommPlusClient()
-        client.browse = MagicMock(  # type: ignore[method-assign]
-            side_effect=[[_browse_item(crc=1, access_sequence="8A0E0001.A")], [_browse_item(crc=2, access_sequence="8A0E0001.B")]]
+        client._symbol_catalog = SymbolCatalog.from_browse([_browse_item(crc=0x12345678)])
+        client.read_symbolic_multi = MagicMock(return_value=[b"\x00"])  # type: ignore[method-assign]
+
+        client.read_tag("DB1.Motor.Speed")
+
+        assert client.read_symbolic_multi.call_args.args[0] == [(0x8A0E0001, [0xA, 0x2], 0)]
+
+    def test_write_sends_zero_symbol_crc_despite_browsed_crc(self) -> None:
+        client = S7CommPlusClient()
+        client._connection = MagicMock(protocol_version=ProtocolVersion.V2)
+        client._symbol_catalog = SymbolCatalog.from_browse([_browse_item(crc=0x12345678)])
+        client._connection.send_request.return_value = encode_uint64_vlq(0) + encode_uint32_vlq(0)
+
+        with patch("s7commplus.client._build_multi_symbolic_write_payload", wraps=_build_multi_symbolic_write_payload) as build:
+            client.write_tag("DB1.Motor.Speed", b"\x3f\x80\x00\x00")
+
+        assert [item[3] for item in build.call_args.args[0]] == [0]
+        assert client._connection.send_request.call_args.args[1] == _build_multi_symbolic_write_payload(
+            [(0x8A0E0001, [0xA, 0x2], b"\x3f\x80\x00\x00", 0, DataType.REAL)], ProtocolVersion.V2
         )
-        client.read_symbolic_multi = MagicMock(side_effect=[[None], [b"\x40\x49\x0f\xdb"]])  # type: ignore[method-assign]
 
-        assert client.read_tag("DB1.Motor.Speed") == b"\x40\x49\x0f\xdb"
-        assert client.read_symbolic_multi.call_args_list[0].args[0] == [(0x8A0E0001, [0xA], 1)]
-        assert client.read_symbolic_multi.call_args_list[1].args[0] == [(0x8A0E0001, [0xB], 2)]
-
-    def test_failed_read_is_not_retried_when_crc_is_unchanged(self) -> None:
+    def test_failed_read_is_reported_without_refresh_or_retry(self) -> None:
         client = S7CommPlusClient()
         client.browse = MagicMock(return_value=[_browse_item(crc=1)])  # type: ignore[method-assign]
         client.read_symbolic_multi = MagicMock(return_value=[None])  # type: ignore[method-assign]
@@ -97,6 +110,7 @@ class TestNamedTagIO:
         with pytest.raises(RuntimeError, match="Symbolic read failed"):
             client.read_tag("DB1.Motor.Speed")
         client.read_symbolic_multi.assert_called_once()
+        client.browse.assert_called_once()
 
     def test_write_uses_resolved_datatype_and_reports_item_errors(self) -> None:
         client = S7CommPlusClient()
@@ -141,15 +155,30 @@ class TestNamedTagIO:
 
 
 @pytest.mark.asyncio
-async def test_async_read_tag_refreshes_changed_crc_once() -> None:
+async def test_async_read_tag_sends_zero_crc_without_retry() -> None:
     client = S7CommPlusAsyncClient()
-    client.browse = AsyncMock(  # type: ignore[method-assign]
-        side_effect=[[_browse_item(crc=1)], [_browse_item(crc=2, access_sequence="8A0E0001.B")]]
-    )
-    client.read_symbolic_multi = AsyncMock(side_effect=[[None], [b"ok"]])  # type: ignore[method-assign]
+    client.browse = AsyncMock(return_value=[_browse_item(crc=0x12345678)])  # type: ignore[method-assign]
+    client.read_symbolic_multi = AsyncMock(return_value=[None])  # type: ignore[method-assign]
 
-    assert await client.read_tag("DB1.Motor.Speed") == b"ok"
-    assert client.read_symbolic_multi.await_count == 2
+    with pytest.raises(RuntimeError, match="Symbolic read failed"):
+        await client.read_tag("DB1.Motor.Speed")
+    client.read_symbolic_multi.assert_awaited_once_with([(0x8A0E0001, [0xA, 0x2], 0)])
+    client.browse.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_async_write_tag_sends_zero_symbol_crc() -> None:
+    client = S7CommPlusAsyncClient()
+    client._connected = True
+    client._protocol_version = ProtocolVersion.V2
+    client._symbol_catalog = SymbolCatalog.from_browse([_browse_item(crc=0x12345678)])
+    client._send_request = AsyncMock(return_value=encode_uint64_vlq(0) + encode_uint32_vlq(0))  # type: ignore[method-assign]
+
+    await client.write_tag("DB1.Motor.Speed", b"\x3f\x80\x00\x00")
+
+    assert client._send_request.await_args.args[1] == _build_multi_symbolic_write_payload(
+        [(0x8A0E0001, [0xA, 0x2], b"\x3f\x80\x00\x00", 0, DataType.REAL)], ProtocolVersion.V2
+    )
 
 
 def test_public_descriptor_can_be_constructed_directly() -> None:

@@ -25,8 +25,8 @@ partially usable public client.
 Client compatibility
 --------------------
 
-The clients share transport, TLS, session-setup, and response-parsing helpers,
-but legacy SessionKey authentication is currently synchronous-only:
+The clients share transport, TLS, session-setup, SessionKey, and
+response-parsing helpers:
 
 .. list-table:: Authentication support
    :header-rows: 1
@@ -40,40 +40,91 @@ but legacy SessionKey authentication is currently synchronous-only:
      - Supported
    * - V1 with legacy SessionKey authentication
      - Supported
-     - Not supported; ``connect`` raises before session setup
+     - Supported (emulator-tested; not yet validated on hardware)
    * - V2 or V3 with TLS
      - Supported
      - Supported
 
-Use the synchronous client for a PLC that advertises legacy public-key
-fingerprint or session-challenge attributes. The asyncio client detects those
-attributes in the CreateObject response and fails immediately instead of
-returning a misleading connected client. Password legitimation over a
-supported TLS session remains available through ``AsyncClient.authenticate``.
+Both clients authenticate a PLC that advertises legacy public-key fingerprint or
+session-challenge attributes. They share the same blob, framing, key-fallback
+and renewal logic, and accept the same ``connect()`` options: ``password``,
+``allow_legacy_key_fallback``, ``legacy_session_key_refresh_interval`` and
+``legacy_s7_1500`` (an override; the profile is automatic). The synchronous path is the one validated on real
+controllers; the asyncio path so far runs against the emulator and captured
+request layouts only. Password legitimation over a TLS session is also
+available through ``authenticate``, and happens during ``connect`` when a
+``password`` is given.
 
-Legacy S7-1500 firmware 2.6
-~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Observed firmware and session paths
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
-An S7-1512SP on firmware 2.6 has been observed to use different authenticated
-fragment digests, symbolic-read qualifiers, and EXPLORE response layouts.
-For that non-TLS, synchronous path, opt in explicitly:
+The negotiated path depends on firmware and on whether the TIA Portal project
+enables secure PG/PC communication (TLS), so a firmware version alone does not
+determine it. The following combinations have been reported on real hardware:
+
+.. list-table:: Hardware reports
+   :header-rows: 1
+   :widths: 34 14 24 28
+
+   * - Controller
+     - Firmware
+     - Session path
+     - Status
+   * - S7-1200 CPU 1212C
+     - V4.2.2
+     - V1, legacy SessionKey
+     - Validated
+   * - S7-1512SP (6ES7 512-1DK01-0AB0)
+     - V2.6
+     - V1, legacy SessionKey
+     - Validated
+   * - S7-1200 CPU 1215C (6ES7 215-1AG40-0XB0)
+     - V4.2
+     - V1, legacy SessionKey
+     - Validated (sync and async, reads and browse; writes untested)
+   * - S7-1515-2 PN
+     - V2.9
+     - V1, legacy SessionKey
+     - Not working; session setup is reset
+   * - S7-1200
+     - V4.1, V4.5, V4.7.3
+     - TLS
+     - Working
+   * - S7-1500 (e.g. 1511F-1 PN)
+     - V2.9.7, V2.9.8
+     - TLS
+     - Working
+
+Firmware not listed here has not been validated. "V1" in this documentation
+refers to the S7CommPlus protocol-version byte negotiated by the session, not
+to the protocol generations used in some academic literature.
+
+V1 SessionKey request profile
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+S7-1500 firmware 2.6 and S7-1200 firmware V4.2 (1215C) share a request profile
+on the non-TLS V1 SessionKey path: authenticated fragment digests, V2 object
+qualifiers on data requests, a structured EXPLORE request, the IntegrityId after
+the response body, and (S7-1200 key family 01) one skipped IntegrityId after
+legitimation. It is selected automatically for every V1 SessionKey session, so
+no option is needed:
 
 .. code-block:: python
 
    from s7commplus import Client
 
    with Client() as client:
-       client.connect("192.0.2.1", use_tls=False, legacy_s7_1500=True)
+       client.connect("192.0.2.1")
        tags = client.browse()
        tag = next(tag for tag in tags if tag["name"] == "Example.Value")
        address = [int(part, 16) for part in tag["access_sequence"].split(".")]
        raw = client.read_symbolic(address[0], address[1:])
 
-The setting defaults to ``False`` and is retained across reconnects. It is
-incompatible with TLS. It changes synchronous browse and symbolic reads after
-SessionKey authentication; writes, alarms, subscriptions, raw DB access, and
-other firmware have not been hardware validated with this profile. The
-``AsyncClient`` does not support legacy SessionKey authentication.
+``legacy_s7_1500=False`` forces the classic layout instead, for a controller that
+rejects the profile (the S7-1200 CPU 1212C FW V4.2.2 report predates it; please
+report if it needs the override). The setting is retained across reconnects and
+never applies to TLS or V2/V3 sessions. Writes, alarms and subscriptions with
+this profile have not been hardware validated.
 
 TLS
 ---

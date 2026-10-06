@@ -41,6 +41,7 @@ from .client import (
 )
 from .catalog import SymbolCatalog, SymbolicTag, TagResult
 from .codec import (
+    SERVER_SESSION_ROLE_SECURED_BIT,
     decode_header,
     encode_header,
     encode_object_qualifier,
@@ -213,6 +214,9 @@ class S7CommPlusAsyncClient:
         self._last_raw_response_payload: bytes | None = None
         self._public_key_fingerprint: Optional[str] = None
         self._session_challenge: Optional[bytes] = None
+        # ServerSession.Role from the CreateObject response; the
+        # 0x20000000 bit marks a PLC that runs a secured session.
+        self._server_session_role: Optional[int] = None
         self._session_key: Optional[bytes] = None
         self._v1_session_key_public_key: bytes = b""
         self._v1_session_key_family = KeyFamily.S7_1500
@@ -247,6 +251,16 @@ class S7CommPlusAsyncClient:
     def tls_active(self) -> bool:
         """Whether TLS is active on the connection."""
         return self._tls_active
+
+    @property
+    def secured_session(self) -> bool:
+        """Whether the PLC advertised a secured session requiring SessionKey auth.
+
+        Read from the ServerSession.Role attribute of the CreateObject
+        response (bit 0x20000000). ``False`` when the PLC did not report a
+        role, which includes every PLC that does not implement the attribute.
+        """
+        return bool(self._server_session_role and self._server_session_role & SERVER_SESSION_ROLE_SECURED_BIT)
 
     @property
     def oms_secret(self) -> Optional[bytes]:
@@ -731,6 +745,7 @@ class S7CommPlusAsyncClient:
         self._protection_level = None
         self._public_key_fingerprint = None
         self._session_challenge = None
+        self._server_session_role = None
         self._session_key = None
         self._v1_session_key_public_key = b""
         self._v1_session_key_family = KeyFamily.S7_1500
@@ -1820,6 +1835,13 @@ class S7CommPlusAsyncClient:
         if attrs.session_challenge is not None:
             self._session_challenge = attrs.session_challenge
             logger.info(f"Session challenge captured ({len(attrs.session_challenge)} bytes)")
+        if attrs.server_session_role is not None:
+            self._server_session_role = attrs.server_session_role
+            if attrs.server_session_role & SERVER_SESSION_ROLE_SECURED_BIT:
+                logger.info(
+                    "PLC reports a secured session (ServerSession.Role bit 0x20000000); "
+                    "SessionKey authentication will be required"
+                )
 
     def _try_session_key_auth(self) -> Optional[tuple[bytes, bytes]]:
         """Generate the SecurityKey blob for a V1 session without TLS, or return None (see the sync connection)."""

@@ -1,11 +1,19 @@
 """Tests for the S7CommPlus blob decompressor."""
 
 import zlib
+from itertools import accumulate
 
 import pytest
 
-from s7commplus import decompress_blob, find_and_decompress
-from s7commplus.zlib_dicts import ZLIB_DICTIONARIES, ZLIB_DICT_NAMES
+from s7commplus import PresetStream, decompress_blob, find_and_decompress, iter_preset_streams
+from s7commplus.blob_decompressor import iter_preset_headers
+from s7commplus.zlib_dicts import ZLIB_DICTIONARIES, ZLIB_DICT_IDENTITIES, ZLIB_DICT_NAMES, PresetIdentity
+
+
+def _preset_stream(preset: PresetIdentity, text: bytes) -> bytes:
+    """Compress `text` against `preset`, prefixed with its 6-byte zlib header."""
+    cobj = zlib.compressobj(wbits=-15, zdict=ZLIB_DICTIONARIES[preset.adler])
+    return b"\x78\x7d" + preset.adler.to_bytes(4, "big") + cobj.compress(text) + cobj.flush()
 
 
 def test_all_dictionaries_have_correct_adler32():
@@ -28,17 +36,8 @@ def test_decompress_standard_blob():
 
 def test_decompress_with_preset_dict():
     original = b"<IdentContainer><Ident Name='Tag_1' /></IdentContainer>"
-    intfdesc_dict = ZLIB_DICTIONARIES[0xCE9B821B]
-
-    # Compress with raw deflate (wbits=-15) + preset dictionary
-    cobj = zlib.compressobj(level=6, wbits=-15, zdict=intfdesc_dict)
-    raw_deflate = cobj.compress(original) + cobj.flush()
-    # Build the zlib header: CMF=0x78, FLG with FDICT set, then 4-byte dict Adler-32
-    header = b"\x78\x7d" + (0xCE9B821B).to_bytes(4, "big")
-    blob = header + raw_deflate
-
-    result = decompress_blob(blob)
-    assert result == original.decode("utf-8")
+    blob = _preset_stream(ZLIB_DICT_IDENTITIES[0xCE9B821B], original)
+    assert decompress_blob(blob) == original.decode("utf-8")
 
 
 def test_decompress_unknown_dict_raises():
@@ -54,6 +53,31 @@ def test_decompress_with_offset():
     blob = b"\x00\x00\x00\x01" + compressed
     result = decompress_blob(blob, offset=4)
     assert result == original.decode("utf-8")
+
+
+def test_iter_preset_headers_and_streams():
+    line_comm, int_ref, ident = (ZLIB_DICT_IDENTITIES[a] for a in (0x3C55436A, 0xB0155FF8, 0xCE9B821B))
+    parts = [
+        b"\x00\x01",
+        _preset_stream(line_comm, b"<A/>"),
+        _preset_stream(line_comm, b"<A/>")[:6] + b"\xff" * 8,  # known dictionary, undecodable body
+        _preset_stream(int_ref, b""),  # empty document
+        b"\x78\x7d\xde\xad\xbe\xef",  # unknown dictionary
+        _preset_stream(ident, b"<B/>"),
+        b"\x78\x7d\xce\x9b",  # header truncated by the end of the payload
+    ]
+    offsets = [0, *accumulate(map(len, parts))]
+    payload = b"".join(parts)
+
+    assert list(iter_preset_headers(payload)) == [
+        (offsets[1], line_comm),
+        (offsets[2], line_comm),
+        (offsets[3], int_ref),
+        (offsets[5], ident),
+    ]
+    streams = list(iter_preset_streams(payload))
+    assert streams == [PresetStream(line_comm, "<A/>"), PresetStream(ident, "<B/>")]
+    assert [s.xml.tag for s in streams] == ["A", "B"]
 
 
 def test_find_and_decompress_standard():

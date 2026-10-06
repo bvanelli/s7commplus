@@ -71,6 +71,9 @@ Other behaviour changes:
 ### Bug fixes and hardening
 
 * Stop logging the SessionKey session challenge bytes (#44).
+* V1 SessionKey connects without a password no longer send the post-auth
+  legitimation, which S7-1200 PLCs with key family 01 reject while still serving
+  reads. A wrong password still raises `S7ConnectionError` (#70).
 * The real-PLC acceptance runner redacts the tester's hostname from JUnit
   reports (#38).
 

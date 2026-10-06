@@ -86,6 +86,47 @@ async def test_async_session_setup_installs_the_session_key(session_key_server: 
 
 
 @pytest.mark.asyncio
+async def test_async_connect_without_password_skips_legitimation(
+    session_key_server: tuple[S7CommPlusServer, int],
+) -> None:
+    # An S7-1200 (key family 01) rejects an empty-password legitimation but serves
+    # reads without one, so no password must mean no legitimation is sent.
+    _, port = session_key_server
+    client = S7CommPlusAsyncClient()
+    with patch.object(S7CommPlusAsyncClient, "_post_auth_legitimation", new_callable=AsyncMock) as legit:
+        await client.connect("127.0.0.1", port=port)
+        try:
+            legit.assert_not_awaited()
+            assert len(await client.db_read(1, 0, 4)) == 4
+        finally:
+            await client.disconnect()
+
+
+@pytest.mark.asyncio
+async def test_async_connect_with_password_sends_legitimation(session_key_server: tuple[S7CommPlusServer, int]) -> None:
+    _, port = session_key_server
+    client = S7CommPlusAsyncClient()
+    with patch.object(S7CommPlusAsyncClient, "_post_auth_legitimation", new_callable=AsyncMock) as legit:
+        await client.connect("127.0.0.1", port=port, password="secret")
+        try:
+            legit.assert_awaited_once_with("secret")
+        finally:
+            await client.disconnect()
+
+
+def test_sync_connect_without_password_skips_legitimation(session_key_server: tuple[S7CommPlusServer, int]) -> None:
+    _, port = session_key_server
+    client = S7CommPlusClient()
+    with patch("s7commplus.connection.S7CommPlusConnection._post_auth_legitimation") as legit:
+        client.connect("127.0.0.1", port=port)
+        try:
+            legit.assert_not_called()
+            assert len(client.db_read(1, 0, 4)) == 4
+        finally:
+            client.disconnect()
+
+
+@pytest.mark.asyncio
 async def test_async_read_write_after_session_setup(session_key_server: tuple[S7CommPlusServer, int]) -> None:
     _, port = session_key_server
     client = S7CommPlusAsyncClient()

@@ -1141,7 +1141,10 @@ class S7CommPlusConnection:
 
             if self._session_key is not None and self._session_setup_ok:
                 self._session_activate()
-                self._post_auth_legitimation(password=self._connect_password)
+                if self._connect_password:
+                    self._post_auth_legitimation(password=self._connect_password)
+                else:
+                    logger.info("No PLC password supplied; skipping post-auth legitimation")
                 self._skip_integrity_ids_after_legitimation()
 
             # Only a session that completed setup answers attribute reads; the

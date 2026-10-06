@@ -466,7 +466,10 @@ class S7CommPlusAsyncClient:
 
             if self._session_key is not None:
                 await self._session_activate()
-                await self._post_auth_legitimation(p["password"] or "")
+                if p["password"]:
+                    await self._post_auth_legitimation(p["password"])
+                else:
+                    logger.info("No PLC password supplied; skipping post-auth legitimation")
                 self._skip_integrity_ids_after_legitimation()
 
             self._protection_level = await self._get_effective_protection_level()

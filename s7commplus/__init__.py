@@ -21,6 +21,7 @@ from .catalog import ArrayDimension, SymbolCatalog, SymbolicTag, TagResult
 from .client import DBWriteItem, SymbolicReadItem
 from .client import S7CommPlusClient as Client
 from .connection import S7CommPlusConnection
+from .devices import DEVICE_NAMES, device_family, device_name
 from .server import CPUState, DataBlock
 from .server import S7CommPlusServer as Server
 from .subscription import SubscriptionDiagnostics, SubscriptionItem, SubscriptionNotification
@@ -46,6 +47,7 @@ __all__ = [
     "Client",
     "DBWriteItem",
     "DataBlock",
+    "DEVICE_NAMES",
     "ExploreDataBlock",
     "LanguageId",
     "Member",
@@ -62,6 +64,8 @@ __all__ = [
     "block_interface_from_explore",
     "datablocks_from_explore",
     "decompress_blob",
+    "device_family",
+    "device_name",
     "find_and_decompress",
     "tags_from_explore",
 ]

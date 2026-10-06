@@ -389,3 +389,33 @@ class SoftDataType(IntEnum):
     LTOD = 65
     LDT = 66
     DTL = 67
+
+
+class ErrorSource(IntEnum):
+    """Subsystems that a composite return value can name as the error source.
+
+    A rejected service reports a composite 64-bit value whose low word is the
+    `ServiceResult` code and whose upper bits identify the reporting
+    subsystem. The exact bit layout of the upper bits varies by firmware and
+    is not decoded here; the enum documents the source identifiers so a
+    decoded value can be named once the layout is confirmed against a capture.
+
+    Reference: Wireshark S7CommPlus dissector error-source table and
+    thomas-v2/S7CommPlusDriver result handling.
+    """
+
+    OBJECT_MANAGEMENT_SYSTEM = 0
+    OPERATING_STATE_CONTROL = 1
+    LOAD_MEMORY_CONTROL = 3
+    WORKING_MEMORY_CONTROL = 4
+    TEST_DEBUG_SYSTEM = 7
+    ALARMING_SYSTEM = 8
+    ONBOARD_COMPILER = 13
+    KERNEL = 14
+    GENERAL_AS_OBJECT_MODEL_ERRORS = 25
+    GENERAL_HARDWARE_CONFIGURATION_ERRORS = 26
+    FILESYSTEM = 32
+    COMMUNICATION_SYSTEM = 33
+    EXECUTION_LEVEL_SYSTEM = 64
+    T_BLOCKS = 91
+    IE_CONFIG = 92

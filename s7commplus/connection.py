@@ -2061,9 +2061,10 @@ class S7CommPlusConnection:
         auth_result = self._try_session_key_auth()
         security_key = None if auth_result is None else self._encode_security_key_struct(*auth_result)
 
+        seq_num = self._next_sequence_number()
         frame = _build_session_setup_frame(
             self._session_id,
-            self._next_sequence_number(),
+            seq_num,
             self._server_session_version,
             self._protocol_version,
             security_key,

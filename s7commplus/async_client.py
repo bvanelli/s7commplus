@@ -117,7 +117,6 @@ from .protocol import (
     FLAGS_34_FUNCTION_CODES,
     READ_FUNCTION_CODES,
     S7COMMPLUS_LOCAL_TSAP,
-    S7COMMPLUS_REMOTE_TSAP,
     AccessLevel,
     DataType,
     ElementID,
@@ -127,6 +126,7 @@ from .protocol import (
     LegitimationType,
     ObjectId,
     Opcode,
+    remote_tsap_for_connection_type,
     ProtocolVersion,
 )
 from .v1_session_key.keys import KeyFamily
@@ -287,6 +287,7 @@ class S7CommPlusAsyncClient:
         allow_legacy_key_fallback: bool = True,
         legacy_session_key_refresh_interval: Optional[float] = _DEFAULT_LEGACY_SESSION_KEY_REFRESH_INTERVAL,
         legacy_s7_1500: bool | None = None,
+        connection_type: int | str | None = None,
     ) -> None:
         """Connect to an S7-1200/1500 PLC using S7CommPlus.
 
@@ -312,11 +313,17 @@ class S7CommPlusAsyncClient:
                 SessionKey session, as the S7-1500 FW 2.6 (issue #12) and S7-1200
                 FW V4.2 controllers need it; ``False`` forces the classic layout and
                 ``True`` is only an explicit spelling of the automatic choice.
+            connection_type: COTP identity to connect as: ``"hmi"`` (default,
+                the HMI/SCADA data-client role), ``"es"`` (engineering station,
+                TIA-Portal style) or ``"pg"`` (programming device). Some firmware
+                gates engineering-style operations (program browsing, block
+                upload/download) on the connection type.
         """
         if legacy_s7_1500 and use_tls:
             raise ValueError("legacy_s7_1500 requires use_tls=False")
         if legacy_session_key_refresh_interval is not None and legacy_session_key_refresh_interval <= 0:
             raise ValueError("legacy_session_key_refresh_interval must be positive or None")
+        remote_tsap_for_connection_type(connection_type)  # validate early
         self._symbol_catalog = None
         self._connect_params = {
             "host": host,
@@ -331,6 +338,7 @@ class S7CommPlusAsyncClient:
             "allow_legacy_key_fallback": allow_legacy_key_fallback,
             "legacy_session_key_refresh_interval": legacy_session_key_refresh_interval,
             "legacy_s7_1500": legacy_s7_1500,
+            "connection_type": connection_type,
         }
         self._host = host
         try:
@@ -405,8 +413,8 @@ class S7CommPlusAsyncClient:
         self._transport_connected = True
 
         try:
-            # Step 1: COTP handshake with S7CommPlus TSAP values
-            await self._cotp_connect(S7COMMPLUS_LOCAL_TSAP, S7COMMPLUS_REMOTE_TSAP)
+            # Step 1: COTP handshake with the TSAP for the selected client role
+            await self._cotp_connect(S7COMMPLUS_LOCAL_TSAP, remote_tsap_for_connection_type(p["connection_type"]))
 
             # Step 2: InitSSL handshake
             await self._init_ssl()

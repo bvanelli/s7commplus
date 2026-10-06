@@ -33,7 +33,7 @@ from .codec import (
 )
 from .catalog import SymbolCatalog, SymbolicTag, TagResult
 from .connection import FamilyOnlyFingerprintError, S7CommPlusConnection, SessionKeyCandidateRejectedError
-from .protocol import DataType, ElementID, FunctionCode, Ids, ObjectId, ProtocolVersion
+from .protocol import DataType, ElementID, FunctionCode, Ids, ObjectId, ProtocolVersion, remote_tsap_for_connection_type
 from .subscription import (
     SubscriptionDiagnostics,
     SubscriptionItem,
@@ -143,6 +143,7 @@ class S7CommPlusClient:
         legacy_session_key_refresh_interval: Optional[float] = 25 * 60.0,
         *,
         legacy_s7_1500: bool | None = None,
+        connection_type: int | str | None = None,
     ) -> None:
         """Connect to an S7-1200/1500 PLC using S7CommPlus.
 
@@ -166,9 +167,15 @@ class S7CommPlusClient:
                 SessionKey session, as the S7-1500 FW 2.6 (issue #12) and S7-1200
                 FW V4.2 controllers need it; ``False`` forces the classic layout and
                 ``True`` is only an explicit spelling of the automatic choice.
+            connection_type: COTP identity to connect as: ``"hmi"`` (default,
+                the HMI/SCADA data-client role), ``"es"`` (engineering station,
+                TIA-Portal style) or ``"pg"`` (programming device). Some firmware
+                gates engineering-style operations (program browsing, block
+                upload/download) on the connection type.
         """
         if legacy_s7_1500 and use_tls:
             raise ValueError("legacy_s7_1500 requires use_tls=False")
+        remote_tsap_for_connection_type(connection_type)  # validate early
         self._symbol_catalog = None
         self._connect_params = {
             "host": host,
@@ -181,6 +188,7 @@ class S7CommPlusClient:
             "allow_legacy_key_fallback": allow_legacy_key_fallback,
             "legacy_session_key_refresh_interval": legacy_session_key_refresh_interval,
             "legacy_s7_1500": legacy_s7_1500,
+            "connection_type": connection_type,
         }
         self._open_connection()
 
@@ -217,7 +225,12 @@ class S7CommPlusClient:
         """Open exactly one transport/session, optionally with one key candidate."""
         assert self._connect_params is not None
         p = self._connect_params
-        self._connection = S7CommPlusConnection(host=p["host"], port=p["port"], legacy_s7_1500=p["legacy_s7_1500"])
+        self._connection = S7CommPlusConnection(
+            host=p["host"],
+            port=p["port"],
+            legacy_s7_1500=p["legacy_s7_1500"],
+            connection_type=p["connection_type"],
+        )
         self._connection.connect(
             use_tls=p["use_tls"],
             tls_cert=p["tls_cert"],

@@ -110,6 +110,55 @@ S7COMMPLUS_LOCAL_TSAP = 0x0600
 S7COMMPLUS_REMOTE_TSAP = b"SIMATIC-ROOT-HMI"
 
 
+class ConnectionType(IntEnum):
+    """COTP called-TSAP identities an S7CommPlus client can present.
+
+    S7CommPlus replaces the classic numeric rack/slot TSAPs with ASCII names
+    for the client role. The PLC-side service a connection reaches can depend
+    on which identity is used, so clients performing engineering-style
+    operations (program browsing, block upload/download) may need ``ES``
+    instead of the default ``HMI`` role.
+
+    Reference: Wireshark S7CommPlus dissector (TSAP strings) and
+    thomas-v2/S7CommPlusDriver.
+    """
+
+    HMI = 0  # HMI/SCADA-style data client (default)
+    ES = 1  # Engineering station (TIA Portal style)
+    PG = 2  # Programming device
+
+
+_CONNECTION_TYPE_REMOTE_TSAPS: dict[int, bytes] = {
+    ConnectionType.HMI: b"SIMATIC-ROOT-HMI",
+    ConnectionType.ES: b"SIMATIC-ROOT-ES",
+    ConnectionType.PG: b"SIMATIC-ROOT-PG",
+}
+
+
+def remote_tsap_for_connection_type(connection_type: int | str | None) -> bytes:
+    """Return the COTP called TSAP for a connection type.
+
+    Args:
+        connection_type: A ``ConnectionType`` member, one of the case-
+            insensitive names ``"hmi"``, ``"es"``, ``"pg"``, or ``None`` for
+            the default ``"hmi"``.
+
+    Raises:
+        ValueError: If the connection type is not recognized.
+    """
+    if connection_type is None:
+        return S7COMMPLUS_REMOTE_TSAP
+    if isinstance(connection_type, str):
+        try:
+            connection_type = ConnectionType[connection_type.strip().upper()]
+        except KeyError:
+            raise ValueError(f"Unknown connection type {connection_type!r}; expected one of 'hmi', 'es', 'pg'") from None
+    tsap = _CONNECTION_TYPE_REMOTE_TSAPS.get(int(connection_type))
+    if tsap is None:
+        raise ValueError(f"Unknown connection type {connection_type!r}; expected one of 'hmi', 'es', 'pg'")
+    return tsap
+
+
 class DataType(IntEnum):
     """S7CommPlus wire data types.
 

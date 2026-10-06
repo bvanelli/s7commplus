@@ -55,7 +55,7 @@ from .transport import ISOTCPConnection
 from .v1_session_key.keys import KeyFamily
 
 from .codec import decode_header, encode_header, encode_object_qualifier, parse_create_object_attributes
-from .error import S7ConnectionError
+from .error import S7AuthenticationError, S7ConnectionError
 from .legitimation import (
     build_legacy_response,
     build_new_response,
@@ -525,6 +525,23 @@ def _v1_integrity_tail(family: KeyFamily) -> int:
     return 3 if family == KeyFamily.S7_1200 else 4
 
 
+def _skip_plcsim_legitimation(password: str) -> None:
+    """Skip the post-auth legitimation on a PLCSIM session, rejecting a password.
+
+    HarpoS7 has no PLCSIM legitimation, so it is unknown what PLCSIM expects. A
+    password cannot be honoured, and ignoring it silently would look like
+    authenticated access.
+
+    Raises:
+        S7AuthenticationError: If ``password`` is not empty.
+    """
+    if password:
+        raise S7AuthenticationError(
+            "Password legitimation is not supported on PLCSIM sessions that use the legacy SessionKey (key family 03)"
+        )
+    logger.info("PLCSIM session: skipping post-auth legitimation (not implemented for key family 03)")
+
+
 def _resolve_session_key_fingerprint(public_key_fingerprint: Optional[str], override: Optional[str]) -> Optional[str]:
     """Return the key candidate to try, given the fingerprint the PLC advertised.
 
@@ -569,9 +586,9 @@ def _generate_session_key_blob(challenge: bytes, fingerprint: str) -> Optional[t
             logger.info(f"SessionKey auth: no matching public key for {fingerprint}")
             return None
 
-        from .v1_session_key.handshake import authenticate_real_plc
+        from .v1_session_key.handshake import authenticate_session_key
 
-        blob, session_key = authenticate_real_plc(challenge, public_key, family)
+        blob, session_key = authenticate_session_key(challenge, public_key, family)
         logger.info(f"SessionKey auth blob generated with key {fingerprint} ({len(blob)} bytes)")
         return blob, session_key, public_key, family
 
@@ -1437,7 +1454,7 @@ class S7CommPlusConnection:
         if self._session_key is None or not self._v1_session_key_public_key:
             raise S7ConnectionError("Legacy SessionKey renewal prerequisites are unavailable")
 
-        from .v1_session_key.handshake import authenticate_real_plc
+        from .v1_session_key.handshake import authenticate_session_key
 
         integrity_tail = _v1_integrity_tail(self._v1_session_key_family)
         challenge_payload = self._build_get_var_substreamed(self._session_id, LegitimationId.SERVER_SESSION_REQUEST)
@@ -1445,7 +1462,7 @@ class S7CommPlusConnection:
         challenge = _parse_get_var_substreamed_response(challenge_response)
         if len(challenge) != 20:
             raise S7ConnectionError(f"SessionKey renewal returned an unexpected {len(challenge)}-byte challenge")
-        blob, new_session_key = authenticate_real_plc(challenge, self._v1_session_key_public_key, self._v1_session_key_family)
+        blob, new_session_key = authenticate_session_key(challenge, self._v1_session_key_public_key, self._v1_session_key_family)
         security_key = self._encode_security_key_struct(blob, new_session_key)
         renewal_payload = _build_set_variable_payload(self._session_id, LegitimationId.SESSION_SETUP_LEGITIMATION, security_key)
         renewal_response = self._send_request(FunctionCode.SET_VARIABLE, renewal_payload, 4, False)
@@ -2160,6 +2177,9 @@ class S7CommPlusConnection:
         2. Solve the challenge cryptographically
         3. SET_VAR_SUBSTREAMED: write solved 248-byte blob to address 1846
         """
+        if self._v1_session_key_family == KeyFamily.PLCSIM:
+            _skip_plcsim_legitimation(password)
+            return
         # Step 1: Read legitimation challenge from session, address 303
         logger.debug("Post-auth legitimation: reading challenge from address 303")
         challenge_resp = self.send_request(

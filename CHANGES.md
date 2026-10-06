@@ -94,7 +94,9 @@ Other behaviour changes:
 * The rewritten cryptography and the async V1 SessionKey path are verified
   against HarpoS7's vectors, captured TIA traffic and the emulator. Hardware
   validation on V1 S7-1200/S7-1500 controllers is pending (#44).
-* PLCSIM's legacy authentication (key family 03) is not supported yet (#56).
+* PLCSIM's legacy authentication (key family 03) is implemented (#56) but only
+  tested against the emulator. It skips the post-auth legitimation and rejects a
+  `password` until a real PLCSIM capture shows what PLCSIM expects.
 
 ### Thanks
 

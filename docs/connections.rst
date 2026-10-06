@@ -86,6 +86,10 @@ determine it. The following combinations have been reported on real hardware:
      - V2.9
      - V1, legacy SessionKey
      - Not working; session setup is reset
+   * - PLCSIM / PLCSIM Advanced (TIA Portal V16 or older)
+     - key family 03
+     - V1, legacy SessionKey
+     - Emulator-tested only; no password legitimation
    * - S7-1200
      - V4.1, V4.5, V4.7.3
      - TLS

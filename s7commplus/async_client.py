@@ -78,6 +78,7 @@ from .connection import (
     _parse_protection_level_response,
     _resolve_session_key_fingerprint,
     _session_setup_accepted,
+    _skip_plcsim_legitimation,
     _set_s7_groups,
     _strip_response_integrity_id,
     _v1_session_key_profile,
@@ -790,7 +791,7 @@ class S7CommPlusAsyncClient:
         if self._session_key is None or not self._v1_session_key_public_key:
             raise S7ConnectionError("Legacy SessionKey renewal prerequisites are unavailable")
 
-        from .v1_session_key.handshake import authenticate_real_plc
+        from .v1_session_key.handshake import authenticate_session_key
 
         integrity_tail = _v1_integrity_tail(self._v1_session_key_family)
         challenge_payload = _build_v1_get_var_substreamed_payload(
@@ -800,7 +801,7 @@ class S7CommPlusAsyncClient:
         challenge = _parse_get_var_substreamed_response(challenge_response)
         if len(challenge) != 20:
             raise S7ConnectionError(f"SessionKey renewal returned an unexpected {len(challenge)}-byte challenge")
-        blob, new_session_key = authenticate_real_plc(challenge, self._v1_session_key_public_key, self._v1_session_key_family)
+        blob, new_session_key = authenticate_session_key(challenge, self._v1_session_key_public_key, self._v1_session_key_family)
         security_key = _encode_security_key_struct(
             self._v1_session_key_public_key, self._v1_session_key_family, blob, new_session_key
         )
@@ -1910,6 +1911,9 @@ class S7CommPlusAsyncClient:
 
     async def _post_auth_legitimation(self, password: str = "") -> None:
         """Solve the V1 legitimation challenge after the SessionKey handshake (see the sync connection)."""
+        if self._v1_session_key_family == KeyFamily.PLCSIM:
+            _skip_plcsim_legitimation(password)
+            return
         async with self._lock:
             payload = _build_v1_get_var_substreamed_payload(
                 self._v1_session_key_family, self._session_id, LegitimationId.SERVER_SESSION_REQUEST, self._sequence_number

@@ -17,8 +17,8 @@ without it, ``browse()`` and other CommPlus data ops fail.
 
 The package contains the public-key store, AES/SHA primitives, the blob
 algorithm for real PLCs (``real_plc``), and the orchestration for the
-180-byte ``SecurityKeyEncryptedKey`` blob (``handshake``, ``legitimation``). Family 03 keys/metadata are catalogued,
-but its separate PLCSIM authentication implementation is not provided.
+180-byte ``SecurityKeyEncryptedKey`` blob (``handshake``, ``legitimation``). Family 03 (PLCSIM) has its own authenticator in ``plcsim`` (216-byte blob, ECIES seed over
+P-256), so far tested against the emulator only.
 See ``MAINTAINER_GUIDE.md`` for stable boundaries and verification commands.
 
 References:

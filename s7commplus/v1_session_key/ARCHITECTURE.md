@@ -353,10 +353,23 @@ MODEL_BENCHMARKS.md for the measurements. The full Monolith7 analysis
 evaluator remains slower/larger than generated and analysis-only; no
 complete compact model exists yet for all 36 of its output words.
 
-Family 03 (PLCSIM) is also listed in the public-key store and blob metadata,
-but it needs a separate authentication implementation. The Family-0
-`RealPlcAuthenticator` supports only families 00 and 01; family 03 cannot be
-enabled by changing its family check or blob length.
+Family 03 (PLCSIM) has its own, much smaller authenticator in `plcsim/`
+(HarpoS7's `AuthenticatePlcSim`). Its 216-byte blob is the 48-byte metadata, a
+96-byte seed, a 16-byte IV, the challenge and `key1` encrypted with AES-GCM
+(24-bit counter) under a key derived from `key2`, and the 16-byte tag. The seed
+is **ECIES over NIST P-256**: the ephemeral point `k·G` (big-endian `x ‖ y`)
+followed by the challenge key encrypted under a key and IV derived from
+`x(k·PK)`, with its tag. `plcsim/seed.py` computes it with `cryptography`'s
+P-256 and the existing KDF and `AesGcm24`, and is pinned to HarpoS7's
+`GenerateEncryptedSeedTest` known answer. The session key derives from `key1`
+(not `key2`, as on real PLCs). The Family-0 `RealPlcAuthenticator` still
+supports only families 00 and 01, and `handshake.authenticate_session_key()`
+dispatches on the family.
+
+PLCSIM is **emulator-tested only**. It uses the S7-1500 request layouts, skips
+the post-auth legitimation (HarpoS7 has no PLCSIM legitimation, so it is
+unknown what PLCSIM expects) and rejects a `password`, until a capture from a
+real PLCSIM or PLCSIM Advanced instance settles those points (#56).
 
 [`MAINTAINER_GUIDE.md`](MAINTAINER_GUIDE.md) maps the stable handwritten
 interfaces, source/fixture evidence, failure triage, model limits and issue #1

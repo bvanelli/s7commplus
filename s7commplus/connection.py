@@ -2061,9 +2061,10 @@ class S7CommPlusConnection:
         auth_result = self._try_session_key_auth()
         security_key = None if auth_result is None else self._encode_security_key_struct(*auth_result)
 
+        seq_num = self._next_sequence_number()
         frame = _build_session_setup_frame(
             self._session_id,
-            self._next_sequence_number(),
+            seq_num,
             self._server_session_version,
             self._protocol_version,
             security_key,
@@ -2071,8 +2072,16 @@ class S7CommPlusConnection:
         logger.debug(f"=== SetupSession === sending ({len(frame)} bytes): {frame.hex(' ')}")
         self._send_s7_data(frame)
 
-        response_frame = self._recv_s7_data()
+        # Session setup can receive a SystemEvent before the reply. Route it
+        # through the same dispatcher as ordinary requests so a fatal event
+        # cannot be mistaken for a successful SetMultiVariables response.
+        response_frame = self._recv_response_frame(seq_num)
         logger.debug(f"=== SetupSession === received ({len(response_frame)} bytes): {response_frame.hex(' ')}")
+        version, data_length, consumed = decode_header(response_frame)
+        response = response_frame[consumed : consumed + data_length]
+        if len(response) < 10:
+            raise S7ConnectionError("SetupSession response too short")
+        _validate_response_header(response, FunctionCode.SET_MULTI_VARIABLES, seq_num)
         if not _session_setup_accepted(response_frame):
             return False
 

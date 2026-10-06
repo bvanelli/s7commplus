@@ -46,6 +46,8 @@ class FunctionCode(IntEnum):
     """S7CommPlus function codes.
 
     These identify the type of operation in a request/response pair.
+    Value sequence 1211-1434 (decimal) matches the RequestRID tables in
+    Wireshark's S7CommPlus dissector and thomas-v2/S7CommPlusDriver.
     """
 
     ERROR = 0x04B1
@@ -68,6 +70,10 @@ class FunctionCode(IntEnum):
     ABORT = 0x059A
     ERROR2 = 0x05A9
     INIT_SSL = 0x05B3
+    # The Notify function (1326) is the server-initiated counterpart of the
+    # subscription SetVariable credit: it frames a notification's response
+    # bookkeeping. It shares its opcode byte with Opcode.NOTIFICATION.
+    NOTIFY = 0x052E
 
 
 class ElementID(IntEnum):
@@ -75,16 +81,25 @@ class ElementID(IntEnum):
 
     S7CommPlus uses a tagged object model where data is structured as
     nested objects with attributes, similar to TLV encoding.
+    Values 0xA1-0xAC match the serialization tag table in Wireshark's
+    S7CommPlus dissector.
     """
 
     START_OF_OBJECT = 0xA1
     TERMINATING_OBJECT = 0xA2
     ATTRIBUTE = 0xA3
     RELATION = 0xA4
+    ERROR = 0xA5
+    INCLUDE_OBJECT = 0xA6
     START_OF_TAG_DESCRIPTION = 0xA7
     TERMINATING_TAG_DESCRIPTION = 0xA8
-    VARTYPE_LIST = 0xAB
-    VARNAME_LIST = 0xAC
+    LINK_NAMESPACE = 0xA9
+    TYPE_MICRO_INFO = 0xAB
+    TYPE_MICRO_NAMES = 0xAC
+    # Aliases for the type-metadata list tags above, retained because the
+    # tag_browser/typeinfo parsers and their tests refer to them by these names.
+    VARTYPE_LIST = TYPE_MICRO_INFO
+    VARNAME_LIST = TYPE_MICRO_NAMES
 
 
 class ObjectId(IntEnum):
@@ -182,6 +197,24 @@ class Ids(IntEnum):
     NATIVE_THE_ALARM_SUBSYSTEM_RID = 8
     NATIVE_THE_CPU_EXEC_UNIT_RID = 52
 
+    # Remaining native-object roots under the AS root (RID 1). Useful as
+    # EXPLORE starting points beyond the three above: the hardware
+    # configuration tree, the folder/log containers, and the CPU objects.
+    # Reference: thomas-v2/S7CommPlusDriver/Core/Ids.cs (NativeObjects.*).
+    # RID 35 is omitted: reference tables disagree on its name.
+    NATIVE_THE_AS_ROOT_RID = 1
+    NATIVE_THE_HW_CONFIGURATION_RID = 2
+    NATIVE_THE_FOLDERS_RID = 4
+    NATIVE_THE_LOGS_RID = 5
+    NATIVE_THE_SW_EVENTS_RID = 10
+    NATIVE_THE_TIS_SUBSYSTEM_RID = 11
+    NATIVE_THE_STATION_CONFIGURATION_RID = 30
+    NATIVE_THE_CPU_RID = 48
+    NATIVE_THE_CPU_COMMON_RID = 50
+    NATIVE_THE_CARD_READER_WRITER_RID = 51
+    NATIVE_THE_WEB_SERVER_RID = 53
+    NATIVE_THE_CPU_DISPLAY_RID = 54
+
     # Object attributes for EXPLORE responses
     OBJECT_VARIABLE_TYPE_NAME = 233
     BLOCK_BLOCK_NUMBER = 2521
@@ -240,9 +273,30 @@ class Ids(IntEnum):
     EFFECTIVE_PROTECTION_LEVEL = 1842
     ACTIVE_PROTECTION_LEVEL = 1843
 
-    # ServerSessionVersion struct element carrying the device "PAOM string"
-    # which selects the legitimation mode.
+    # ServerSessionVersion (struct 314) elements. 315/319 are what the client
+    # reads (protocol version, device PAOM string); 316-318 and 320 are the
+    # project-side counterparts a PLC may also send.
+    # Reference: thomas-v2/S7CommPlusDriver/Core/Ids.cs (LID_SessionVersion.*)
+    SESSION_VERSION_STRUCT = 314
+    SESSION_VERSION_SYSTEM_OMS = 315
+    SESSION_VERSION_PROJECT_OMS = 316
+    SESSION_VERSION_SYSTEM_PAOM = 317
+    SESSION_VERSION_PROJECT_PAOM = 318
     SESSION_VERSION_SYSTEM_PAOM_STRING = 319
+    SESSION_VERSION_PROJECT_PAOM_STRING = 320
+
+    # ServerSession attributes reported in the CreateObject response object.
+    # Reference: thomas-v2/S7CommPlusDriver/Core/Ids.cs (ServerSession.*,
+    # ClientSession.*)
+    SERVER_SESSION_CLIENT_ID = 289
+    SERVER_SESSION_USER = 296
+    SERVER_SESSION_APPLICATION = 297
+    SERVER_SESSION_HOST = 298
+    SERVER_SESSION_ROLE = 299
+    SERVER_SESSION_TIMEOUT = 302
+    SERVER_SESSION_ROLES = 305
+    CLIENT_SESSION_PASSWORD = 309
+    CLIENT_SESSION_LEGITIMATED = 310
 
     # Struct and element IDs of the encrypted new-mode legitimation payload
     LEGITIMATION_PAYLOAD_STRUCT = 40400

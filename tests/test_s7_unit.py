@@ -38,6 +38,93 @@ from s7commplus.vlq import (
 # -- Payload builder / parser tests --
 
 
+class TestProtocolConstants:
+    """Pin wire values of the protocol enums.
+
+    These are on-the-wire facts; a change here is a protocol-visible change
+    and must be justified in CHANGES.md.
+    """
+
+    def test_function_code_values(self) -> None:
+        expected = {
+            "ERROR": 0x04B1,
+            "EXPLORE": 0x04BB,
+            "CREATE_OBJECT": 0x04CA,
+            "DELETE_OBJECT": 0x04D4,
+            "SET_VARIABLE": 0x04F2,
+            "GET_VARIABLE": 0x04FC,
+            "ADD_LINK": 0x0506,
+            "REMOVE_LINK": 0x051A,
+            "GET_LINK": 0x0524,
+            "NOTIFY": 0x052E,
+            "SET_MULTI_VARIABLES": 0x0542,
+            "GET_MULTI_VARIABLES": 0x054C,
+            "BEGIN_SEQUENCE": 0x0556,
+            "END_SEQUENCE": 0x0560,
+            "INVOKE": 0x056B,
+            "SET_VAR_SUBSTREAMED": 0x057C,
+            "GET_VAR_SUBSTREAMED": 0x0586,
+            "GET_VARIABLES_ADDRESS": 0x0590,
+            "ABORT": 0x059A,
+            "ERROR2": 0x05A9,
+            "INIT_SSL": 0x05B3,
+        }
+        for name, value in expected.items():
+            assert FunctionCode[name] == value, name
+
+    def test_function_codes_are_unique(self) -> None:
+        values = [int(code) for code in FunctionCode]
+        assert len(values) == len(set(values))
+
+    def test_element_id_values(self) -> None:
+        expected = {
+            "START_OF_OBJECT": 0xA1,
+            "TERMINATING_OBJECT": 0xA2,
+            "ATTRIBUTE": 0xA3,
+            "RELATION": 0xA4,
+            "ERROR": 0xA5,
+            "INCLUDE_OBJECT": 0xA6,
+            "START_OF_TAG_DESCRIPTION": 0xA7,
+            "TERMINATING_TAG_DESCRIPTION": 0xA8,
+            "LINK_NAMESPACE": 0xA9,
+            "TYPE_MICRO_INFO": 0xAB,
+            "TYPE_MICRO_NAMES": 0xAC,
+        }
+        for name, value in expected.items():
+            assert ElementID[name] == value, name
+
+    def test_element_id_aliases_point_at_the_type_list_tags(self) -> None:
+        # The parser names 0xAB/0xAC VARTYPE/VARNAME list; the wire tags are
+        # the type-micro list tags, and both spellings must stay in sync.
+        assert ElementID.VARTYPE_LIST == ElementID.TYPE_MICRO_INFO == 0xAB
+        assert ElementID.VARNAME_LIST == ElementID.TYPE_MICRO_NAMES == 0xAC
+
+    def test_session_version_struct_elements(self) -> None:
+        assert Ids.SESSION_VERSION_STRUCT == 314
+        assert Ids.SESSION_VERSION_SYSTEM_OMS == 315
+        assert Ids.SESSION_VERSION_PROJECT_OMS == 316
+        assert Ids.SESSION_VERSION_SYSTEM_PAOM == 317
+        assert Ids.SESSION_VERSION_PROJECT_PAOM == 318
+        assert Ids.SESSION_VERSION_SYSTEM_PAOM_STRING == 319
+        assert Ids.SESSION_VERSION_PROJECT_PAOM_STRING == 320
+
+    def test_native_object_roots(self) -> None:
+        assert Ids.NATIVE_THE_AS_ROOT_RID == 1
+        assert Ids.NATIVE_THE_HW_CONFIGURATION_RID == 2
+        assert Ids.NATIVE_THE_PLC_PROGRAM_RID == 3
+        assert Ids.NATIVE_THE_CPU_RID == 48
+        assert Ids.NATIVE_THE_CPU_EXEC_UNIT_RID == 52
+        assert Ids.NATIVE_THE_WEB_SERVER_RID == 53
+        assert Ids.NATIVE_THE_CPU_DISPLAY_RID == 54
+
+    def test_server_session_attribute_ids(self) -> None:
+        assert Ids.SERVER_SESSION_CLIENT_ID == 289
+        assert Ids.SERVER_SESSION_TIMEOUT == 302
+        assert Ids.SERVER_SESSION_ROLES == 305
+        assert Ids.CLIENT_SESSION_PASSWORD == 309
+        assert Ids.CLIENT_SESSION_LEGITIMATED == 310
+
+
 class TestBuildReadPayload:
     def test_single_item(self) -> None:
         payload = _build_read_payload([(1, 0, 4)])

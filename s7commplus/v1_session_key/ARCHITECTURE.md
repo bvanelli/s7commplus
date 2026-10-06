@@ -72,6 +72,66 @@ Activation and firmware-specific failures require protocol evidence, not
 changes to the arithmetic models. The CPU1515/FW2.9 investigation is tracked
 in issue #34; do not infer a universal framing/activation change from this map.
 
+## Contributor path through the handwritten code
+
+The stable entry point is `S7CommPlusConnection.connect()` in
+`s7commplus/connection.py` (the asyncio client mirrors it in
+`async_client.py`). Its CreateObject parser saves the session challenge,
+public-key fingerprint, and ServerSessionVersion. `_setup_session()` calls
+`_try_session_key_auth()` only for non-TLS V1 sessions with both challenge and
+fingerprint; `keys.parse_fingerprint()` and `keys.get_public_key()` select the
+bundled key. A family-only fingerprint requires an explicit candidate from the
+discovery path rather than silently trying all keys.
+
+`handshake.authenticate_real_plc()` is the small cryptographic boundary: it
+returns a 180-byte encrypted blob and a 24-byte session key. It delegates blob
+construction to `real_plc/authenticator.py` and key derivation to
+`key_derivation.py`. `_encode_security_key_struct()` owns the wire-level
+SecurityKey wrapper; `_setup_session()` writes it at address 1830 alongside the
+ServerSessionVersion echo at address 306 (with the V1-rejected PAOM string
+removed). Only an accepted response installs `_session_key` and enables
+IntegrityId tracking. `send_request()` and the response/fragment readers then
+own V3 HMAC framing and verification.
+
+After setup, `_session_activate()` sends address 323, and
+`_post_auth_legitimation()` reads a *new* challenge at address 303 and writes
+the 248-byte result to address 1846. The solver is
+`legitimation.solve_legitimate_challenge_real_plc()`. The CreateObject challenge
+must never substitute for a failed legitimation read. Renewal is handled by
+`_renew_session_key_locked()`: it reads a fresh address-303 challenge and writes
+another SecurityKey under the application-request lock. The old key verifies
+the response before the new key is installed.
+
+For a new real-PLC key family, add key selection and an authenticator parallel
+to `real_plc/authenticator.py`, then extend the handwritten dispatch in
+`handshake.py` and its explicit tests. Do not import retired reference code from
+`old/` in the connection layer, and do not silently map an unknown family to
+Family 0. This is a recommended extension boundary, not a claim that a
+pluggable authenticator interface already exists.
+
+### Diagnosing a failed connection
+
+- Missing ServerSessionVersion: inspect CreateObject attribute parsing before
+  any crypto; SetupSession cannot proceed without an echoable typed value.
+- Missing challenge or fingerprint: `_try_session_key_auth()` skips the
+  SessionKey path. Compare the PLC's reported family, firmware, and captured
+  attributes; do not infer a bad cryptographic step from the skipped path.
+- Unknown full fingerprint or family-only identifier: check `keys.py` and the
+  discovery candidate. A candidate rejected by SetupSession is not proof that
+  the bundled key or arithmetic is correct for that PLC.
+- Blob generated but SetupSession rejected: compare the 1830/306 request layout,
+  public-key family, and PLC response return value before looking at the
+  cryptographic modules.
+- Setup accepted but later request rejected: distinguish activation,
+  legitimation, IntegrityId, V3 frame/HMAC, and fragmented-response verification.
+  The address-303 challenge is distinct from the CreateObject challenge.
+- Renewal failure: the connection is closed intentionally; check the fresh
+  challenge read, authenticated SecurityKey write, and PLC expiry behavior.
+
+Do not attach raw packet captures or debug logs containing challenges, session
+keys, passwords, or private material to public issues. The real-PLC acceptance
+guide describes the shareable artifact workflow.
+
 ## Module map
 
 ### Orchestration (human-readable)

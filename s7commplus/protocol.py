@@ -18,7 +18,8 @@ PROTOCOL_ID = 0x72
 class ProtocolVersion(IntEnum):
     """S7CommPlus protocol versions.
 
-    V1: Early S7-1200 FW V4.0 -- simple session handshake
+    V1: Non-TLS sessions, optionally with legacy SessionKey authentication
+        (observed on S7-1200 FW V4.2 and S7-1500 FW V2.6)
     V2: Adds integrity checking and session authentication
     V3: Adds public-key-based key exchange
     TLS: TIA Portal V17+ -- standard TLS 1.3 with per-device certificates
@@ -184,6 +185,9 @@ class Ids(IntEnum):
     # Object attributes for EXPLORE responses
     OBJECT_VARIABLE_TYPE_NAME = 233
     BLOCK_BLOCK_NUMBER = 2521
+    DATA_INTERFACE_INTERFACE_DESCRIPTION = 2544
+    DATA_INTERFACE_LINE_COMMENTS = 2546
+    AS_OBJECT_ES_COMMENT = 4288
     CPU_EXEC_UNIT_EXECUTING = 8064  # 0x1F80; observed as 1 in RUN and 0 in STOP
     CPU_EXEC_UNIT_OPERATING_MODE = 8065  # 0x1F81; observed as 7 in RUN and 0 in STOP
 

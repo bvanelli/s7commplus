@@ -47,11 +47,12 @@ import struct
 import tempfile
 import threading
 from collections import deque
+from collections.abc import Callable
 from types import TracebackType
 from typing import Any, Optional, Type
 
 from .transport import ISOTCPConnection
-from .session_auth.keys import KeyFamily
+from .v1_session_key.keys import KeyFamily
 
 from .codec import decode_header, encode_header, encode_object_qualifier, parse_create_object_attributes
 from .error import S7ConnectionError
@@ -350,6 +351,17 @@ def _build_get_var_substreamed_payload(
     return payload
 
 
+def _response_pvalue_offset(payload: bytes, offset: int, supported: Callable[[int, int], bool]) -> int:
+    """Locate a PValue directly after ReturnValue or after a zero marker."""
+    if offset + 2 <= len(payload) and supported(payload[offset], payload[offset + 1]):
+        return offset
+    if payload[offset : offset + 1] == b"\x00":
+        offset += 1
+    if offset + 2 > len(payload):
+        raise ValueError("missing PValue header")
+    return offset
+
+
 def _parse_get_var_substreamed_response(payload: bytes) -> bytes:
     """Extract the typed value from a GetVarSubStreamed response payload."""
     from .error import S7ConnectionError
@@ -359,13 +371,11 @@ def _parse_get_var_substreamed_response(payload: bytes) -> bytes:
         if return_value != 0:
             raise S7ConnectionError(f"GetVarSubStreamed failed: return_value=0x{return_value:X}")
 
-        offset = consumed
-        if offset >= len(payload):
-            raise ValueError("missing response marker")
-        offset += 1  # protocol-defined unknown byte
-
-        if offset + 2 > len(payload):
-            raise ValueError("missing PValue header")
+        offset = _response_pvalue_offset(
+            payload,
+            consumed,
+            lambda flags, datatype: datatype == DataType.BLOB or (datatype == DataType.USINT and bool(flags & 0x10)),
+        )
         flags = payload[offset]
         datatype = payload[offset + 1]
         offset += 2
@@ -397,12 +407,11 @@ def _parse_protection_level_response(payload: bytes) -> int:
         if return_value != 0:
             raise S7ConnectionError(f"GetVarSubStreamed for the protection level failed: return_value={return_value}")
 
-        if offset >= len(payload):
-            raise ValueError("missing response marker")
-        offset += 1  # protocol-defined unknown byte
-
-        if offset + 2 > len(payload):
-            raise ValueError("missing PValue header")
+        offset = _response_pvalue_offset(
+            payload,
+            offset,
+            lambda flags, datatype: datatype == DataType.UDINT and not flags & 0x10,
+        )
         flags = payload[offset]
         datatype = payload[offset + 1]
         offset += 2
@@ -425,7 +434,12 @@ def _build_set_variable_payload(in_object_id: int, address: int, value: bytes) -
     payload += encode_uint32_vlq(address)
     payload += value
     payload += encode_object_qualifier()
-    payload += bytes([0x00])  # protocol-defined unknown byte
+    # Byte after the ObjectQualifier in this plain SetVariable. Real PLCs
+    # accept it (this legitimation path is field proven). Independent capture
+    # analysis notes TIA's own SetMultiVariables carries no extra byte between
+    # the KeyQualifier value and the 4 byte fill; the PLC parser tolerates
+    # both shapes.
+    payload += bytes([0x00])
     payload += struct.pack(">I", 0)  # fill; IntegrityId is inserted before it
     return payload
 
@@ -502,6 +516,345 @@ def _strip_paom_string_in_session_version(struct_bytes: bytes) -> bytes:
     return struct_bytes[:after_dtype] + bytes([0x00]) + struct_bytes[after_dtype + consumed + length :]
 
 
+# --- V1 SessionKey helpers, shared by S7CommPlusConnection and the async client. ---
+
+
+def _v1_integrity_tail(family: KeyFamily) -> int:
+    """Trailing fill bytes of V1 SessionKey substreamed requests: 3 on the S7-1200, 4 on the S7-1500."""
+    return 3 if family == KeyFamily.S7_1200 else 4
+
+
+def _resolve_session_key_fingerprint(public_key_fingerprint: Optional[str], override: Optional[str]) -> Optional[str]:
+    """Return the key candidate to try, given the fingerprint the PLC advertised.
+
+    A complete PLC fingerprint wins over any candidate, so the result is then
+    ``None``. A family-only id needs a same-family candidate.
+
+    Raises:
+        FamilyOnlyFingerprintError: For a family-only id without a candidate.
+        S7ConnectionError: For a candidate from another family.
+    """
+    if public_key_fingerprint is None:
+        return override
+    if ":" in public_key_fingerprint:
+        return None
+
+    from .v1_session_key.keys import parse_family_identifier, parse_fingerprint
+
+    try:
+        family = parse_family_identifier(public_key_fingerprint)
+    except ValueError as exc:
+        raise S7ConnectionError(str(exc)) from exc
+    if override is None:
+        raise FamilyOnlyFingerprintError(family)
+    override_family, _ = parse_fingerprint(override)
+    if override_family != family:
+        raise S7ConnectionError(f"SessionKey candidate {override} does not belong to PLC family {family.value:02X}")
+    return override
+
+
+def _generate_session_key_blob(challenge: bytes, fingerprint: str) -> Optional[tuple[bytes, bytes, bytes, KeyFamily]]:
+    """Build the SecurityKey blob for ``fingerprint``'s public key.
+
+    Returns ``(blob, session_key, public_key, family)``, or ``None`` when the
+    key is unknown or the blob cannot be built.
+    """
+    try:
+        from .v1_session_key.keys import get_public_key, parse_fingerprint
+
+        family, _key_id = parse_fingerprint(fingerprint)
+        public_key = get_public_key(fingerprint)
+        if public_key is None:
+            logger.info(f"SessionKey auth: no matching public key for {fingerprint}")
+            return None
+
+        from .v1_session_key.handshake import authenticate_real_plc
+
+        blob, session_key = authenticate_real_plc(challenge, public_key, family)
+        logger.info(f"SessionKey auth blob generated with key {fingerprint} ({len(blob)} bytes)")
+        return blob, session_key, public_key, family
+
+    except ImportError as e:
+        raise SessionKeyAuthenticationDependencyError(
+            "Cannot load S7CommPlus SessionKey authentication dependencies. "
+            "Install them with python -m pip install 's7commplus' "
+            "(or python -m pip install -e '.[s7commplus]' for a source checkout). "
+            f"Original error: {e}"
+        ) from e
+    except Exception as e:
+        logger.warning(f"SessionKey auth failed: {e}")
+        return None
+
+
+def _encode_security_key_struct(public_key: bytes, family: KeyFamily, blob: bytes, session_key: bytes) -> bytes:
+    """Encode the SecurityKey PObject struct (Struct 1800) wrapping the auth blob.
+
+    Matches the wire format from TIA Portal / HarpoS7 PoC:
+    Struct(1800) containing key descriptors for the public and symmetric
+    keys, plus the encrypted blob.
+    """
+    from .v1_session_key.blob_metadata import get_public_key_flags, get_symmetric_key_flags
+    from .v1_session_key.utils import derive_key_id
+
+    if not public_key:
+        raise ValueError("SessionKey authentication requires public key material")
+    if not session_key:
+        raise ValueError("SessionKey authentication requires generated session key material")
+
+    public_key_id = derive_key_id(public_key)
+    symmetric_key_id = derive_key_id(session_key)
+    sym_flags = get_symmetric_key_flags(family)
+    pub_flags = get_public_key_flags(family)
+
+    # Inside a Struct, attributes are VLQ(absolute_id) + flags + type + value.
+    # No 0xA3 tag prefix — that's only for PObject tree attributes.
+    # Struct(1800): 1801=Version 1802=SecurityLevel 1803=PublicKey
+    #               1804=SymmetricKey 1805=EncryptedKey
+    # Struct(1825): 1826=KeyId 1827=KeyFlags 1828=InternalFlags
+
+    def _udint_val(v: int) -> bytes:
+        return bytes([0x00, DataType.UDINT]) + encode_uint32_vlq(v)
+
+    def _usint_val(v: int) -> bytes:
+        return bytes([0x00, DataType.USINT]) + bytes([v & 0xFF])
+
+    def _ulint_val(v: int) -> bytes:
+        return bytes([0x00, DataType.ULINT]) + encode_uint64_vlq(v)
+
+    def _blob_val(data: bytes) -> bytes:
+        return bytes([0x00, DataType.BLOB, 0x00]) + encode_uint32_vlq(len(data)) + data
+
+    def _struct_begin(struct_id: int) -> bytes:
+        return bytes([0x00, DataType.STRUCT]) + struct.pack(">I", struct_id)
+
+    _STRUCT_END = bytes([0x00])
+
+    def _key_descriptor(key_id: bytes, flags: int) -> bytes:
+        key_id_int = int.from_bytes(key_id, byteorder="little", signed=False)
+        out = _struct_begin(Ids.SECURITY_KEY_ID)
+        out += encode_uint32_vlq(1826) + _ulint_val(key_id_int)  # KeyId
+        out += encode_uint32_vlq(1827) + _udint_val(flags)  # KeyFlags
+        out += encode_uint32_vlq(1828) + _udint_val(0)  # InternalFlags
+        out += _STRUCT_END
+        return out
+
+    result = _struct_begin(Ids.STRUCT_SECURITY_KEY)
+    result += encode_uint32_vlq(1801) + _udint_val(0)  # Version
+    result += encode_uint32_vlq(1802) + _usint_val(0)  # SecurityLevel
+    result += encode_uint32_vlq(1803) + _key_descriptor(public_key_id, pub_flags)  # PublicKey
+    result += encode_uint32_vlq(1804) + _key_descriptor(symmetric_key_id, sym_flags | 0x10000)  # SymmetricKey
+    result += encode_uint32_vlq(1805) + _blob_val(blob)  # EncryptedKey
+    result += _STRUCT_END
+
+    return result
+
+
+def _build_session_setup_frame(
+    session_id: int,
+    sequence_number: int,
+    server_session_version: bytes,
+    protocol_version: int,
+    security_key: Optional[bytes] = None,
+) -> bytes:
+    """Build the complete setup frame echoing ServerSessionVersion, optionally with the SecurityKey.
+
+    Always uses V2 framing, transport flags 0x34, and no IntegrityId. On
+    V1-initial PLCs the SecurityKey struct goes to address 1830 as a second
+    item.
+    """
+    request = struct.pack(
+        ">BHHHHIB",
+        Opcode.REQUEST,
+        0x0000,
+        FunctionCode.SET_MULTI_VARIABLES,
+        0x0000,
+        sequence_number,
+        session_id,
+        0x34,
+    )
+
+    payload = bytearray()
+    payload += struct.pack(">I", session_id)  # InObjectId
+
+    if security_key is not None:
+        payload += encode_uint32_vlq(2)  # ItemCount
+        payload += encode_uint32_vlq(2)  # AddressCount
+        payload += encode_uint32_vlq(LegitimationId.SESSION_SETUP_LEGITIMATION)  # 1830
+        payload += encode_uint32_vlq(ObjectId.SERVER_SESSION_VERSION)  # 306
+        payload += encode_uint32_vlq(1)  # ItemNumber for SecurityKey
+        payload += security_key
+        payload += encode_uint32_vlq(2)  # ItemNumber for ServerSessionVersion
+    else:
+        payload += encode_uint32_vlq(1)  # ItemCount
+        payload += encode_uint32_vlq(1)  # AddressCount
+        payload += encode_uint32_vlq(ObjectId.SERVER_SESSION_VERSION)  # 306
+        payload += encode_uint32_vlq(1)  # ItemNumber
+
+    # PValue: echo the ServerSessionVersion typed value verbatim (it may be a Struct).
+    # Strip the PAOM device string (element 319) which V1-initial PLCs reject.
+    payload += _strip_paom_string_in_session_version(server_session_version)
+
+    payload += bytes([0x00])  # Fill byte
+    payload += encode_object_qualifier(protocol_version=protocol_version)
+    payload += struct.pack(">I", 0)  # Trailing padding
+
+    request += bytes(payload)
+
+    # Outer S7+ frame is always V2 for the setup write, even if the PLC
+    # negotiated V1 on the initial CreateObject.
+    frame = encode_header(ProtocolVersion.V2, len(request)) + request
+    frame += struct.pack(">BBH", 0x72, ProtocolVersion.V2, 0x0000)
+    return frame
+
+
+def _session_setup_accepted(response_frame: bytes) -> bool:
+    """Whether the PLC's response to the setup frame reports success."""
+    version, data_length, consumed = decode_header(response_frame)
+    response = response_frame[consumed : consumed + data_length]
+
+    if len(response) < 10:
+        raise S7ConnectionError("SetupSession response too short")
+
+    resp_func = struct.unpack_from(">H", response, 3)[0]
+    logger.debug(f"SetupSession response: function=0x{resp_func:04X}")
+
+    # Parse return value from payload (data responses use a 10-byte header)
+    resp_payload = response[10:]
+    if len(resp_payload) >= 1:
+        return_value, _ = decode_uint64_vlq(resp_payload, 0)
+        if return_value != 0:
+            logger.warning(f"SetupSession: PLC returned error {return_value}")
+            return False
+        return True
+    return False
+
+
+def _build_session_activate_payload(session_id: int, sequence_number: int) -> bytes:
+    """SET_VARIABLE writing USINT(5) to address 323, which activates a V1 SessionKey session.
+
+    TIA Portal sends this immediately after the SetupSession key exchange
+    succeeds, before any data reads or legitimation. The payload matches frame
+    17 of TIAPortalWatchDB7.pcapng from GH-710: the ObjectQualifier's
+    KEY_QUALIFIER carries the request's sequence number as a 4-byte uint32, and
+    the trailing section is 3 zero bytes (the IntegrityId is spliced before
+    them).
+    """
+    oq = encode_object_qualifier(key_qualifier=sequence_number, protocol_version=ProtocolVersion.V1)
+
+    payload = struct.pack(">I", session_id)
+    payload += encode_uint32_vlq(1)  # AddressCount
+    payload += encode_uint32_vlq(323)  # address
+    payload += bytes([0x00, DataType.USINT])
+    payload += encode_uint32_vlq(5)
+    payload += oq
+    payload += bytes(3)  # trailing zeros (IntegrityId spliced before these)
+    return payload
+
+
+def _build_v1_get_var_substreamed_payload(
+    family: KeyFamily, in_object_id: int, address: int, sequence_number: int, seq_field: int = 1
+) -> bytes:
+    """Build the family-specific GET_VAR_SUBSTREAMED layout captured on V1 SessionKey sessions.
+
+    S7-1200 captures use the request's sequence number as a fixed-width
+    ObjectQualifier, a VLQ request field, and a three-byte fill. S7-1500
+    captures use a zero-valued VLQ qualifier, a two-byte request field, and a
+    four-byte fill. The IntegrityId is inserted before that fill.
+    """
+    if family == KeyFamily.S7_1200:
+        oq = encode_object_qualifier(key_qualifier=sequence_number, protocol_version=ProtocolVersion.V1)
+        payload = struct.pack(">I", in_object_id)
+        payload += bytes([0x20, DataType.UDINT])
+        payload += encode_uint32_vlq(1)  # field count
+        payload += encode_uint32_vlq(address)
+        payload += oq
+        payload += encode_uint32_vlq(seq_field)
+        payload += bytes(3)  # fill
+        return payload
+    return _build_get_var_substreamed_payload(in_object_id, address, sequence_field=seq_field)
+
+
+def _build_v1_legitimation_payload(session_id: int, sequence_number: int, legitimation_blob: bytes) -> bytes:
+    """SET_VAR_SUBSTREAMED writing the solved legitimation blob to address 1846."""
+    oq = encode_object_qualifier(key_qualifier=sequence_number, protocol_version=ProtocolVersion.V1)
+    payload = struct.pack(">I", session_id)
+    payload += bytes([0x20, 0x04])
+    payload += encode_uint32_vlq(1)
+    payload += encode_uint32_vlq(LegitimationId.LEGITIMATE)  # 1846
+    payload += oq
+    payload += encode_uint32_vlq(1)
+    payload += bytes([0x00, DataType.BLOB, 0x00])
+    payload += encode_uint32_vlq(len(legitimation_blob))
+    payload += legitimation_blob
+    payload += encode_uint32_vlq(sequence_number)
+    payload += bytes(3)  # trailing zeros
+    return payload
+
+
+def _check_v1_legitimation_response(payload: bytes, raw_payload: Optional[bytes] = None) -> None:
+    """Raise when the PLC rejects the legitimation blob with a negative return value.
+
+    ``payload`` has had a leading IntegrityId stripped, but this PLC family may
+    send the return value first, so the stripped bytes can start inside it.
+    ``raw_payload`` is the response before stripping; a negative return value
+    in either reading is a rejection (an IntegrityId never decodes as one).
+    """
+    for candidate in (raw_payload, payload):
+        if not candidate:
+            continue
+        try:
+            return_value, _ = decode_uint64_vlq(candidate, 0)
+        except ValueError:
+            continue
+        signed = return_value if return_value < (1 << 63) else return_value - (1 << 64)
+        if signed < 0:
+            raise S7ConnectionError(f"Post-auth legitimation rejected by PLC: return_value=0x{return_value:X}")
+    if payload:
+        logger.debug("Legitimation response accepted")
+
+
+def _frame_request(request: bytes, protocol_version: int, session_key: Optional[bytes]) -> bytes:
+    """Wrap a request in its S7CommPlus frame.
+
+    After SessionKey authentication every request uses V3 framing, with the
+    HMAC-SHA256 of the request under the session key prepended.
+    """
+    if session_key is not None:
+        digest = hmac.new(session_key[:24], request, hashlib.sha256).digest()
+        frame_data = bytes([0x20]) + digest + request
+        frame = encode_header(ProtocolVersion.V3, len(frame_data)) + frame_data
+        return frame + struct.pack(">BBH", 0x72, ProtocolVersion.V3, 0x0000)
+    frame = encode_header(protocol_version, len(request)) + request
+    return frame + struct.pack(">BBH", 0x72, protocol_version, 0x0000)
+
+
+def _v1_session_key_profile(override: Optional[bool], session_key: Optional[bytes], protocol_version: int) -> bool:
+    """Whether the non-TLS V1 SessionKey request profile applies.
+
+    Both PLCs validated on hardware (S7-1500 FW 2.6, S7-1200 FW V4.2) need it,
+    so it is the default for every V1 SessionKey session; ``override=False``
+    selects the classic layout instead. V2/V3 sessions never use it.
+    """
+    if session_key is None or protocol_version != ProtocolVersion.V1:
+        return False
+    return override is not False
+
+
+def _strip_response_integrity_id(function_code: int, payload: bytes, session_key_active: bool, legacy_s7_1500: bool) -> bytes:
+    """Remove the IntegrityId that leads SessionKey response payloads.
+
+    The legacy S7-1500 profile keeps GET_MULTI_VARIABLES and EXPLORE payloads
+    whole, because there the IntegrityId follows the body.
+    """
+    if legacy_s7_1500 and function_code in (FunctionCode.GET_MULTI_VARIABLES, FunctionCode.EXPLORE):
+        return payload
+    if session_key_active and len(payload) > 1:
+        resp_iid, consumed = decode_uint32_vlq(payload, 0)
+        logger.debug("  Response IntegrityId: %d (%d bytes)", resp_iid, consumed)
+        return payload[consumed:]
+    return payload
+
+
 class S7CommPlusConnection:
     """S7CommPlus connection with multi-version support.
 
@@ -519,7 +872,11 @@ class S7CommPlusConnection:
         self,
         host: str,
         port: int = 102,
+        *,
+        legacy_s7_1500: bool | None = None,
     ):
+        self._legacy_s7_1500 = legacy_s7_1500
+        self._last_raw_response_payload: Optional[bytes] = None
         self.host = host
         self.port = port
 
@@ -559,8 +916,8 @@ class S7CommPlusConnection:
         # Session key derived from the SessionKey handshake, used for
         # HMAC packet integrity after authentication.
         self._session_key: Optional[bytes] = None
-        self._session_auth_public_key: bytes = b""
-        self._session_auth_family = KeyFamily.S7_1500
+        self._v1_session_key_public_key: bytes = b""
+        self._v1_session_key_family = KeyFamily.S7_1500
         self._session_key_fingerprint_override: Optional[str] = None
         self._session_key_refresh_interval: Optional[float] = _DEFAULT_LEGACY_SESSION_KEY_REFRESH_INTERVAL
         self._session_key_refresh_timer: Optional[threading.Timer] = None
@@ -626,6 +983,20 @@ class S7CommPlusConnection:
         return self._session_setup_ok
 
     @property
+    def legacy_s7_1500(self) -> bool:
+        """Whether the V1 SessionKey profile is active (automatic unless overridden)."""
+        return _v1_session_key_profile(self._legacy_s7_1500, self._session_key, self._protocol_version)
+
+    @property
+    def object_qualifier_version(self) -> int:
+        """Protocol version whose ObjectQualifier layout data requests use.
+
+        The opt-in non-TLS profile sends the V2 layout although the session
+        negotiated V1; its PLCs reset the connection on the V1 layout.
+        """
+        return ProtocolVersion.V2 if self.legacy_s7_1500 else self._protocol_version
+
+    @property
     def requires_substreamed(self) -> bool:
         """Whether data operations must use substreamed function codes.
 
@@ -678,6 +1049,8 @@ class S7CommPlusConnection:
                 SessionKey renewals. Defaults to 25 minutes; pass ``None`` to
                 disable automatic renewal.
         """
+        if self._legacy_s7_1500 and use_tls:
+            raise ValueError("legacy_s7_1500 requires use_tls=False")
         if legacy_session_key_refresh_interval is not None and legacy_session_key_refresh_interval <= 0:
             raise ValueError("legacy_session_key_refresh_interval must be positive or None")
         self._session_key_refresh_interval = legacy_session_key_refresh_interval
@@ -699,25 +1072,9 @@ class S7CommPlusConnection:
             # CreateObject always uses V1 framing
             self._create_session()
 
-            if self._public_key_fingerprint is not None and ":" not in self._public_key_fingerprint:
-                from .session_auth.keys import parse_family_identifier, parse_fingerprint
-
-                try:
-                    family = parse_family_identifier(self._public_key_fingerprint)
-                except ValueError as exc:
-                    raise S7ConnectionError(str(exc)) from exc
-                if self._session_key_fingerprint_override is None:
-                    raise FamilyOnlyFingerprintError(family)
-                override_family, _ = parse_fingerprint(self._session_key_fingerprint_override)
-                if override_family != family:
-                    raise S7ConnectionError(
-                        f"SessionKey candidate {self._session_key_fingerprint_override} does not belong to "
-                        f"PLC family {family.value:02X}"
-                    )
-            elif self._public_key_fingerprint is not None:
-                # A complete PLC fingerprint always wins over a cached/provided
-                # family-only fallback candidate.
-                self._session_key_fingerprint_override = None
+            self._session_key_fingerprint_override = _resolve_session_key_fingerprint(
+                self._public_key_fingerprint, self._session_key_fingerprint_override
+            )
 
             # After CreateObject (V1), data PDUs over TLS use ProtocolVersion V2 (matches C# driver)
             if self._tls_active:
@@ -766,6 +1123,7 @@ class S7CommPlusConnection:
             if self._session_key is not None and self._session_setup_ok:
                 self._session_activate()
                 self._post_auth_legitimation(password=self._connect_password)
+                self._skip_integrity_ids_after_legitimation()
 
             # Only a session that completed setup answers attribute reads; the
             # V1-initial band falls back to legacy PUT/GET and never gets here.
@@ -1019,8 +1377,8 @@ class S7CommPlusConnection:
         self._public_key_fingerprint = None
         self._session_challenge = None
         self._session_key = None
-        self._session_auth_public_key = b""
-        self._session_auth_family = KeyFamily.S7_1500
+        self._v1_session_key_public_key = b""
+        self._v1_session_key_family = KeyFamily.S7_1500
         self._with_integrity_id = False
         self._integrity_id_read = 0
         self._integrity_id_write = 0
@@ -1073,19 +1431,18 @@ class S7CommPlusConnection:
 
     def _renew_session_key_locked(self) -> None:
         """Perform the challenge/SecurityKey exchange while the old key is active."""
-        if self._session_key is None or not self._session_auth_public_key:
+        if self._session_key is None or not self._v1_session_key_public_key:
             raise S7ConnectionError("Legacy SessionKey renewal prerequisites are unavailable")
 
-        from .session_auth.keys import KeyFamily
-        from .session_auth.legacy_auth import authenticate_real_plc
+        from .v1_session_key.handshake import authenticate_real_plc
 
-        integrity_tail = 3 if self._session_auth_family == KeyFamily.S7_1200 else 4
+        integrity_tail = _v1_integrity_tail(self._v1_session_key_family)
         challenge_payload = self._build_get_var_substreamed(self._session_id, LegitimationId.SERVER_SESSION_REQUEST)
         challenge_response = self._send_request(FunctionCode.GET_VAR_SUBSTREAMED, challenge_payload, integrity_tail, False)
         challenge = _parse_get_var_substreamed_response(challenge_response)
         if len(challenge) != 20:
             raise S7ConnectionError(f"SessionKey renewal returned an unexpected {len(challenge)}-byte challenge")
-        blob, new_session_key = authenticate_real_plc(challenge, self._session_auth_public_key, self._session_auth_family)
+        blob, new_session_key = authenticate_real_plc(challenge, self._v1_session_key_public_key, self._v1_session_key_family)
         security_key = self._encode_security_key_struct(blob, new_session_key)
         renewal_payload = _build_set_variable_payload(self._session_id, LegitimationId.SESSION_SETUP_LEGITIMATION, security_key)
         renewal_response = self._send_request(FunctionCode.SET_VARIABLE, renewal_payload, 4, False)
@@ -1164,23 +1521,7 @@ class S7CommPlusConnection:
         logger.debug(f"  Request payload ({len(payload)} bytes): {payload.hex(' ')}")
 
         # After SessionKey auth, all data ops use V3 framing with HMAC
-        if self._session_key is not None:
-            frame_version: int = ProtocolVersion.V3
-        else:
-            frame_version = self._protocol_version
-
-        if frame_version == ProtocolVersion.V3 and self._session_key is not None:
-            # V3: prepend 32-byte HMAC-SHA256 digest over the request
-            import hashlib
-            import hmac as _hmac
-
-            digest = _hmac.new(self._session_key[:24], request, hashlib.sha256).digest()
-            frame_data = bytes([0x20]) + digest + request
-            frame = encode_header(ProtocolVersion.V3, len(frame_data)) + frame_data
-            frame += struct.pack(">BBH", 0x72, ProtocolVersion.V3, 0x0000)
-        else:
-            frame = encode_header(frame_version, len(request)) + request
-            frame += struct.pack(">BBH", 0x72, frame_version, 0x0000)
+        frame = _frame_request(request, self._protocol_version, self._session_key)
 
         logger.debug(f"  Full frame ({len(frame)} bytes): {frame.hex(' ')}")
         self._send_s7_data(frame)
@@ -1202,12 +1543,7 @@ class S7CommPlusConnection:
                 raise S7ConnectionError("Response too short")
             _validate_response_header(data, function_code, seq_num)
             logger.debug(f"  Reassembled response ({len(data)} bytes), payload {len(data) - 10} bytes")
-            resp_payload = bytes(data[10:])
-            if self._session_key is not None:
-                resp_iid, iid_consumed = decode_uint32_vlq(resp_payload, 0)
-                logger.debug(f"  Response IntegrityId: {resp_iid} ({iid_consumed} bytes)")
-                resp_payload = resp_payload[iid_consumed:]
-            return resp_payload
+            return self._response_payload(function_code, bytes(data[10:]))
 
         logger.debug(f"=== RECV RESPONSE === raw frame ({len(response_frame)} bytes): {response_frame.hex(' ')}")
 
@@ -1253,14 +1589,7 @@ class S7CommPlusConnection:
         # NO SessionId field (requests do, making their header 14 bytes).
         resp_offset = 10
 
-        resp_payload = response[resp_offset:]
-
-        # SessionKey/HMAC responses prepend an IntegrityId VLQ. Ordinary
-        # TLS/V2 responses follow the standard application-payload layout.
-        if self._session_key is not None and len(resp_payload) > 1:
-            resp_iid, iid_consumed = decode_uint32_vlq(resp_payload, 0)
-            logger.debug(f"  Response IntegrityId: {resp_iid} ({iid_consumed} bytes)")
-            resp_payload = resp_payload[iid_consumed:]
+        resp_payload = self._response_payload(function_code, response[resp_offset:])
 
         logger.debug(f"  Response payload ({len(resp_payload)} bytes): {resp_payload.hex(' ')}")
 
@@ -1270,6 +1599,11 @@ class S7CommPlusConnection:
             logger.debug(f"  Trailer ({len(trailer)} bytes): {trailer.hex(' ')}")
 
         return resp_payload
+
+    def _response_payload(self, function_code: int, payload: bytes) -> bytes:
+        """Preserve legacy return values where IntegrityId follows the body."""
+        self._last_raw_response_payload = payload
+        return _strip_response_integrity_id(function_code, payload, self._session_key is not None, self.legacy_s7_1500)
 
     def _verified_incoming_data(self, frame: bytes) -> bytes:
         """Return application data after authenticating the complete frame."""
@@ -1387,13 +1721,31 @@ class S7CommPlusConnection:
 
         data = bytearray()
         fragments = 0
+        system_events = 0
         expected_version: int | None = None
+        from ._fragment_hmac import FragmentHMACVerifier
+
+        legacy_verifier = FragmentHMACVerifier(self._session_key) if self.legacy_s7_1500 and self._session_key else None
         digest_state = hmac.new(self._session_key[:24], digestmod=hashlib.sha256) if self._session_key is not None else None
         while True:
             ensure(4)
             if buf[0] != 0x72:
                 raise S7ConnectionError("Expected S7CommPlus fragment header (0x72)")
             fragment_version = buf[1]
+            if fragment_version == ProtocolVersion.SYSTEM_EVENT:
+                # PLCs interleave SystemEvents between the fragments of a large
+                # response (seen on S7-1200 FW V4.2); skip them like the receive path.
+                event_len = (buf[2] << 8) | buf[3]
+                ensure(4 + event_len)
+                event = bytes(buf[4 : 4 + event_len])
+                del buf[: 4 + event_len]
+                _check_system_event(event)
+                system_events += 1
+                if system_events > _MAX_SYSTEM_EVENTS_PER_RESPONSE:
+                    from .error import S7ProtocolError
+
+                    raise S7ProtocolError("Too many S7CommPlus SystemEvents during response reassembly")
+                continue
             if self._session_key is not None and fragment_version != ProtocolVersion.V3:
                 self._invalidate_integrity_failure()
                 raise S7IntegrityError(
@@ -1424,7 +1776,11 @@ class S7CommPlusConnection:
                 if digest_state is None:
                     raise S7ConnectionError("V3 response received without a session key")
                 try:
-                    fragment_data = _verify_v3_hmac(fragment_data, digest_state)
+                    fragment_data = (
+                        legacy_verifier.verify(fragment_data)
+                        if legacy_verifier is not None
+                        else _verify_v3_hmac(fragment_data, digest_state)
+                    )
                 except S7IntegrityError:
                     self._invalidate_integrity_failure()
                     raise
@@ -1518,7 +1874,10 @@ class S7CommPlusConnection:
         # RequestValue: ValueUDInt(0) = DatatypeFlags(0x00) + Datatype.UDInt(0x04) + VLQ(0)
         request += bytes([0x00, DataType.UDINT]) + encode_uint32_vlq(0)
 
-        # Unknown padding (always 0)
+        # u32 zero between RequestValue and the request object. Confirmed
+        # against a golden TIA session CreateObject frame from independent
+        # capture analysis: RequestId 285, ValueUDInt(0), then this u32
+        # padding, all constant 0.
         request += struct.pack(">I", 0)
 
         # RequestObject: PObject for NullServerSession
@@ -1656,7 +2015,7 @@ class S7CommPlusConnection:
             logger.info(f"Public key fingerprint captured: {attrs.public_key_fingerprint}")
         if attrs.session_challenge is not None:
             self._session_challenge = attrs.session_challenge
-            logger.info(f"Session challenge captured ({len(attrs.session_challenge)} bytes): {attrs.session_challenge.hex()}")
+            logger.info(f"Session challenge captured ({len(attrs.session_challenge)} bytes)")
 
     def _try_session_key_auth(self) -> Optional[tuple[bytes, bytes]]:
         """Attempt to generate the SecurityKey authentication blob.
@@ -1676,35 +2035,12 @@ class S7CommPlusConnection:
             logger.debug("SessionKey auth: no public key fingerprint captured")
             return None
 
-        try:
-            from .session_auth.keys import get_public_key, parse_fingerprint
-
-            fingerprint = self._session_key_fingerprint_override or self._public_key_fingerprint
-            family, _key_id = parse_fingerprint(fingerprint)
-
-            public_key = get_public_key(fingerprint)
-            if public_key is None:
-                logger.info(f"SessionKey auth: no matching public key for {fingerprint}")
-                return None
-
-            from .session_auth.legacy_auth import authenticate_real_plc
-
-            blob, session_key = authenticate_real_plc(self._session_challenge, public_key, family)
-            self._session_auth_public_key = public_key
-            self._session_auth_family = family
-            logger.info(f"SessionKey auth blob generated with key {fingerprint} ({len(blob)} bytes)")
-            return blob, session_key
-
-        except ImportError as e:
-            raise SessionKeyAuthenticationDependencyError(
-                "Cannot load S7CommPlus SessionKey authentication dependencies. "
-                "Install them with python -m pip install 's7commplus' "
-                "(or python -m pip install -e '.[s7commplus]' for a source checkout). "
-                f"Original error: {e}"
-            ) from e
-        except Exception as e:
-            logger.warning(f"SessionKey auth failed: {e}")
+        fingerprint = self._session_key_fingerprint_override or self._public_key_fingerprint
+        result = _generate_session_key_blob(self._session_challenge, fingerprint)
+        if result is None:
             return None
+        blob, session_key, self._v1_session_key_public_key, self._v1_session_key_family = result
+        return blob, session_key
 
     def _setup_session(self) -> bool:
         """Send V2 SetMultiVariables to echo ServerSessionVersion back to the PLC.
@@ -1712,8 +2048,9 @@ class S7CommPlusConnection:
         Always uses V2 framing, transport flags 0x34, and no IntegrityId.
 
         On V1-initial PLCs (FW < 4.5), this also includes the SecurityKey
-        blob at address 1830, carrying an encrypted random seed and
-        AES-CBC-encrypted challenge derived from the PLC's public key.
+        blob at address 1830, carrying a seed encrypted with an ECDH against
+        the PLC's public key and the challenge encrypted under keys derived
+        from that seed (see ``v1_session_key.real_plc.authenticator``).
 
         Returns:
             True if session setup succeeded (return_value == 0).
@@ -1722,148 +2059,66 @@ class S7CommPlusConnection:
             return False
 
         auth_result = self._try_session_key_auth()
-        include_security_key = auth_result is not None
+        security_key = None if auth_result is None else self._encode_security_key_struct(*auth_result)
 
         seq_num = self._next_sequence_number()
-
-        request = struct.pack(
-            ">BHHHHIB",
-            Opcode.REQUEST,
-            0x0000,
-            FunctionCode.SET_MULTI_VARIABLES,
-            0x0000,
-            seq_num,
+        frame = _build_session_setup_frame(
             self._session_id,
-            0x34,
+            seq_num,
+            self._server_session_version,
+            self._protocol_version,
+            security_key,
         )
-
-        payload = bytearray()
-        payload += struct.pack(">I", self._session_id)  # InObjectId
-
-        if include_security_key and auth_result is not None:
-            blob, session_key = auth_result
-            payload += encode_uint32_vlq(2)  # ItemCount
-            payload += encode_uint32_vlq(2)  # AddressCount
-            payload += encode_uint32_vlq(LegitimationId.SESSION_SETUP_LEGITIMATION)  # 1830
-            payload += encode_uint32_vlq(ObjectId.SERVER_SESSION_VERSION)  # 306
-            payload += encode_uint32_vlq(1)  # ItemNumber for SecurityKey
-            payload += self._encode_security_key_struct(blob, session_key)
-        else:
-            payload += encode_uint32_vlq(1)  # ItemCount
-            payload += encode_uint32_vlq(1)  # AddressCount
-            payload += encode_uint32_vlq(ObjectId.SERVER_SESSION_VERSION)  # 306
-            payload += encode_uint32_vlq(1)  # ItemNumber
-
-        if include_security_key:
-            payload += encode_uint32_vlq(2)  # ItemNumber for ServerSessionVersion
-
-        # PValue: echo the ServerSessionVersion typed value verbatim (it may be a Struct).
-        # Strip the PAOM device string (element 319) which V1-initial PLCs reject.
-        if self._server_session_version is not None:
-            payload += _strip_paom_string_in_session_version(self._server_session_version)
-        else:
-            payload += bytes([0x00, DataType.UDINT])
-            payload += encode_uint32_vlq(0)
-
-        payload += bytes([0x00])  # Fill byte
-        payload += encode_object_qualifier(protocol_version=self._protocol_version)
-        payload += struct.pack(">I", 0)  # Trailing padding
-
-        request += bytes(payload)
-
-        # Outer S7+ frame is always V2 for the setup write, even if the PLC
-        # negotiated V1 on the initial CreateObject.
-        frame = encode_header(ProtocolVersion.V2, len(request)) + request
-        frame += struct.pack(">BBH", 0x72, ProtocolVersion.V2, 0x0000)
-
         logger.debug(f"=== SetupSession === sending ({len(frame)} bytes): {frame.hex(' ')}")
         self._send_s7_data(frame)
 
-        # Receive response
-        response_frame = self._recv_s7_data()
+        # Session setup can receive a SystemEvent before the reply. Route it
+        # through the same dispatcher as ordinary requests so a fatal event
+        # cannot be mistaken for a successful SetMultiVariables response.
+        response_frame = self._recv_response_frame(seq_num)
         logger.debug(f"=== SetupSession === received ({len(response_frame)} bytes): {response_frame.hex(' ')}")
-
         version, data_length, consumed = decode_header(response_frame)
         response = response_frame[consumed : consumed + data_length]
-
         if len(response) < 10:
-            from .error import S7ConnectionError
-
             raise S7ConnectionError("SetupSession response too short")
+        _validate_response_header(response, FunctionCode.SET_MULTI_VARIABLES, seq_num)
+        if not _session_setup_accepted(response_frame):
+            return False
 
-        resp_func = struct.unpack_from(">H", response, 3)[0]
-        logger.debug(f"SetupSession response: function=0x{resp_func:04X}")
-
-        # Parse return value from payload (data responses use a 10-byte header)
-        resp_payload = response[10:]
-        if len(resp_payload) >= 1:
-            return_value, _ = decode_uint64_vlq(resp_payload, 0)
-            if return_value != 0:
-                logger.warning(f"SetupSession: PLC returned error {return_value}")
-                return False
-            else:
-                if include_security_key and auth_result is not None:
-                    self._session_key = session_key
-                    self._with_integrity_id = True
-                    self._integrity_id_read = 0
-                    self._integrity_id_write = 0
-                    logger.info("SecurityKey accepted by PLC, IntegrityId tracking enabled")
-                logger.info("Session setup completed successfully")
-                return True
-        return False
+        if auth_result is not None:
+            self._session_key = auth_result[1]
+            self._with_integrity_id = True
+            self._integrity_id_read = 0
+            self._integrity_id_write = 0
+            logger.info("SecurityKey accepted by PLC, IntegrityId tracking enabled")
+        logger.info("Session setup completed successfully")
+        return True
 
     def _build_get_var_substreamed(self, in_object_id: int, address: int, seq_field: int = 1) -> bytes:
-        """Build the protocol-specific captured GET_VAR_SUBSTREAMED layout.
-
-        S7-1200 SessionKey captures use the frame sequence as a fixed-width
-        ObjectQualifier, a VLQ request field, and a three-byte fill. S7-1500
-        captures use a zero-valued VLQ qualifier, a two-byte request field,
-        and a four-byte fill. The IntegrityId is inserted before that fill.
-        """
-        from .session_auth.keys import KeyFamily
-
-        if self._session_auth_family == KeyFamily.S7_1200:
-            oq = encode_object_qualifier(key_qualifier=self._sequence_number, protocol_version=ProtocolVersion.V1)
-            payload = struct.pack(">I", in_object_id)
-            payload += bytes([0x20, DataType.UDINT])
-            payload += encode_uint32_vlq(1)  # field count
-            payload += encode_uint32_vlq(address)
-            payload += oq
-            payload += encode_uint32_vlq(seq_field)
-            payload += bytes(3)  # fill
-            return payload
-        return _build_get_var_substreamed_payload(
-            in_object_id,
-            address,
-            sequence_field=seq_field,
+        """Build the family-specific GET_VAR_SUBSTREAMED layout for the next request."""
+        return _build_v1_get_var_substreamed_payload(
+            self._v1_session_key_family, in_object_id, address, self._sequence_number, seq_field
         )
 
     def _session_activate(self) -> None:
-        """Activate the V3 session after the SecurityKey handshake.
-
-        TIA Portal sends SET_VARIABLE writing USINT(5) to address 323 on the
-        session object immediately after the SetupSession key exchange
-        succeeds, BEFORE any data reads or legitimation.
-
-        The payload must match TIA Portal exactly (frame 17 of
-        TIAPortalWatchDB7.pcapng from GH-710): the ObjectQualifier's
-        KEY_QUALIFIER field carries the frame sequence number as a 4-byte
-        uint32, and the trailing section is 3 zero bytes (the IntegrityId
-        is spliced before them by ``send_request``).
-        """
-        oq = encode_object_qualifier(key_qualifier=self._sequence_number, protocol_version=ProtocolVersion.V1)
-
-        payload = struct.pack(">I", self._session_id)
-        payload += encode_uint32_vlq(1)  # AddressCount
-        payload += encode_uint32_vlq(323)  # address
-        payload += bytes([0x00, DataType.USINT])
-        payload += encode_uint32_vlq(5)
-        payload += oq
-        payload += bytes(3)  # trailing zeros (IntegrityId spliced before these)
-
+        """Activate the V3 session after the SecurityKey handshake (see ``_build_session_activate_payload``)."""
         logger.debug("Session activation: SET_VARIABLE addr 323 = USINT(5)")
+        payload = _build_session_activate_payload(self._session_id, self._sequence_number)
         self.send_request(FunctionCode.SET_VARIABLE, payload, integrity_tail=3)
         logger.info("Session activation completed")
+
+    def _skip_integrity_ids_after_legitimation(self) -> None:
+        """Skip one IntegrityId on both counters after the S7-1200 legitimation.
+
+        An S7-1215C on FW V4.2 resets the connection when the first data
+        request after legitimation carries the next id of either counter, and
+        accepts it one id later. The handshake itself must start at id 0: the
+        same PLC rejects a session activation sent with id 1. S7-1500 FW 2.6
+        does not need the skip.
+        """
+        if self.legacy_s7_1500 and self._v1_session_key_family == KeyFamily.S7_1200:
+            self._integrity_id_read = (self._integrity_id_read + 1) & 0xFFFFFFFF
+            self._integrity_id_write = (self._integrity_id_write + 1) & 0xFFFFFFFF
 
     def _post_auth_legitimation(self, password: str = "") -> None:
         """Perform the post-SessionKey legitimation handshake.
@@ -1878,133 +2133,43 @@ class S7CommPlusConnection:
         """
         # Step 1: Read legitimation challenge from session, address 303
         logger.debug("Post-auth legitimation: reading challenge from address 303")
-        from .session_auth.keys import KeyFamily
-
         challenge_resp = self.send_request(
             FunctionCode.GET_VAR_SUBSTREAMED,
             self._build_get_var_substreamed(self._session_id, LegitimationId.SERVER_SESSION_REQUEST),
-            integrity_tail=3 if self._session_auth_family == KeyFamily.S7_1200 else 4,
+            integrity_tail=_v1_integrity_tail(self._v1_session_key_family),
         )
 
         # Never substitute the earlier CreateObject challenge when this read
         # fails: it belongs to a different authentication exchange.
         legit_challenge = _parse_get_var_substreamed_response(challenge_resp)
         if len(legit_challenge) != 20:
-            from .error import S7ConnectionError
-
             raise S7ConnectionError("Post-auth legitimation failed: expected a 20-byte challenge")
 
         # Step 2: Solve the challenge
-        from .session_auth.legitimate import solve_legitimate_challenge_real_plc
+        from .v1_session_key.legitimation import solve_legitimate_challenge_real_plc
 
         session_key = self._session_key
         if session_key is None:
-            from .error import S7ConnectionError
-
             raise S7ConnectionError("Post-auth legitimation failed: no session key")
         legit_blob = solve_legitimate_challenge_real_plc(
             legit_challenge,
-            self._session_auth_public_key,
-            self._session_auth_family,
+            self._v1_session_key_public_key,
+            self._v1_session_key_family,
             session_key,
             password,
         )
         logger.info(f"Legitimation blob generated ({len(legit_blob)} bytes)")
 
         # Step 3: Write solved blob via SET_VAR_SUBSTREAMED to address 1846
-        oq = encode_object_qualifier(key_qualifier=self._sequence_number, protocol_version=ProtocolVersion.V1)
-        svs = struct.pack(">I", self._session_id)
-        svs += bytes([0x20, 0x04])
-        svs += encode_uint32_vlq(1)
-        svs += encode_uint32_vlq(LegitimationId.LEGITIMATE)  # 1846
-        svs += oq
-        svs += encode_uint32_vlq(1)
-        svs += bytes([0x00, DataType.BLOB, 0x00])
-        svs += encode_uint32_vlq(len(legit_blob))
-        svs += legit_blob
-        svs += encode_uint32_vlq(self._sequence_number)
-        svs += bytes(3)  # trailing zeros
-
         logger.debug("Post-auth legitimation: writing solved blob to address 1846")
-        legit_resp = self.send_request(FunctionCode.SET_VAR_SUBSTREAMED, svs, integrity_tail=3)
-
-        if len(legit_resp) >= 1:
-            legit_retval, _ = decode_uint64_vlq(legit_resp, 0)
-            signed_retval = legit_retval if legit_retval < (1 << 63) else legit_retval - (1 << 64)
-            if signed_retval < 0:
-                from .error import S7ConnectionError
-
-                raise S7ConnectionError(f"Post-auth legitimation rejected by PLC: return_value=0x{legit_retval:X}")
-            logger.debug(f"Legitimation write return_value=0x{legit_retval:X}")
-
+        payload = _build_v1_legitimation_payload(self._session_id, self._sequence_number, legit_blob)
+        response = self.send_request(FunctionCode.SET_VAR_SUBSTREAMED, payload, integrity_tail=3)
+        _check_v1_legitimation_response(response, self._last_raw_response_payload)
         logger.info("Post-auth legitimation completed")
 
     def _encode_security_key_struct(self, blob: bytes, session_key: bytes) -> bytes:
-        """Encode the SecurityKey PObject struct (Struct 1800) wrapping the auth blob.
-
-        Matches the wire format from TIA Portal / HarpoS7 PoC:
-        Struct(1800) containing key descriptors for the public and symmetric
-        keys, plus the encrypted blob.
-        """
-        from .session_auth.utils import derive_key_id
-
-        if not self._session_auth_public_key:
-            raise ValueError("SessionKey authentication requires public key material")
-        if not session_key:
-            raise ValueError("SessionKey authentication requires generated session key material")
-
-        public_key_id = derive_key_id(self._session_auth_public_key)
-        symmetric_key_id = derive_key_id(session_key)
-
-        # Determine key flags from family
-        from .session_auth.blob_metadata import get_public_key_flags, get_symmetric_key_flags
-        from .session_auth.keys import KeyFamily
-
-        family = self._session_auth_family if self._session_auth_family else KeyFamily.S7_1500
-        sym_flags = get_symmetric_key_flags(family)
-        pub_flags = get_public_key_flags(family)
-
-        # Inside a Struct, attributes are VLQ(absolute_id) + flags + type + value.
-        # No 0xA3 tag prefix — that's only for PObject tree attributes.
-        # Struct(1800): 1801=Version 1802=SecurityLevel 1803=PublicKey
-        #               1804=SymmetricKey 1805=EncryptedKey
-        # Struct(1825): 1826=KeyId 1827=KeyFlags 1828=InternalFlags
-
-        def _udint_val(v: int) -> bytes:
-            return bytes([0x00, DataType.UDINT]) + encode_uint32_vlq(v)
-
-        def _usint_val(v: int) -> bytes:
-            return bytes([0x00, DataType.USINT]) + bytes([v & 0xFF])
-
-        def _ulint_val(v: int) -> bytes:
-            return bytes([0x00, DataType.ULINT]) + encode_uint64_vlq(v)
-
-        def _blob_val(data: bytes) -> bytes:
-            return bytes([0x00, DataType.BLOB, 0x00]) + encode_uint32_vlq(len(data)) + data
-
-        def _struct_begin(struct_id: int) -> bytes:
-            return bytes([0x00, DataType.STRUCT]) + struct.pack(">I", struct_id)
-
-        _STRUCT_END = bytes([0x00])
-
-        def _key_descriptor(key_id: bytes, flags: int) -> bytes:
-            key_id_int = int.from_bytes(key_id, byteorder="little", signed=False)
-            out = _struct_begin(Ids.SECURITY_KEY_ID)
-            out += encode_uint32_vlq(1826) + _ulint_val(key_id_int)  # KeyId
-            out += encode_uint32_vlq(1827) + _udint_val(flags)  # KeyFlags
-            out += encode_uint32_vlq(1828) + _udint_val(0)  # InternalFlags
-            out += _STRUCT_END
-            return out
-
-        result = _struct_begin(Ids.STRUCT_SECURITY_KEY)
-        result += encode_uint32_vlq(1801) + _udint_val(0)  # Version
-        result += encode_uint32_vlq(1802) + _usint_val(0)  # SecurityLevel
-        result += encode_uint32_vlq(1803) + _key_descriptor(public_key_id, pub_flags)  # PublicKey
-        result += encode_uint32_vlq(1804) + _key_descriptor(symmetric_key_id, sym_flags | 0x10000)  # SymmetricKey
-        result += encode_uint32_vlq(1805) + _blob_val(blob)  # EncryptedKey
-        result += _STRUCT_END
-
-        return result
+        """Encode the SecurityKey struct for this connection's public key and family."""
+        return _encode_security_key_struct(self._v1_session_key_public_key, self._v1_session_key_family, blob, session_key)
 
     def _delete_session(self) -> None:
         """Send DeleteObject to close the session."""

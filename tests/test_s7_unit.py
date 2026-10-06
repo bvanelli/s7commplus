@@ -798,6 +798,22 @@ class TestReassembledPayload:
         conn = self._conn_yielding([self._frag(b"abc"), self._frag(b"de"), self._TRAILER])
         assert conn._recv_reassembled_payload() == b"abcde"
 
+    _SYSTEM_EVENT = bytes([0x72, ProtocolVersion.SYSTEM_EVENT, 0x00, 0x10]) + bytes(16)
+
+    @pytest.mark.parametrize("split", [1, 3, 7, 1024])
+    def test_system_event_between_fragments_is_skipped(self, split: int) -> None:
+        stream = self._frag(b"abc") + self._SYSTEM_EVENT + self._frag(b"de") + self._SYSTEM_EVENT + self._TRAILER
+        conn = self._conn_yielding([stream[i : i + split] for i in range(0, len(stream), split)])
+        assert conn._recv_reassembled_payload() == b"abcde"
+
+    def test_too_many_system_events_during_reassembly_raises(self) -> None:
+        from s7commplus.connection import _MAX_SYSTEM_EVENTS_PER_RESPONSE
+        from s7commplus.error import S7ProtocolError
+
+        conn = self._conn_yielding([self._frag(b"abc")] + [self._SYSTEM_EVENT] * (_MAX_SYSTEM_EVENTS_PER_RESPONSE + 1))
+        with pytest.raises(S7ProtocolError, match="SystemEvents"):
+            conn._recv_reassembled_payload()
+
     def test_v3_session_key_hmac_is_stripped_from_each_fragment(self) -> None:
         conn = self._conn_yielding([])
         conn._session_key = bytes(24)
@@ -912,3 +928,30 @@ class TestV3ResponseIntegrity:
         with pytest.raises(S7IntegrityError, match="unauthenticated frame version"):
             conn.send_request(FunctionCode.GET_MULTI_VARIABLES)
         assert not conn.connected
+
+
+class TestLegitimationRejection:
+    # Legitimation response of an S7-1215C (FW V4.2) with no password, reported on PR #44.
+    _REJECTED = bytes.fromhex("c1c691908086e7fffe0500000000")
+
+    def test_rejection_hidden_by_integrity_id_strip_is_detected(self) -> None:
+        from s7commplus.connection import _check_v1_legitimation_response, _strip_response_integrity_id
+        from s7commplus.error import S7ConnectionError
+
+        stripped = _strip_response_integrity_id(FunctionCode.SET_VAR_SUBSTREAMED, self._REJECTED, True, False)
+        _check_v1_legitimation_response(stripped)  # the stripped reading alone looks like success
+        with pytest.raises(S7ConnectionError, match="rejected"):
+            _check_v1_legitimation_response(stripped, self._REJECTED)
+
+    def test_success_with_leading_integrity_id_is_accepted(self) -> None:
+        from s7commplus.connection import _check_v1_legitimation_response
+
+        raw = bytes([0x05, 0x00, 0x00, 0x00])  # IntegrityId 5, return value 0
+        _check_v1_legitimation_response(raw[1:], raw)
+
+    def test_async_client_checks_raw_response(self) -> None:
+        from s7commplus.async_client import S7CommPlusAsyncClient
+
+        client = S7CommPlusAsyncClient()
+        assert client._response_payload(FunctionCode.SET_VAR_SUBSTREAMED, self._REJECTED) is not None
+        assert client._last_raw_response_payload == self._REJECTED

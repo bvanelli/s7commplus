@@ -134,6 +134,8 @@ class S7CommPlusClient:
         password: Optional[str] = None,
         allow_legacy_key_fallback: bool = True,
         legacy_session_key_refresh_interval: Optional[float] = 25 * 60.0,
+        *,
+        legacy_s7_1500: bool | None = None,
     ) -> None:
         """Connect to an S7-1200/1500 PLC using S7CommPlus.
 
@@ -151,7 +153,15 @@ class S7CommPlusClient:
                 fresh sessions when a legacy PLC omits its key id.
             legacy_session_key_refresh_interval: Seconds between legacy
                 SessionKey renewals, or ``None`` to disable them.
+            legacy_s7_1500: Override the non-TLS V1 SessionKey profile (structured
+                browse, V2 object qualifier, trailing IntegrityId, chained fragment
+                HMAC). ``None`` (default) selects it automatically for every V1
+                SessionKey session, as the S7-1500 FW 2.6 (issue #12) and S7-1200
+                FW V4.2 controllers need it; ``False`` forces the classic layout and
+                ``True`` is only an explicit spelling of the automatic choice.
         """
+        if legacy_s7_1500 and use_tls:
+            raise ValueError("legacy_s7_1500 requires use_tls=False")
         self._symbol_catalog = None
         self._connect_params = {
             "host": host,
@@ -163,6 +173,7 @@ class S7CommPlusClient:
             "password": password,
             "allow_legacy_key_fallback": allow_legacy_key_fallback,
             "legacy_session_key_refresh_interval": legacy_session_key_refresh_interval,
+            "legacy_s7_1500": legacy_s7_1500,
         }
         self._open_connection()
 
@@ -180,7 +191,7 @@ class S7CommPlusClient:
             except SessionKeyCandidateRejectedError:
                 logger.info("Cached SessionKey candidate %s was rejected; trying remaining family keys", cached)
                 _LEGACY_KEY_CACHE.pop(cache_key, None)
-                from .session_auth.keys import parse_fingerprint
+                from .v1_session_key.keys import parse_fingerprint
 
                 family, _ = parse_fingerprint(cached)
                 self._probe_family_keys(family, excluded={cached})
@@ -199,7 +210,7 @@ class S7CommPlusClient:
         """Open exactly one transport/session, optionally with one key candidate."""
         assert self._connect_params is not None
         p = self._connect_params
-        self._connection = S7CommPlusConnection(host=p["host"], port=p["port"])
+        self._connection = S7CommPlusConnection(host=p["host"], port=p["port"], legacy_s7_1500=p["legacy_s7_1500"])
         self._connection.connect(
             use_tls=p["use_tls"],
             tls_cert=p["tls_cert"],
@@ -216,7 +227,7 @@ class S7CommPlusClient:
     def _probe_family_keys(self, family: int, excluded: set[str] | None = None) -> None:
         """Try each same-family key on a new connection and cache the winner."""
         assert self._connect_params is not None
-        from .session_auth.keys import fingerprints_for_family
+        from .v1_session_key.keys import fingerprints_for_family
 
         excluded = excluded or set()
         candidates = [fingerprint for fingerprint in fingerprints_for_family(family) if fingerprint not in excluded]
@@ -288,7 +299,7 @@ class S7CommPlusClient:
         if self._connection.requires_substreamed:
             return self._db_read_substreamed(db_number, start, size)
 
-        payload = _build_read_payload([(db_number, start, size)], self._connection.protocol_version)
+        payload = _build_read_payload([(db_number, start, size)], self._connection.object_qualifier_version)
         response = self._connection.send_request(FunctionCode.GET_MULTI_VARIABLES, payload)
         results = _parse_read_response(response)
         if not results:
@@ -339,7 +350,7 @@ class S7CommPlusClient:
                 self._db_write_substreamed(db_number, start, data, datatype)
             return
 
-        payload = _build_write_payload(items, self._connection.protocol_version)
+        payload = _build_write_payload(items, self._connection.object_qualifier_version)
         response = self._connection.send_request(FunctionCode.SET_MULTI_VARIABLES, payload)
         _parse_write_response(response)
 
@@ -375,7 +386,7 @@ class S7CommPlusClient:
         if self._connection.requires_substreamed:
             return [self._db_read_substreamed(db, start, size) for db, start, size in items]
 
-        payload = _build_read_payload(items, self._connection.protocol_version)
+        payload = _build_read_payload(items, self._connection.object_qualifier_version)
         response = self._connection.send_request(FunctionCode.GET_MULTI_VARIABLES, payload)
         parsed = _parse_read_response(response)
         return [r if r is not None else b"" for r in parsed]
@@ -405,7 +416,7 @@ class S7CommPlusClient:
             response = self._connection.send_request(FunctionCode.GET_VAR_SUBSTREAMED, payload)
             return _parse_substreamed_read_response(response)
 
-        payload = _build_area_read_payload(area_rid, start, size, self._connection.protocol_version)
+        payload = _build_area_read_payload(area_rid, start, size, self._connection.object_qualifier_version)
         response = self._connection.send_request(FunctionCode.GET_MULTI_VARIABLES, payload)
         results = _parse_read_response(response)
         if not results or results[0] is None:
@@ -437,7 +448,7 @@ class S7CommPlusClient:
             self._connection.send_request(FunctionCode.SET_VAR_SUBSTREAMED, payload)
             return
 
-        payload = _build_area_write_payload(area_rid, start, data, self._connection.protocol_version, datatype=datatype)
+        payload = _build_area_write_payload(area_rid, start, data, self._connection.object_qualifier_version, datatype=datatype)
         response = self._connection.send_request(FunctionCode.SET_MULTI_VARIABLES, payload)
         _parse_write_response(response)
 
@@ -478,8 +489,7 @@ class S7CommPlusClient:
         if self._connection is None:
             raise RuntimeError("Not connected")
 
-        # TODO: Send the correct integrity id once available
-        payload = _build_symbolic_read_payload(access_area, lids, symbol_crc, self._connection.protocol_version)
+        payload = _build_symbolic_read_payload(access_area, lids, symbol_crc, self._connection.object_qualifier_version)
         response = self._connection.send_request(FunctionCode.GET_MULTI_VARIABLES, payload)
         results = _parse_read_response(response)
         if not results or results[0] is None:
@@ -506,7 +516,7 @@ class S7CommPlusClient:
         if not items:
             return []
 
-        payload = _build_multi_symbolic_read_payload(items, self._connection.protocol_version)
+        payload = _build_multi_symbolic_read_payload(items, self._connection.object_qualifier_version)
         response = self._connection.send_request(FunctionCode.GET_MULTI_VARIABLES, payload)
         results = _parse_read_response(response, expected_count=len(items))
         if len(results) != len(items):
@@ -560,7 +570,7 @@ class S7CommPlusClient:
         return catalog.resolve(name)
 
     def read_tag(self, name: str) -> bytes:
-        """Read one symbolic tag by name, refreshing once if its CRC changed."""
+        """Read one symbolic tag by name."""
         result = self.read_tags([name])[0]
         if result.error is not None:
             raise result.error
@@ -570,43 +580,21 @@ class S7CommPlusClient:
     def read_tags(self, names: Sequence[str]) -> list[TagResult]:
         """Read names in one request and return a success/error for every item.
 
-        A failed read with a non-zero SymbolCRC causes one catalog refresh. Only
-        tags whose CRC actually changed are re-resolved and safely retried.
+        Requests carry SymbolCRC 0 (no layout check): the browsed per-entry CRC
+        is not the value the PLC validates, and real CPUs reject it. Failed
+        items are reported, not retried; call :meth:`refresh_tag_catalog` after
+        a PLC layout change.
         """
         if not names:
             return []
         tags = [self.resolve_tag(name) for name in names]
-        values = self.read_symbolic_multi([(tag.access_area, list(tag.lids), tag.symbol_crc) for tag in tags])
+        values = self.read_symbolic_multi([(tag.access_area, list(tag.lids), 0) for tag in tags])
         results = [
             TagResult(tag=tag, value=value)
             if value is not None
             else TagResult(tag=tag, error=RuntimeError(f"Symbolic read failed for {tag.name!r}"))
             for tag, value in zip(tags, values)
         ]
-
-        retry_indices = [index for index, result in enumerate(results) if not result.success and result.tag.symbol_crc]
-        if not retry_indices:
-            return results
-
-        refreshed = self.refresh_tag_catalog()
-        changed: list[tuple[int, SymbolicTag]] = []
-        for index in retry_indices:
-            try:
-                tag = refreshed.resolve(results[index].tag.name)
-            except KeyError:
-                continue
-            if tag.symbol_crc != results[index].tag.symbol_crc:
-                changed.append((index, tag))
-        if not changed:
-            return results
-
-        retry_values = self.read_symbolic_multi([(tag.access_area, list(tag.lids), tag.symbol_crc) for _, tag in changed])
-        for (index, tag), value in zip(changed, retry_values):
-            results[index] = (
-                TagResult(tag=tag, value=value)
-                if value is not None
-                else TagResult(tag=tag, error=RuntimeError(f"Symbolic read failed for {tag.name!r} after CRC refresh"))
-            )
         return results
 
     def write_tag(self, name: str, data: bytes) -> None:
@@ -630,11 +618,11 @@ class S7CommPlusClient:
         if unsupported:
             raise ValueError(f"No S7CommPlus wire datatype mapping for: {', '.join(unsupported)}")
         items: list[SymbolicWriteItem] = [
-            (tag.access_area, list(tag.lids), data, tag.symbol_crc, tag.datatype)
+            (tag.access_area, list(tag.lids), data, 0, tag.datatype)
             for tag, data in zip(tags, values.values())
             if tag.datatype is not None
         ]
-        payload = _build_multi_symbolic_write_payload(items, self._connection.protocol_version)
+        payload = _build_multi_symbolic_write_payload(items, self._connection.object_qualifier_version)
         response = self._connection.send_request(FunctionCode.SET_MULTI_VARIABLES, payload)
         try:
             errors = _parse_write_response_errors(response, expected_count=len(tags))
@@ -647,11 +635,13 @@ class S7CommPlusClient:
             for index, tag in enumerate(tags, 1)
         ]
 
-    def explore(self, explore_id: int = 0) -> bytes:
+    def explore(self, explore_id: int = 0, attributes: Sequence[int] | None = None) -> bytes:
         """Browse the PLC object tree.
 
         Args:
-            explore_id: Object to explore (0 = root).
+            explore_id: RID of the object to explore. 0 explores the PLC program (`Ids.NATIVE_THE_PLC_PROGRAM_RID`).
+            attributes: Attribute IDs to request. None or empty returns every attribute. Ignored on V1 SessionKey
+                sessions, whose EXPLORE format carries no attribute list.
 
         Returns:
             Raw response payload.
@@ -662,11 +652,11 @@ class S7CommPlusClient:
         if self._connection._session_key is not None:
             payload = _build_explore_payload_v3(explore_id if explore_id else 0x38)
         else:
-            payload = _build_explore_payload(explore_id)
+            payload = _build_explore_request(explore_id or Ids.NATIVE_THE_PLC_PROGRAM_RID, list(attributes or []))
         response = self._connection.send_request(FunctionCode.EXPLORE, payload, integrity_tail=5, reassemble=True)
         return response
 
-    def explore_xml(self, explore_id: int = 0) -> str | None:
+    def explore_xml(self, explore_id: int = 0, attributes: Sequence[int] | None = None) -> str | None:
         """EXPLORE a PLC object and decompress the XML metadata from the response.
 
         S7-1200/1500 PLCs (FW V4.5+) compress XML metadata — tag definitions,
@@ -677,13 +667,14 @@ class S7CommPlusClient:
         .. warning:: This method is **experimental** and may change.
 
         Args:
-            explore_id: Object to explore (0 = root).
+            explore_id: RID of the object to explore. 0 explores the PLC program.
+            attributes: Attribute IDs to request. None or empty returns every attribute.
 
         Returns:
             Decompressed XML as a UTF-8 string, or ``None`` if the response
             contains no recognisable zlib stream.
         """
-        raw = self.explore(explore_id)
+        raw = self.explore(explore_id, attributes)
         return find_and_decompress(raw)
 
     def set_plc_operating_state(self, state: int) -> None:
@@ -784,7 +775,7 @@ class S7CommPlusClient:
         if self._connection is None:
             raise RuntimeError("Not connected")
 
-        if self._connection._session_key is not None:
+        if self._connection._session_key is not None and not self._connection.legacy_s7_1500:
             # V1-initial PLCs: explore the DB wildcard address (0x8A11FFFF)
             # matching TIA Portal's browse pattern
             payload = _build_explore_payload_v3(0x8A11FFFF)
@@ -1445,20 +1436,6 @@ def _build_multi_symbolic_write_payload(items: Sequence[SymbolicWriteItem], prot
     return bytes(payload)
 
 
-def _build_explore_payload(explore_id: int = 0) -> bytes:
-    """Build an EXPLORE request payload.
-
-    Args:
-        explore_id: Object to explore (0 = root, other values
-            explore a specific object by RID).
-    """
-    if explore_id == 0:
-        return b""
-    payload = bytearray()
-    payload += encode_uint32_vlq(explore_id)
-    return bytes(payload)
-
-
 def _build_explore_payload_v3(explore_id: int, sequence: int = 10) -> bytes:
     """Build a V3-style EXPLORE request payload matching TIA Portal format.
 
@@ -1543,7 +1520,9 @@ def _build_explore_request(explore_id: int, attribute_ids: list[int]) -> bytes:
     payload += struct.pack(">I", explore_id)  # ExploreId (fixed UInt32, not VLQ)
     payload += encode_uint32_vlq(0)  # ExploreRequestId (0 = none)
     payload += bytes([1])  # ExploreChildsRecursive
-    payload += bytes([1])  # unknown flag — the protocol always carries 1 here
+    payload += bytes([1])  # flag between ChildsRecursive and Parents. TIA
+    # sends 1 on the device tree explore and 0 on the event tree / pair
+    # explores; 1 is fine here since this always builds an attribute explore.
     payload += bytes([0])  # ExploreParents
     payload += bytes([0])  # number of following filter objects (none)
     payload += encode_uint32_vlq(len(attribute_ids))  # AddressList count

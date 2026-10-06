@@ -477,7 +477,12 @@ class S7CommPlusServer:
                             session_id = struct.unpack_from(">I", response, 9)[0]
                         if request_version == ProtocolVersion.V3 and func_code is not None:
                             response_integrity_id = integrity_id_read if func_code in READ_FUNCTION_CODES else integrity_id_write
-                            response = response[:10] + encode_uint32_vlq(response_integrity_id) + response[10:]
+                            if func_code == FunctionCode.GET_MULTI_VARIABLES and self._protocol_version == ProtocolVersion.V1:
+                                # V1 SessionKey PLCs (S7-1200 FW V4.2, S7-1500 FW 2.6) put the
+                                # IntegrityId after the body, in place of the legacy zero id.
+                                response = response[:-1] + encode_uint32_vlq(response_integrity_id)
+                            else:
+                                response = response[:10] + encode_uint32_vlq(response_integrity_id) + response[10:]
                         send_app_frame(
                             response, request_version if request_version == ProtocolVersion.V3 else self._protocol_version
                         )
@@ -808,7 +813,7 @@ class S7CommPlusServer:
             response += self._session_challenge
 
             # ServerSessionVersion (306) as Struct — triggers the V1-initial
-            # code path in the client (Struct type = session_auth required).
+            # code path in the client (Struct type = v1_session_key required).
             # Minimal struct: Struct(314) with element 319 as empty WString.
             response += bytes([ElementID.ATTRIBUTE])
             response += encode_uint32_vlq(ObjectId.SERVER_SESSION_VERSION)
@@ -1134,9 +1139,9 @@ class S7CommPlusServer:
             return False
 
         try:
-            from .session_auth.blob_metadata import get_public_key_flags, get_symmetric_key_flags
-            from .session_auth.keys import get_public_key, parse_fingerprint
-            from .session_auth.utils import derive_key_id
+            from .v1_session_key.blob_metadata import get_public_key_flags, get_symmetric_key_flags
+            from .v1_session_key.keys import get_public_key, parse_fingerprint
+            from .v1_session_key.utils import derive_key_id
 
             family, _ = parse_fingerprint(self._public_key_fingerprint)
             public_key = get_public_key(self._public_key_fingerprint)

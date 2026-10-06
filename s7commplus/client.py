@@ -135,7 +135,7 @@ class S7CommPlusClient:
         allow_legacy_key_fallback: bool = True,
         legacy_session_key_refresh_interval: Optional[float] = 25 * 60.0,
         *,
-        legacy_s7_1500: bool = False,
+        legacy_s7_1500: bool | None = None,
     ) -> None:
         """Connect to an S7-1200/1500 PLC using S7CommPlus.
 
@@ -153,8 +153,12 @@ class S7CommPlusClient:
                 fresh sessions when a legacy PLC omits its key id.
             legacy_session_key_refresh_interval: Seconds between legacy
                 SessionKey renewals, or ``None`` to disable them.
-            legacy_s7_1500: Enable the non-TLS S7-1500 FW 2.6 browse/read
-                profile validated in issue #12.
+            legacy_s7_1500: Override the non-TLS V1 SessionKey profile (structured
+                browse, V2 object qualifier, trailing IntegrityId, chained fragment
+                HMAC). ``None`` (default) selects it automatically for every V1
+                SessionKey session, as the S7-1500 FW 2.6 (issue #12) and S7-1200
+                FW V4.2 controllers need it; ``False`` forces the classic layout and
+                ``True`` is only an explicit spelling of the automatic choice.
         """
         if legacy_s7_1500 and use_tls:
             raise ValueError("legacy_s7_1500 requires use_tls=False")
@@ -187,7 +191,7 @@ class S7CommPlusClient:
             except SessionKeyCandidateRejectedError:
                 logger.info("Cached SessionKey candidate %s was rejected; trying remaining family keys", cached)
                 _LEGACY_KEY_CACHE.pop(cache_key, None)
-                from .session_auth.keys import parse_fingerprint
+                from .v1_session_key.keys import parse_fingerprint
 
                 family, _ = parse_fingerprint(cached)
                 self._probe_family_keys(family, excluded={cached})
@@ -223,7 +227,7 @@ class S7CommPlusClient:
     def _probe_family_keys(self, family: int, excluded: set[str] | None = None) -> None:
         """Try each same-family key on a new connection and cache the winner."""
         assert self._connect_params is not None
-        from .session_auth.keys import fingerprints_for_family
+        from .v1_session_key.keys import fingerprints_for_family
 
         excluded = excluded or set()
         candidates = [fingerprint for fingerprint in fingerprints_for_family(family) if fingerprint not in excluded]
@@ -295,7 +299,7 @@ class S7CommPlusClient:
         if self._connection.requires_substreamed:
             return self._db_read_substreamed(db_number, start, size)
 
-        payload = _build_read_payload([(db_number, start, size)], self._connection.protocol_version)
+        payload = _build_read_payload([(db_number, start, size)], self._connection.object_qualifier_version)
         response = self._connection.send_request(FunctionCode.GET_MULTI_VARIABLES, payload)
         results = _parse_read_response(response)
         if not results:
@@ -346,7 +350,7 @@ class S7CommPlusClient:
                 self._db_write_substreamed(db_number, start, data, datatype)
             return
 
-        payload = _build_write_payload(items, self._connection.protocol_version)
+        payload = _build_write_payload(items, self._connection.object_qualifier_version)
         response = self._connection.send_request(FunctionCode.SET_MULTI_VARIABLES, payload)
         _parse_write_response(response)
 
@@ -382,7 +386,7 @@ class S7CommPlusClient:
         if self._connection.requires_substreamed:
             return [self._db_read_substreamed(db, start, size) for db, start, size in items]
 
-        payload = _build_read_payload(items, self._connection.protocol_version)
+        payload = _build_read_payload(items, self._connection.object_qualifier_version)
         response = self._connection.send_request(FunctionCode.GET_MULTI_VARIABLES, payload)
         parsed = _parse_read_response(response)
         return [r if r is not None else b"" for r in parsed]
@@ -412,7 +416,7 @@ class S7CommPlusClient:
             response = self._connection.send_request(FunctionCode.GET_VAR_SUBSTREAMED, payload)
             return _parse_substreamed_read_response(response)
 
-        payload = _build_area_read_payload(area_rid, start, size, self._connection.protocol_version)
+        payload = _build_area_read_payload(area_rid, start, size, self._connection.object_qualifier_version)
         response = self._connection.send_request(FunctionCode.GET_MULTI_VARIABLES, payload)
         results = _parse_read_response(response)
         if not results or results[0] is None:
@@ -444,7 +448,7 @@ class S7CommPlusClient:
             self._connection.send_request(FunctionCode.SET_VAR_SUBSTREAMED, payload)
             return
 
-        payload = _build_area_write_payload(area_rid, start, data, self._connection.protocol_version, datatype=datatype)
+        payload = _build_area_write_payload(area_rid, start, data, self._connection.object_qualifier_version, datatype=datatype)
         response = self._connection.send_request(FunctionCode.SET_MULTI_VARIABLES, payload)
         _parse_write_response(response)
 
@@ -485,8 +489,7 @@ class S7CommPlusClient:
         if self._connection is None:
             raise RuntimeError("Not connected")
 
-        version = ProtocolVersion.V2 if self._connection.legacy_s7_1500 else self._connection.protocol_version
-        payload = _build_symbolic_read_payload(access_area, lids, symbol_crc, version)
+        payload = _build_symbolic_read_payload(access_area, lids, symbol_crc, self._connection.object_qualifier_version)
         response = self._connection.send_request(FunctionCode.GET_MULTI_VARIABLES, payload)
         results = _parse_read_response(response)
         if not results or results[0] is None:
@@ -513,8 +516,7 @@ class S7CommPlusClient:
         if not items:
             return []
 
-        version = ProtocolVersion.V2 if self._connection.legacy_s7_1500 else self._connection.protocol_version
-        payload = _build_multi_symbolic_read_payload(items, version)
+        payload = _build_multi_symbolic_read_payload(items, self._connection.object_qualifier_version)
         response = self._connection.send_request(FunctionCode.GET_MULTI_VARIABLES, payload)
         results = _parse_read_response(response, expected_count=len(items))
         if len(results) != len(items):
@@ -620,7 +622,7 @@ class S7CommPlusClient:
             for tag, data in zip(tags, values.values())
             if tag.datatype is not None
         ]
-        payload = _build_multi_symbolic_write_payload(items, self._connection.protocol_version)
+        payload = _build_multi_symbolic_write_payload(items, self._connection.object_qualifier_version)
         response = self._connection.send_request(FunctionCode.SET_MULTI_VARIABLES, payload)
         try:
             errors = _parse_write_response_errors(response, expected_count=len(tags))

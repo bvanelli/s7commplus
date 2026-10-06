@@ -6,15 +6,27 @@ import hmac
 import struct
 import time
 from collections.abc import Generator
+from unittest.mock import patch
 
 import pytest
 
 from s7commplus.error import S7ConnectionError, S7IntegrityError
 from s7commplus.async_client import S7CommPlusAsyncClient
-from s7commplus.client import S7CommPlusClient
+from s7commplus.client import (
+    S7CommPlusClient,
+    _build_multi_symbolic_read_payload,
+    _build_symbolic_write_payload,
+    _parse_explore_datablocks,
+)
 from s7commplus.connection import _parse_get_var_substreamed_response, _verify_v3_hmac
-from s7commplus.protocol import DataType, ElementID, Ids, LegitimationId, ObjectId, ProtocolVersion
-from s7commplus.server import CPUState, DataBlock, S7CommPlusServer
+from s7commplus.protocol import DataType, ElementID, FunctionCode, Ids, LegitimationId, ObjectId, ProtocolVersion
+from s7commplus.server import (
+    CPUState,
+    DataBlock,
+    S7CommPlusServer,
+    _server_parse_read_request,
+    _server_parse_write_request,
+)
 from s7commplus.vlq import decode_uint64_vlq, encode_uint32_vlq
 
 # Use a high port to avoid conflicts
@@ -102,12 +114,28 @@ class TestServer:
         value = struct.unpack(">f", raw)[0]
         assert abs(value - 42.0) < 0.001
 
-    def test_data_block_read_past_end(self) -> None:
+    def test_data_block_read_and_write_reach_the_last_byte(self) -> None:
+        db = DataBlock(1, 4)
+        db.write(2, b"\xaa\xbb")
+        assert db.read(2, 2) == b"\xaa\xbb"
+        assert db.read(0, 4) == b"\x00\x00\xaa\xbb"
+
+    @pytest.mark.parametrize(("offset", "size"), [(2, 4), (4, 1), (5, 0), (-1, 2), (0, -1)])
+    def test_data_block_read_outside_the_block_is_refused(self, offset: int, size: int) -> None:
         db = DataBlock(1, 4)
         db.write(0, b"\xff\xff\xff\xff")
-        # Read past end should pad with zeros
-        data = db.read(2, 4)
-        assert data == b"\xff\xff\x00\x00"
+        # No zero padding: a read that is not wholly inside the block has no value.
+        with pytest.raises(IndexError, match="outside the block"):
+            db.read(offset, size)
+
+    @pytest.mark.parametrize("offset", [2, 4, -1])
+    def test_data_block_write_outside_the_block_writes_nothing(self, offset: int) -> None:
+        db = DataBlock(1, 4)
+        db.write(0, b"\x01\x02\x03\x04")
+        with pytest.raises(IndexError, match="outside the block"):
+            db.write(offset, b"\xaa\xbb\xcc")
+        # No partial write: the bytes that would have fitted are untouched.
+        assert db.read(0, 4) == b"\x01\x02\x03\x04"
 
     def test_unknown_variable_type(self) -> None:
         db = DataBlock(1, 100)
@@ -245,13 +273,39 @@ class TestClientServerIntegration:
         finally:
             client.disconnect()
 
-    def test_explore(self, server: S7CommPlusServer) -> None:
+    @pytest.mark.parametrize(
+        "attributes, expected_hex",
+        [
+            # ExploreId=thePLCProgram (UInt32), RequestId, recursive/flag/parents/filters, 0 attributes, 5-byte trailer
+            (None, "000000030001010000000000000000"),
+            # Same layout with 2 attributes, InterfaceDescription (2544) and LineComments (2546), as VLQ
+            ([2544, 2546], "00000003000101000002937093720000000000"),
+        ],
+        ids=["all-attributes", "attribute-filter"],
+    )
+    def test_explore(self, server: S7CommPlusServer, attributes: list[int] | None, expected_hex: str) -> None:
         client = S7CommPlusClient()
         client.connect("127.0.0.1", port=TEST_PORT)
         try:
-            response = client.explore()
-            # Response should contain data about registered DBs
-            assert len(response) > 0
+            assert client._connection is not None
+            with patch.object(client._connection, "send_request", wraps=client._connection.send_request) as send:
+                response = client.explore(attributes=attributes)
+
+            expected_payload = bytes.fromhex(expected_hex)
+            send.assert_called_once_with(FunctionCode.EXPLORE, expected_payload, integrity_tail=5, reassemble=True)
+            assert [db["number"] for db in _parse_explore_datablocks(response)] == [1, 2]
+        finally:
+            client.disconnect()
+
+    def test_explore_missing_object(self, server: S7CommPlusServer) -> None:
+        client = S7CommPlusClient()
+        client.connect("127.0.0.1", port=TEST_PORT)
+        try:
+            response = client.explore(0x12345678)
+            return_value, consumed = decode_uint64_vlq(response, 0)
+            # The ReturnValue a real S7-1500 sends for an object that does not exist: error code -12
+            assert return_value == 0x8020AB001992FFF4
+            assert response[consumed : consumed + 4] == b"\x00\x00\x00\x00"  # ExploreId echoed as 0
         finally:
             client.disconnect()
 
@@ -357,11 +411,34 @@ class TestAsyncClientServerIntegration:
             assert await client.db_read(1, 10, 4) == b"beta"
             assert await client.db_read(2, 20, 5) == b"gamma"
 
-    async def test_explore(self, server: S7CommPlusServer) -> None:
+    @pytest.mark.parametrize(
+        "attributes, expected_hex",
+        [
+            # ExploreId=thePLCProgram (UInt32), RequestId, recursive/flag/parents/filters, 0 attributes, 5-byte trailer
+            (None, "000000030001010000000000000000"),
+            # Same layout with 2 attributes, InterfaceDescription (2544) and LineComments (2546), as VLQ
+            ([2544, 2546], "00000003000101000002937093720000000000"),
+        ],
+        ids=["all-attributes", "attribute-filter"],
+    )
+    async def test_explore(self, server: S7CommPlusServer, attributes: list[int] | None, expected_hex: str) -> None:
         async with S7CommPlusAsyncClient() as client:
             await client.connect("127.0.0.1", port=TEST_PORT)
-            response = await client.explore()
-            assert len(response) > 0
+            with patch.object(client, "_send_request", wraps=client._send_request) as send:
+                response = await client.explore(attributes=attributes)
+
+            expected_payload = bytes.fromhex(expected_hex)
+            send.assert_awaited_once_with(FunctionCode.EXPLORE, expected_payload, integrity_tail=5, reassemble=True)
+            assert [db["number"] for db in _parse_explore_datablocks(response)] == [1, 2]
+
+    async def test_explore_missing_object(self, server: S7CommPlusServer) -> None:
+        async with S7CommPlusAsyncClient() as client:
+            await client.connect("127.0.0.1", port=TEST_PORT)
+            response = await client.explore(0x12345678)
+            return_value, consumed = decode_uint64_vlq(response, 0)
+            # The ReturnValue a real S7-1500 sends for an object that does not exist: error code -12
+            assert return_value == 0x8020AB001992FFF4
+            assert response[consumed : consumed + 4] == b"\x00\x00\x00\x00"  # ExploreId echoed as 0
 
     async def test_concurrent_reads(self, server: S7CommPlusServer) -> None:
         """Test that asyncio.Lock prevents interleaved requests."""
@@ -587,7 +664,7 @@ class TestSessionKeyIntegration:
     def session_key_server(self, monkeypatch: pytest.MonkeyPatch) -> Generator[S7CommPlusServer, None, None]:
         # The emulator does not own Siemens' private key, so make the client-side
         # key exchange deterministic and configure the matching negotiated key.
-        from s7commplus.session_auth import legacy_auth, legitimate
+        from s7commplus.v1_session_key import handshake, legitimation
 
         def authenticate(challenge: bytes, public_key: bytes, family: int) -> tuple[bytes, bytes]:
             assert challenge == TEST_CHALLENGE
@@ -595,8 +672,8 @@ class TestSessionKeyIntegration:
             assert int(family) == 1
             return bytes(180), TEST_SESSION_KEY
 
-        monkeypatch.setattr(legacy_auth, "authenticate_real_plc", authenticate)
-        monkeypatch.setattr(legitimate, "solve_legitimate_challenge_real_plc", lambda *args: bytes(248))
+        monkeypatch.setattr(handshake, "authenticate_real_plc", authenticate)
+        monkeypatch.setattr(legitimation, "solve_legitimate_challenge_real_plc", lambda *args: bytes(248))
         srv = S7CommPlusServer(
             public_key_fingerprint=TEST_FINGERPRINT,
             session_challenge=TEST_CHALLENGE,
@@ -667,3 +744,217 @@ class TestSessionKeyIntegration:
             assert client.list_datablocks() == [{"name": "DB1", "number": 1, "rid": 0x8A0E0001}]
         finally:
             client.disconnect()
+
+
+# Symbolic access area for DB1, and for a DB the emulator does not hold.
+DB1_AREA = Ids.DB_ACCESS_AREA_BASE + 1
+DB7_AREA = Ids.DB_ACCESS_AREA_BASE + 7
+BLOB = int(Ids.LID_OMS_STB_CLASSIC_BLOB)
+
+# LID paths the emulator cannot resolve: it holds a data block as bytes, so the only
+# path it can serve is (ClassicBlob marker, byte offset, size).
+UNRESOLVABLE_PATHS = [
+    pytest.param([1, 2], id="two-lids-no-marker"),
+    pytest.param([9, 10], id="browse-style-path"),
+    pytest.param([1], id="one-lid"),
+    pytest.param([BLOB], id="marker-only"),
+    pytest.param([BLOB, 0], id="marker-and-offset"),
+    pytest.param([BLOB, 0, 2, 0], id="four-lids"),
+    pytest.param([4, 0, 2], id="three-lids-wrong-marker"),
+]
+
+# Byte ranges that are not wholly inside a 16-byte block.
+OUTSIDE_THE_BLOCK = [
+    pytest.param(14, 4, id="runs-past-the-end"),
+    pytest.param(16, 1, id="starts-at-the-end"),
+    pytest.param(200, 2, id="starts-far-past-the-end"),
+]
+
+# Writes whose value is not the size the address names: (offset, size, value). The
+# last address runs past the end of the block while its shorter value would fit.
+WRONG_SIZE_WRITES = [
+    pytest.param(4, 4, b"\xaa\xbb", id="value-shorter-than-the-address"),
+    pytest.param(4, 2, b"\xaa\xbb\xcc\xdd", id="value-longer-than-the-address"),
+    pytest.param(14, 4, b"\xaa\xbb", id="address-past-the-end-value-fits"),
+]
+
+
+@pytest.fixture()
+def small_db_server() -> Generator[S7CommPlusServer, None, None]:
+    """A server whose DB1 is 16 bytes, each byte different, so a read from the wrong
+    place cannot look like a read from the right one."""
+    srv = S7CommPlusServer()
+    srv.register_raw_db(1, bytearray(range(0x10, 0x20)))
+    srv.start(port=TEST_PORT)
+    time.sleep(0.1)
+    yield srv
+    srv.stop()
+
+
+def _db1(server: S7CommPlusServer) -> bytes:
+    db = server.get_db(1)
+    assert db is not None
+    return bytes(db.data)
+
+
+class TestServerRefusesItemsItCannotServe:
+    """The emulator never answers an item it cannot resolve with a value.
+
+    It used to take the second LID as a byte offset and the third as a size whatever
+    the path was, and to pad a read past the end of the block with zeros. A client
+    under test with a wrong address got a plausible value back, and its test passed.
+    """
+
+    def test_classic_blob_paths_are_still_served(self, small_db_server: S7CommPlusServer) -> None:
+        client = S7CommPlusClient()
+        client.connect("127.0.0.1", port=TEST_PORT)
+        try:
+            assert client.read_symbolic(DB1_AREA, [BLOB, 0, 2]) == bytes.fromhex("1011")
+            assert client.read_symbolic(DB1_AREA, [BLOB, 4, 4]) == bytes.fromhex("14151617")
+            assert client.read_symbolic(DB1_AREA, [BLOB, 14, 2]) == bytes.fromhex("1e1f")
+            assert client.db_read(1, 0, 16) == bytes(range(0x10, 0x20))
+        finally:
+            client.disconnect()
+
+    @pytest.mark.parametrize("lids", UNRESOLVABLE_PATHS)
+    def test_read_with_an_unresolvable_path_is_an_item_error(self, small_db_server: S7CommPlusServer, lids: list[int]) -> None:
+        client = S7CommPlusClient()
+        client.connect("127.0.0.1", port=TEST_PORT)
+        try:
+            with pytest.raises(RuntimeError, match="Symbolic read failed"):
+                client.read_symbolic(DB1_AREA, lids)
+        finally:
+            client.disconnect()
+
+    @pytest.mark.parametrize(("offset", "size"), OUTSIDE_THE_BLOCK)
+    def test_read_outside_the_block_is_an_item_error(self, small_db_server: S7CommPlusServer, offset: int, size: int) -> None:
+        client = S7CommPlusClient()
+        client.connect("127.0.0.1", port=TEST_PORT)
+        try:
+            with pytest.raises(RuntimeError, match="Symbolic read failed"):
+                client.read_symbolic(DB1_AREA, [BLOB, offset, size])
+            with pytest.raises(RuntimeError, match="Read failed"):
+                client.db_read(1, offset, size)
+        finally:
+            client.disconnect()
+
+    def test_multi_read_answers_each_item_on_its_own(self, small_db_server: S7CommPlusServer) -> None:
+        client = S7CommPlusClient()
+        client.connect("127.0.0.1", port=TEST_PORT)
+        try:
+            results = client.read_symbolic_multi(
+                [
+                    (DB1_AREA, [BLOB, 0, 2]),
+                    (DB1_AREA, [1, 2]),  # unresolvable path
+                    (DB1_AREA, [BLOB, 14, 4]),  # past the end
+                    (DB7_AREA, [BLOB, 0, 2]),  # no such data block
+                    (DB1_AREA, [BLOB, 4, 4]),
+                ]
+            )
+            assert results == [bytes.fromhex("1011"), None, None, None, bytes.fromhex("14151617")]
+        finally:
+            client.disconnect()
+
+    @pytest.mark.parametrize("lids", UNRESOLVABLE_PATHS)
+    def test_write_with_an_unresolvable_path_writes_nothing(self, small_db_server: S7CommPlusServer, lids: list[int]) -> None:
+        before = _db1(small_db_server)
+        client = S7CommPlusClient()
+        client.connect("127.0.0.1", port=TEST_PORT)
+        try:
+            with pytest.raises(RuntimeError, match="Write failed"):
+                client.write_symbolic(DB1_AREA, lids, b"\xaa\xbb")
+        finally:
+            client.disconnect()
+        assert _db1(small_db_server) == before
+
+    @pytest.mark.parametrize(("offset", "size"), OUTSIDE_THE_BLOCK)
+    def test_write_outside_the_block_writes_nothing(self, small_db_server: S7CommPlusServer, offset: int, size: int) -> None:
+        before = _db1(small_db_server)
+        client = S7CommPlusClient()
+        client.connect("127.0.0.1", port=TEST_PORT)
+        try:
+            with pytest.raises(RuntimeError, match="Write failed"):
+                client.db_write(1, offset, b"\xaa" * size)
+            with pytest.raises(RuntimeError, match="Write failed"):
+                client.write_symbolic(DB1_AREA, [BLOB, offset, size], b"\xaa" * size)
+        finally:
+            client.disconnect()
+        # No partial write: the bytes that would have fitted are untouched.
+        assert _db1(small_db_server) == before
+
+    @pytest.mark.parametrize(("offset", "size", "value"), WRONG_SIZE_WRITES)
+    def test_write_of_a_value_that_is_not_the_address_size_writes_nothing(
+        self, small_db_server: S7CommPlusServer, offset: int, size: int, value: bytes
+    ) -> None:
+        before = _db1(small_db_server)
+        client = S7CommPlusClient()
+        client.connect("127.0.0.1", port=TEST_PORT)
+        try:
+            with pytest.raises(RuntimeError, match="Write failed"):
+                client.write_symbolic(DB1_AREA, [BLOB, offset, size], value)
+        finally:
+            client.disconnect()
+        assert _db1(small_db_server) == before
+
+    def test_write_inside_the_block_still_lands(self, small_db_server: S7CommPlusServer) -> None:
+        client = S7CommPlusClient()
+        client.connect("127.0.0.1", port=TEST_PORT)
+        try:
+            client.write_symbolic(DB1_AREA, [BLOB, 14, 2], b"\xaa\xbb")
+            assert client.db_read(1, 12, 4) == bytes.fromhex("1c1daabb")
+        finally:
+            client.disconnect()
+
+
+@pytest.mark.asyncio
+class TestServerRefusesItemsItCannotServeAsync:
+    """The same server behaviour, seen through the asyncio client."""
+
+    async def test_read_with_an_unresolvable_path_is_an_item_error(self, small_db_server: S7CommPlusServer) -> None:
+        async with S7CommPlusAsyncClient() as client:
+            await client.connect("127.0.0.1", port=TEST_PORT)
+            assert await client.read_symbolic(DB1_AREA, [BLOB, 4, 4]) == bytes.fromhex("14151617")
+            with pytest.raises(RuntimeError):
+                await client.read_symbolic(DB1_AREA, [1, 2])
+            with pytest.raises(RuntimeError):
+                await client.db_read(1, 14, 4)
+
+    async def test_write_it_cannot_serve_writes_nothing(self, small_db_server: S7CommPlusServer) -> None:
+        before = _db1(small_db_server)
+        async with S7CommPlusAsyncClient() as client:
+            await client.connect("127.0.0.1", port=TEST_PORT)
+            with pytest.raises(RuntimeError):
+                await client.write_symbolic(DB1_AREA, [1, 2], b"\xaa\xbb")
+            with pytest.raises(RuntimeError):
+                await client.db_write(1, 14, b"\xaa\xbb\xcc\xdd")
+        assert _db1(small_db_server) == before
+
+    async def test_write_of_a_value_that_is_not_the_address_size_writes_nothing(self, small_db_server: S7CommPlusServer) -> None:
+        before = _db1(small_db_server)
+        async with S7CommPlusAsyncClient() as client:
+            await client.connect("127.0.0.1", port=TEST_PORT)
+            with pytest.raises(RuntimeError):
+                await client.write_symbolic(DB1_AREA, [BLOB, 4, 4], b"\xaa\xbb")
+        assert _db1(small_db_server) == before
+
+
+class TestServerRequestParsers:
+    """The server-side parsers resolve an address or say they cannot."""
+
+    def test_read_request_resolves_classic_blob_ranges_only(self) -> None:
+        payload = _build_multi_symbolic_read_payload(
+            [(DB1_AREA, [BLOB, 4, 4]), (DB1_AREA, [1, 2]), (DB7_AREA, [BLOB, 0, 2]), (DB1_AREA, [BLOB, 0])]
+        )
+        assert _server_parse_read_request(payload) == [(1, 4, 4), None, (7, 0, 2), None]
+
+    def test_write_request_resolves_classic_blob_ranges_only(self) -> None:
+        resolved = _build_symbolic_write_payload(DB1_AREA, [BLOB, 4, 2], b"\xaa\xbb")
+        unresolved = _build_symbolic_write_payload(DB1_AREA, [1, 2], b"\xaa\xbb")
+        assert _server_parse_write_request(resolved) == ([(1, 4, 2)], [b"\xaa\xbb"])
+        assert _server_parse_write_request(unresolved) == ([None], [b"\xaa\xbb"])
+
+    def test_truncated_read_request_resolves_nothing(self) -> None:
+        payload = _build_multi_symbolic_read_payload([(DB1_AREA, [BLOB, 4, 4])])
+        # Cut inside the LID list: the address is incomplete, so it is not a range.
+        marker_at = payload.rindex(bytes([BLOB]))
+        assert _server_parse_read_request(payload[: marker_at + 1]) == [None]

@@ -91,6 +91,7 @@ from .subscription import (
     SubscriptionItem,
     SubscriptionNotification,
     SubscriptionRegistry,
+    SubscriptionRestoreResult,
     build_delete_subscription_request,
     build_subscription_request,
     notification_subscription_id,
@@ -1032,6 +1033,7 @@ class S7CommPlusAsyncClient:
             credit_limit=credit_limit,
             credit_step=credit_step,
             queue_size=queue_size,
+            cycle_ms=cycle_ms,
         )
         self._subscription_change_counter = self._subscription_change_counter % 0xFF + 1
         self._subscription_relation_id = (self._subscription_relation_id + 1) & 0xFFFFFFFF
@@ -1094,6 +1096,45 @@ class S7CommPlusAsyncClient:
         """Return a queue view for one active subscription."""
         self._subscriptions.diagnostics(subscription_id)
         return AsyncSubscriptionQueue(self, subscription_id)
+
+    async def resubscribe(self) -> SubscriptionRestoreResult:
+        """Recreate the data subscriptions lost with the previous session.
+
+        Call it after reconnecting. Every subscription that was live when the
+        session ended is created again with its items, cycle, credits, queue size
+        and callbacks; the PLC assigns new IDs, which ``restored`` maps from the old
+        ones. Queues and iterators are keyed by ID, so
+        fetch them again for the new IDs. A subscription the PLC rejects (for example a renamed tag) lands in
+        ``failed`` without stopping the others and stays pending for a retry.
+        Notifications from the gap are not replayed. Alarm subscriptions are not
+        restored.
+
+        .. warning:: This method is **experimental** and may change.
+        """
+        restored: dict[int, int] = {}
+        failed: dict[int, Exception] = {}
+        for spec in self._subscriptions.pending_restore:
+            try:
+                new_id = await self.create_subscription(
+                    spec.items,
+                    cycle_ms=spec.cycle_ms,
+                    credit_limit=spec.credit_limit,
+                    credit_step=spec.credit_step,
+                    queue_size=spec.queue_size,
+                )
+            except Exception as exc:
+                logger.warning(f"Could not restore subscription {spec.subscription_id:#x}: {exc}")
+                failed[spec.subscription_id] = exc
+                continue
+            for callback in spec.callbacks:
+                self._subscriptions.add_callback(new_id, callback)
+            self._subscriptions.mark_restored(spec.subscription_id)
+            restored[spec.subscription_id] = new_id
+        return SubscriptionRestoreResult(restored, failed)
+
+    def forget_lost_subscriptions(self) -> None:
+        """Stop remembering the subscriptions lost with the previous session."""
+        self._subscriptions.forget_pending_restore()
 
     async def delete_subscription(self, subscription_id: int) -> None:
         """Delete a data change subscription.

@@ -23,7 +23,7 @@ from .client import S7CommPlusClient as Client
 from .connection import S7CommPlusConnection
 from .server import CPUState, DataBlock
 from .server import S7CommPlusServer as Server
-from .subscription import SubscriptionDiagnostics, SubscriptionItem, SubscriptionNotification
+from .subscription import SubscriptionDiagnostics, SubscriptionItem, SubscriptionNotification, SubscriptionRestoreResult
 from .tag_browser import (
     DataBlock as ExploreDataBlock,
 )
@@ -53,6 +53,7 @@ __all__ = [
     "Server",
     "SubscriptionItem",
     "SubscriptionNotification",
+    "SubscriptionRestoreResult",
     "SubscriptionDiagnostics",
     "SymbolCatalog",
     "SymbolicReadItem",

@@ -515,8 +515,10 @@ _KNOWN_ATTRIBUTE_FLAG_BITS = functools.reduce(int.__or__, (int(member.value) for
 # a fixed RID: the client creates the object and the PLC assigns the RID, so
 # callers track the CreateObject response.
 #
-# Reference: Wireshark S7CommPlus dissector and
-# thomas-v2/S7CommPlusDriver/Core/Ids.cs.
+# Source: TIA Portal method-call captures (file transfer, runtime update and
+# full-download sessions) plus the protocol's own method naming; Ids.cs
+# defines none of these. ResolveAddressRemote's RID was seen in a
+# resolve-address exchange. Not verified against a live PLC.
 
 #: RemoteFileAccessManager methods (on a created RemoteFileAccessManager object).
 REMOTE_FILE_ACCESS_MANAGER_METHODS: dict[int, str] = {

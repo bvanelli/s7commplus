@@ -7,9 +7,11 @@ EXPLORE response into something a caller can act on, and is what the
 ``browse()``/tag-catalog layer builds on.
 
 This module covers the classes the clients already read or write — the
-session, blocks and data blocks, the CPU execution unit, the controller
-areas, subscriptions and the alarm subsystem. It is deliberately a curated
-slice, not a dump of every class a PLC defines.
+session, program blocks, the CPU execution unit, subscriptions and the
+alarm subsystem. It is deliberately a curated slice, not a dump of every
+class a PLC defines. DataBlock is absent on purpose: a data block's
+attributes are its per-tag tree (the ``browse()`` layer), not a fixed set
+of attribute ids.
 
 Source: attribute ids 233, 306, 319, 2521 and the subscription ids are
 thomas-v2/S7CommPlusDriver/Core/Ids.cs and this package's own
@@ -24,8 +26,8 @@ from typing import Optional
 
 #: Object class id -> class name.
 CLASS_NAMES: dict[int, str] = {
+    287: "ServerSession",
     2520: "PLCProgram",
-    2574: "DataBlock",
     0x9EA: "Block",
     0x883: "CPUexecUnit",
     1001: "Subscription",

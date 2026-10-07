@@ -15,7 +15,7 @@ from s7commplus.protocol import Ids, ObjectId
 
 class TestTables:
     def test_class_names(self) -> None:
-        assert CLASS_NAMES[2574] == "DataBlock"
+        assert CLASS_NAMES[287] == "ServerSession"
         assert CLASS_NAMES[2520] == "PLCProgram"
         assert CLASS_NAMES[0x9EA] == "Block"
         assert CLASS_NAMES[0x883] == "CPUexecUnit"
@@ -46,7 +46,7 @@ class TestDescribe:
         assert describe_attribute(0x883, 0xD9E) == "CPUexecUnit.OperatingState"
 
     def test_unknown_attribute_renders_numerically(self) -> None:
-        assert describe_attribute(2574, 99999) == "DataBlock attribute 99999"
+        assert describe_attribute(287, 99999) == "ServerSession attribute 99999"
 
     def test_unknown_class_renders_numerically(self) -> None:
         assert describe_attribute(4711, 233) == "class 4711 attribute 233"
@@ -84,3 +84,20 @@ class TestNoDriftAgainstProtocol:
             per_class.setdefault(_class_id, set())
             assert name not in per_class[_class_id], f"duplicate attribute name {name!r}"
             per_class[_class_id].add(name)
+
+
+class TestClassCoverage:
+    def test_every_attribute_class_has_a_name(self) -> None:
+        # describe_attribute() must never render "class N" for a class that
+        # has attributes in the table.
+        missing = {class_id for class_id, _attribute_id in ATTRIBUTE_NAMES} - set(CLASS_NAMES)
+        assert not missing, f"classes with attributes but no CLASS_NAMES entry: {sorted(missing)}"
+
+    def test_data_block_is_documented_as_absent(self) -> None:
+        # DataBlock's attributes are its per-tag tree, not fixed ids; the
+        # class stays out of the table on purpose.
+        assert 2574 not in CLASS_NAMES
+        assert not [key for key in ATTRIBUTE_NAMES if key[0] == 2574]
+
+    def test_server_session_renders_by_name(self) -> None:
+        assert describe_attribute(287, 299) == "ServerSession.Role"

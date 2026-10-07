@@ -741,7 +741,16 @@ class TestSessionKeyIntegration:
         client = S7CommPlusClient()
         client.connect("127.0.0.1", port=SESSION_KEY_PORT)
         try:
-            assert client.list_datablocks() == [{"name": "DB1", "number": 1, "rid": 0x8A0E0001}]
+            assert client.list_datablocks() == [
+                {
+                    "name": "DB1",
+                    "number": 1,
+                    "rid": 0x8A0E0001,
+                    "language": None,
+                    "knowhow_protected": False,
+                    "unlinked": False,
+                }
+            ]
         finally:
             client.disconnect()
 

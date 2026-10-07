@@ -33,7 +33,16 @@ from .codec import (
 )
 from .catalog import SymbolCatalog, SymbolicTag, TagResult
 from .connection import FamilyOnlyFingerprintError, S7CommPlusConnection, SessionKeyCandidateRejectedError
-from .protocol import DataType, ElementID, FunctionCode, Ids, ObjectId, ProtocolVersion, remote_tsap_for_connection_type
+from .protocol import (
+    DataType,
+    ElementID,
+    FunctionCode,
+    Ids,
+    ObjectId,
+    ProtocolVersion,
+    block_language_name,
+    remote_tsap_for_connection_type,
+)
 from .subscription import (
     SubscriptionDiagnostics,
     SubscriptionItem,
@@ -822,7 +831,18 @@ class S7CommPlusClient:
         .. warning:: This method is **experimental** and may change.
 
         Returns:
-            List of dicts with keys ``name``, ``number``, ``rid``.
+            List of dicts with keys ``name``, ``number``, ``rid``,
+            ``language`` (block language name or ``None``),
+            ``knowhow_protected`` and ``unlinked``.
+
+        Note:
+            ``knowhow_protected`` reports the presence of the
+            ``Block.KnowhowProtected`` attribute. The assumption — not
+            verified against a PLC — is that PLCs send the attribute only for
+            protected blocks; if a firmware sends it for every block, this
+            reads as ``True`` for all of them. The struct's ``Mode`` element
+            would be the exact signal, but no capture showing the attribute
+            for an unprotected block is available to pin its encoding.
         """
         if self._connection is None:
             raise RuntimeError("Not connected")
@@ -1737,7 +1757,8 @@ def _parse_explore_datablocks(response: bytes) -> list[dict[str, Any]]:
         _, consumed = decode_uint64_vlq(response, offset)
         offset += consumed
 
-    stack: list[list[Any]] = []  # each entry: [relation_id, class_id, name]
+    # Each stack entry: [relation_id, class_id, name, language, knowhow, unlinked]
+    stack: list[list[Any]] = []
     while offset < len(response):
         tag = response[offset]
 
@@ -1753,24 +1774,38 @@ def _parse_explore_datablocks(response: bytes) -> list[dict[str, Any]]:
             offset += consumed
             _attr_id, consumed = decode_uint32_vlq(response, offset)  # AttributeId
             offset += consumed
-            stack.append([relid, class_id, ""])
+            stack.append([relid, class_id, "", None, False, False])
 
         elif tag == ElementID.TERMINATING_OBJECT:
             offset += 1
             if stack:
-                relid, class_id, name = stack.pop()
+                relid, class_id, name, language, knowhow, unlinked = stack.pop()
                 if class_id == Ids.DB_CLASS_RID and (relid >> 16) == 0x8A0E:
-                    datablocks.append({"name": name, "number": relid & 0xFFFF, "rid": relid})
+                    datablocks.append(
+                        {
+                            "name": name,
+                            "number": relid & 0xFFFF,
+                            "rid": relid,
+                            "language": language,
+                            "knowhow_protected": knowhow,
+                            "unlinked": unlinked,
+                        }
+                    )
 
         elif tag == ElementID.ATTRIBUTE:
             offset += 1
             attr_id, consumed = decode_uint32_vlq(response, offset)
             offset += consumed
+            value_start = offset
             try:
                 value, consumed = decode_pvalue_to_bytes(response, offset)
             except (ValueError, IndexError):
                 break
-            offset += consumed
+            # The two typed-value header bytes ([flags][datatype]) sit at the
+            # value's start; decode_pvalue_to_bytes returns only the payload.
+            attribute_flags = response[value_start] if value_start < len(response) else 0
+            attribute_datatype = response[value_start + 1] if value_start + 1 < len(response) else 0
+            offset = value_start + consumed
             if attr_id == Ids.OBJECT_VARIABLE_TYPE_NAME and stack:
                 # Block names arrive as a WString. On the S7-1500 the ASCII range is
                 # transmitted one byte per character (no null high-bytes), so the
@@ -1789,6 +1824,29 @@ def _parse_explore_datablocks(response: bytes) -> list[dict[str, Any]]:
                     stack[-1][2] = name.rstrip("\x00")
                 except Exception:
                     pass
+
+            elif attr_id == Ids.BLOCK_BLOCK_LANGUAGE and stack:
+                # Language is a fixed-width USINT (one byte) or UINT (two,
+                # big-endian) depending on firmware — never a VLQ, so a code
+                # of 0x80 or more must not be read as a continuation byte.
+                if value:
+                    if not attribute_flags & 0x10 and attribute_datatype == DataType.USINT and len(value) >= 1:
+                        stack[-1][3] = block_language_name(value[0])
+                    elif not attribute_flags & 0x10 and attribute_datatype in (DataType.UINT, DataType.WORD) and len(value) >= 2:
+                        stack[-1][3] = block_language_name(int.from_bytes(value[:2], "big"))
+                    else:
+                        # Unknown shape: leave the language unset rather than
+                        # misread it.
+                        pass
+
+            elif attr_id == Ids.BLOCK_KNOWHOW_PROTECTED and stack:
+                # A present KnowhowProtected attribute means the block is protected;
+                # its value is struct 0xD77, whose presence alone is the signal.
+                stack[-1][4] = True
+
+            elif attr_id == Ids.BLOCK_UNLINKED and stack:
+                if value:
+                    stack[-1][5] = value[0] != 0
 
         else:
             # Response-preamble fields before the first object, or unhandled element

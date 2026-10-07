@@ -52,9 +52,23 @@ callbacks. The async client provides an async iterator and a queue-like view:
 
 Finite notification credits are replenished as updates arrive. Queue and
 sequence-loss counters are available through ``subscription_diagnostics``.
-On disconnect or reconnect, local subscriptions are cleared and must be
-created again. The synchronous receiver blocks; arrange cancellation by
-closing the connection.
+On disconnect or reconnect, local subscriptions are cleared, because the PLC
+releases its subscription objects with the session. After reconnecting, call
+``resubscribe()`` to create them again with their items, cycle, credits, queue
+size and callbacks. The PLC assigns new IDs, so ``result.restored`` maps each
+old ID to its new one (fetch queues and iterators again for the new IDs), and
+``result.failed`` holds the error for every subscription the PLC rejected, for
+example because a tag was renamed. Those stay pending, so another call retries
+them, and ``forget_lost_subscriptions()`` drops them. Notifications from the
+gap are not replayed, and alarm subscriptions are not restored. The
+synchronous receiver blocks; arrange cancellation by closing the connection.
+
+.. code-block:: python
+
+   client.connect("192.168.1.10")
+   result = client.resubscribe()
+   for old_id, new_id in result.restored.items():
+       print(f"{old_id:#x} is now {new_id:#x}")
 
 The PLC's DeleteObject operation targets the session subscription container.
 Deleting one data or alarm subscription therefore clears every subscription

@@ -111,6 +111,33 @@ class SubscriptionDiagnostics:
     transport_frame_overflows: int = 0
 
 
+@dataclass(frozen=True)
+class SubscriptionSpec:
+    """What it takes to recreate one data subscription after a reconnect."""
+
+    subscription_id: int
+    items: tuple[SubscriptionItem, ...]
+    cycle_ms: int
+    credit_limit: int
+    credit_step: int
+    queue_size: int
+    callbacks: tuple[Callable[[SubscriptionNotification], None], ...] = ()
+
+
+@dataclass(frozen=True)
+class SubscriptionRestoreResult:
+    """Outcome of ``resubscribe()``.
+
+    ``restored`` maps each old subscription ID to the ID the PLC assigned the
+    recreated subscription. ``failed`` maps the old ID of every subscription the PLC
+    (or the client) rejected to the error; those stay pending, so ``resubscribe()``
+    can be called again.
+    """
+
+    restored: dict[int, int] = field(default_factory=dict)
+    failed: dict[int, Exception] = field(default_factory=dict)
+
+
 @dataclass
 class _SubscriptionState:
     items: dict[int, SubscriptionItem]
@@ -118,6 +145,7 @@ class _SubscriptionState:
     credit_limit: int
     credit_step: int
     queue_size: int
+    cycle_ms: int = 100
     notifications: deque[SubscriptionNotification] = field(default_factory=deque)
     callbacks: list[Callable[[SubscriptionNotification], None]] = field(default_factory=list)
     dropped_notifications: int = 0
@@ -136,6 +164,7 @@ class SubscriptionRegistry:
         self._states: dict[int, _SubscriptionState] = {}
         self._orphans: deque[SubscriptionNotification] = deque(maxlen=orphan_queue_size)
         self._retired_ids: set[int] = set()
+        self._restorable: dict[int, SubscriptionSpec] = {}
         self.unmatched_notifications = 0
 
     def register(
@@ -147,11 +176,12 @@ class SubscriptionRegistry:
         credit_limit: int,
         credit_step: int,
         queue_size: int,
+        cycle_ms: int = 100,
     ) -> None:
         if queue_size <= 0:
             raise ValueError("queue_size must be positive")
         references = {item.reference_id or index: item for index, item in enumerate(items, 1)}
-        state = _SubscriptionState(references, change_counter, credit_limit, credit_step, queue_size)
+        state = _SubscriptionState(references, change_counter, credit_limit, credit_step, queue_size, cycle_ms)
         self._retired_ids.discard(subscription_id)
         self._states[subscription_id] = state
         retained: deque[SubscriptionNotification] = deque(maxlen=self._orphans.maxlen)
@@ -165,6 +195,7 @@ class SubscriptionRegistry:
 
     def unregister(self, subscription_id: int) -> None:
         self._states.pop(subscription_id, None)
+        self._restorable.pop(subscription_id, None)
         self._retired_ids.add(subscription_id)
         self._orphans = deque(
             (notification for notification in self._orphans if notification.subscription_id != subscription_id),
@@ -172,9 +203,38 @@ class SubscriptionRegistry:
         )
 
     def clear(self) -> None:
+        """Drop every subscription, remembering the live ones so ``resubscribe()`` can recreate them.
+
+        A second clear with nothing live keeps what the first remembered.
+        """
+        if self._states:
+            self._restorable = {
+                subscription_id: SubscriptionSpec(
+                    subscription_id,
+                    tuple(state.items.values()),
+                    state.cycle_ms,
+                    state.credit_limit,
+                    state.credit_step,
+                    state.queue_size,
+                    tuple(state.callbacks),
+                )
+                for subscription_id, state in self._states.items()
+            }
         self._states.clear()
         self._orphans.clear()
         self._retired_ids.clear()
+
+    @property
+    def pending_restore(self) -> tuple[SubscriptionSpec, ...]:
+        """Subscriptions lost with the last session and not yet recreated."""
+        return tuple(self._restorable.values())
+
+    def mark_restored(self, old_subscription_id: int) -> None:
+        self._restorable.pop(old_subscription_id, None)
+
+    def forget_pending_restore(self) -> None:
+        """Give up on recreating the subscriptions lost with the last session."""
+        self._restorable.clear()
 
     @property
     def subscription_ids(self) -> tuple[int, ...]:

@@ -933,6 +933,34 @@ class TestExploreDatablocks:
         dbs = _parse_explore_datablocks(bytes(r))
         assert dbs[0]["language"] == "language 123"
 
+    def test_parse_explore_datablocks_language_codes_at_and_above_128(self) -> None:
+        # A USINT code of 0x80+ would look like a VLQ continuation if decoded
+        # as VLQ; it must be read as the single byte it is. 201 is MOTION_DB,
+        # 300 (above any single byte) arrives as a UINT.
+        motion_db = (
+            bytes([ElementID.ATTRIBUTE]) + encode_uint32_vlq(Ids.BLOCK_BLOCK_LANGUAGE) + bytes([0x00, DataType.USINT, 201])
+        )
+        dbs = _parse_explore_datablocks(encode_uint64_vlq(0) + self._db_object(12, extra_attributes=motion_db))
+        assert dbs[0]["language"] == "MOTION_DB"
+
+        as_uint = (
+            bytes([ElementID.ATTRIBUTE])
+            + encode_uint32_vlq(Ids.BLOCK_BLOCK_LANGUAGE)
+            + bytes([0x00, DataType.UINT])
+            + struct.pack(">H", 300)
+        )
+        dbs = _parse_explore_datablocks(encode_uint64_vlq(0) + self._db_object(13, extra_attributes=as_uint))
+        assert dbs[0]["language"] == "GRAPH_ACTIONS"  # 300 is a defined code
+
+        unknown_uint = (
+            bytes([ElementID.ATTRIBUTE])
+            + encode_uint32_vlq(Ids.BLOCK_BLOCK_LANGUAGE)
+            + bytes([0x00, DataType.UINT])
+            + struct.pack(">H", 1234)
+        )
+        dbs = _parse_explore_datablocks(encode_uint64_vlq(0) + self._db_object(14, extra_attributes=unknown_uint))
+        assert dbs[0]["language"] == "language 1234"
+
     def test_parse_explore_datablocks_reports_unlinked(self) -> None:
         unlinked = bytes([ElementID.ATTRIBUTE]) + encode_uint32_vlq(Ids.BLOCK_UNLINKED) + bytes([0x00, DataType.BOOL, 1])
         r = encode_uint64_vlq(0) + self._db_object(11, extra_attributes=unlinked)

@@ -831,7 +831,18 @@ class S7CommPlusClient:
         .. warning:: This method is **experimental** and may change.
 
         Returns:
-            List of dicts with keys ``name``, ``number``, ``rid``.
+            List of dicts with keys ``name``, ``number``, ``rid``,
+            ``language`` (block language name or ``None``),
+            ``knowhow_protected`` and ``unlinked``.
+
+        Note:
+            ``knowhow_protected`` reports the presence of the
+            ``Block.KnowhowProtected`` attribute. The assumption — not
+            verified against a PLC — is that PLCs send the attribute only for
+            protected blocks; if a firmware sends it for every block, this
+            reads as ``True`` for all of them. The struct's ``Mode`` element
+            would be the exact signal, but no capture showing the attribute
+            for an unprotected block is available to pin its encoding.
         """
         if self._connection is None:
             raise RuntimeError("Not connected")
@@ -1785,11 +1796,16 @@ def _parse_explore_datablocks(response: bytes) -> list[dict[str, Any]]:
             offset += 1
             attr_id, consumed = decode_uint32_vlq(response, offset)
             offset += consumed
+            value_start = offset
             try:
                 value, consumed = decode_pvalue_to_bytes(response, offset)
             except (ValueError, IndexError):
                 break
-            offset += consumed
+            # The two typed-value header bytes ([flags][datatype]) sit at the
+            # value's start; decode_pvalue_to_bytes returns only the payload.
+            attribute_flags = response[value_start] if value_start < len(response) else 0
+            attribute_datatype = response[value_start + 1] if value_start + 1 < len(response) else 0
+            offset = value_start + consumed
             if attr_id == Ids.OBJECT_VARIABLE_TYPE_NAME and stack:
                 # Block names arrive as a WString. On the S7-1500 the ASCII range is
                 # transmitted one byte per character (no null high-bytes), so the
@@ -1810,13 +1826,17 @@ def _parse_explore_datablocks(response: bytes) -> list[dict[str, Any]]:
                     pass
 
             elif attr_id == Ids.BLOCK_BLOCK_LANGUAGE and stack:
-                # Language arrives as a USINT/UINT code; decode leniently so an
-                # unknown value from newer firmware does not break the browse.
+                # Language is a fixed-width USINT (one byte) or UINT (two,
+                # big-endian) depending on firmware — never a VLQ, so a code
+                # of 0x80 or more must not be read as a continuation byte.
                 if value:
-                    try:
-                        language_value, _ = decode_uint32_vlq(value, 0)
-                        stack[-1][3] = block_language_name(language_value)
-                    except (ValueError, IndexError):
+                    if not attribute_flags & 0x10 and attribute_datatype == DataType.USINT and len(value) >= 1:
+                        stack[-1][3] = block_language_name(value[0])
+                    elif not attribute_flags & 0x10 and attribute_datatype in (DataType.UINT, DataType.WORD) and len(value) >= 2:
+                        stack[-1][3] = block_language_name(int.from_bytes(value[:2], "big"))
+                    else:
+                        # Unknown shape: leave the language unset rather than
+                        # misread it.
                         pass
 
             elif attr_id == Ids.BLOCK_KNOWHOW_PROTECTED and stack:

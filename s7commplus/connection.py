@@ -54,7 +54,13 @@ from typing import Any, Optional, Type
 from .transport import ISOTCPConnection
 from .v1_session_key.keys import KeyFamily
 
-from .codec import decode_header, encode_header, encode_object_qualifier, parse_create_object_attributes
+from .codec import (
+    SERVER_SESSION_ROLE_SECURED_BIT,
+    decode_header,
+    encode_header,
+    encode_object_qualifier,
+    parse_create_object_attributes,
+)
 from .error import S7AuthenticationError, S7ConnectionError
 from .legitimation import (
     build_legacy_response,
@@ -930,6 +936,9 @@ class S7CommPlusConnection:
         # matching Siemens public key for the SessionKey handshake.
         self._public_key_checksum: Optional[bytes] = None
         self._public_key_fingerprint: Optional[str] = None
+        # ServerSession.Role from the CreateObject response; the
+        # 0x20000000 bit marks a PLC that runs a secured session.
+        self._server_session_role: Optional[int] = None
 
         # 20-byte session challenge from CreateObject response, used
         # to generate the SecurityKeyEncryptedKey blob (pre-TLS auth).
@@ -989,6 +998,18 @@ class S7CommPlusConnection:
     def tls_active(self) -> bool:
         """Whether TLS encryption is active on this connection."""
         return self._tls_active
+
+    @property
+    def secured_session(self) -> bool:
+        """Whether the PLC advertised a secured session requiring SessionKey auth.
+
+        Read from the ServerSession.Role attribute of the CreateObject
+        response (bit 0x20000000, observed set on secured PLCs in TIA Portal
+        captures; not verified against a live PLC). ``False`` when the PLC did
+        not report a role, which includes every PLC that does not implement
+        the attribute.
+        """
+        return bool(self._server_session_role and self._server_session_role & SERVER_SESSION_ROLE_SECURED_BIT)
 
     @property
     def integrity_id_read(self) -> int:
@@ -1432,6 +1453,7 @@ class S7CommPlusConnection:
         self._session_oms_version_cache_key = None
         self._public_key_checksum = None
         self._public_key_fingerprint = None
+        self._server_session_role = None
         self._session_challenge = None
         self._session_key = None
         self._v1_session_key_public_key = b""
@@ -2100,6 +2122,14 @@ class S7CommPlusConnection:
         if attrs.session_challenge is not None:
             self._session_challenge = attrs.session_challenge
             logger.info(f"Session challenge captured ({len(attrs.session_challenge)} bytes)")
+        if attrs.server_session_role is not None:
+            self._server_session_role = attrs.server_session_role
+            if attrs.server_session_role & SERVER_SESSION_ROLE_SECURED_BIT:
+                logger.info(
+                    "ServerSession.Role bit 0x20000000 is set; observed on secured "
+                    "(SessionKey-protected) PLCs in TIA Portal captures, so SessionKey "
+                    "authentication is likely required"
+                )
 
     def _try_session_key_auth(self) -> Optional[tuple[bytes, bytes]]:
         """Attempt to generate the SecurityKey authentication blob.

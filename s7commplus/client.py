@@ -123,6 +123,16 @@ class S7CommPlusClient:
         return self._connection.tls_active
 
     @property
+    def secured_session(self) -> bool:
+        """Whether the PLC advertised a secured session requiring SessionKey auth.
+
+        ``False`` before connect() or when the PLC reports no role attribute.
+        """
+        if self._connection is None:
+            return False
+        return self._connection.secured_session
+
+    @property
     def protection_level(self) -> Optional[int]:
         """Effective protection level reported by the PLC (see `AccessLevel`)."""
         if self._connection is None:

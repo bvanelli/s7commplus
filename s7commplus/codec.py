@@ -25,6 +25,14 @@ from .vlq import (
     encode_uint64_vlq,
 )
 
+# ServerSession.Role (attribute 299): the roles the session may take. The
+# bit below was observed set on PLCs running a secured (SessionKey-protected)
+# session in TIA Portal captures; the meaning is inferred from those captures
+# and not verified against a live PLC. Ids.cs defines no ServerSession.Role
+# and no role bits.
+SERVER_SESSION_ROLE_ID = 299
+SERVER_SESSION_ROLE_SECURED_BIT = 0x20000000
+
 
 def encode_header(version: int, data_length: int) -> bytes:
     """Encode an S7CommPlus frame header.
@@ -709,12 +717,13 @@ def parse_create_object_session_id(body: bytes) -> tuple[list[int], int, int]:
 class CreateObjectAttributes:
     """Attributes parsed from a CreateObject response PObject tree."""
 
-    __slots__ = ("server_session_version", "public_key_fingerprint", "session_challenge")
+    __slots__ = ("server_session_version", "public_key_fingerprint", "session_challenge", "server_session_role")
 
     def __init__(self) -> None:
         self.server_session_version: Optional[bytes] = None
         self.public_key_fingerprint: Optional[str] = None
         self.session_challenge: Optional[bytes] = None
+        self.server_session_role: Optional[int] = None
 
 
 def parse_create_object_attributes(payload: bytes) -> CreateObjectAttributes:
@@ -778,6 +787,17 @@ def parse_create_object_attributes(payload: bytes) -> CreateObjectAttributes:
                     offset += count
                 else:
                     offset = skip_typed_value(payload, offset, datatype, flags)
+
+            elif attr_id == SERVER_SESSION_ROLE_ID and datatype == DataType.UDINT and not flags & 0x10:
+                offset += 2
+                try:
+                    value, consumed = decode_uint32_vlq(payload, offset)
+                except ValueError:
+                    # Truncated value: leave the role unset and let the outer
+                    # loop's bounds checks terminate the scan.
+                    break
+                offset += consumed
+                result.server_session_role = value
 
             else:
                 offset = skip_typed_value(payload, offset + 2, datatype, flags)

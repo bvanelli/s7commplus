@@ -8,6 +8,7 @@ Reference: thomas-v2/S7CommPlusDriver (C#, LGPL-3.0)
 Reference: Wireshark S7CommPlus dissector
 """
 
+import functools
 from enum import IntEnum, IntFlag
 
 
@@ -344,8 +345,9 @@ class AttributeFlags(IntFlag):
     needs legitimation first, whether the attribute is read-only for clients,
     and whether it may change while the CPU runs.
 
-    Reference: Wireshark S7CommPlus dissector attribute-flags table and
-    thomas-v2/S7CommPlusDriver/Core/Ids.cs.
+    Source: TIA Portal attribute-metadata captures; Ids.cs defines no
+    attribute flags. 23 nonzero flags plus the zero ``TO_BE_CONFIGURED``
+    value. Not verified against a live PLC.
     """
 
     TO_BE_CONFIGURED = 0
@@ -391,9 +393,7 @@ def attribute_flags_description(flags: int) -> str:
     return ", ".join(names) if names else "none"
 
 
-_KNOWN_ATTRIBUTE_FLAG_BITS = 0
-for _member in AttributeFlags:
-    _KNOWN_ATTRIBUTE_FLAG_BITS |= int(_member.value)
+_KNOWN_ATTRIBUTE_FLAG_BITS = functools.reduce(int.__or__, (int(member.value) for member in AttributeFlags))
 
 
 class SoftDataType(IntEnum):

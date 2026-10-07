@@ -205,7 +205,7 @@ class S7CommPlusAsyncClient:
         # ServerSessionVersion is captured as its raw typed value (flags+datatype+data)
         # so it can be echoed back verbatim — real S7-1500 PLCs send it as a Struct.
         self._server_session_version: Optional[bytes] = None
-        self._session_oms_version: Optional[tuple[int, int]] = None
+        self._session_oms_version: Optional[tuple[int, Optional[int]]] = None
         self._session_oms_version_cache_key: Optional[bytes] = None
         self._session_setup_ok: bool = False
         # Effective protection level, read once the session is up
@@ -262,12 +262,13 @@ class S7CommPlusAsyncClient:
         return self._protection_level
 
     @property
-    def session_oms_version(self) -> Optional[tuple[int, int]]:
+    def session_oms_version(self) -> Optional[tuple[int, Optional[int]]]:
         """(SystemOMS, ProjectOMS) negotiated for the session, or ``None``.
 
         SystemOMS is the OMS session version (64..448, V1..V7); ProjectOMS is
-        the loaded project's version, where 0 means the controller has no
-        project loaded. ``None`` before connect or when unreadable.
+        the loaded project's version, where an explicit 0 means the controller
+        has no project loaded and ``None`` means the element was not sent.
+        ``None`` for the whole tuple before connect or when unreadable.
         """
         if self._server_session_version is None:
             return None

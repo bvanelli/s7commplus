@@ -110,57 +110,86 @@ def extract_session_version_string(raw: bytes) -> Optional[str]:
 SESSION_VERSION_SYSTEM_OMS_ID = 315
 SESSION_VERSION_PROJECT_OMS_ID = 316
 
+# Element value types whose length is a VLQ prefix, so a struct walk can skip
+# past them without knowing their layout.
+_LENGTH_PREFIXED_ELEMENT_TYPES = frozenset({DataType.WSTRING, DataType.BLOB, DataType.S7STRING})
 
-def _find_struct_element_uint(raw: bytes, element_id: int) -> Optional[int]:
-    """Read a UDINT element of the ServerSessionVersion struct, None if absent.
 
-    Looks for ``[VLQ key][flags][UDINT][VLQ value]`` with flags not marking an
-    array, so a same-id element of another shape is skipped rather than
-    misread.
+def _iter_struct_element_uints(raw: bytes) -> dict[int, int]:
+    """Walk the elements of a ServerSessionVersion struct value by boundary.
+
+    A raw typed value is ``[flags][STRUCT][fixed u32 struct id][elements...][terminator]``
+    where each element is ``[VLQ key][flags][datatype][value]``. Walking at
+    element boundaries (rather than searching for key bytes, which can match
+    inside another element's data) returns the UDINT elements keyed by id.
+    Malformed values yield whatever decoded before the damage; a value that
+    is not a struct at all yields an empty dict.
     """
-    needle = encode_uint32_vlq(element_id)
-    search_from = 0
-    while True:
-        index = raw.find(needle, search_from)
-        if index < 0:
-            return None
-        search_from = index + 1
-        value_at = index + len(needle)
-        if value_at + 2 > len(raw):
-            continue
-        if raw[value_at] & 0x10:  # array-typed: not the scalar we want
-            continue
-        if raw[value_at + 1] != DataType.UDINT:
-            continue
+    if len(raw) < 2 or raw[1] != DataType.STRUCT:
+        return {}
+    offset = 6  # flags + datatype + 4-byte fixed struct id
+    elements: dict[int, int] = {}
+    while offset < len(raw):
         try:
-            value, _consumed = decode_uint32_vlq(raw, value_at + 2)
+            key, consumed = decode_uint32_vlq(raw, offset)
         except ValueError:
-            continue
-        return value
+            break
+        offset += consumed
+        if key == 0:  # struct terminator
+            break
+        if offset + 2 > len(raw):
+            break
+        flags = raw[offset]
+        datatype = raw[offset + 1]
+        if not flags & 0x10 and datatype == DataType.UDINT:
+            try:
+                value, consumed = decode_uint32_vlq(raw, offset + 2)
+            except ValueError:
+                break
+            elements[key] = value
+            offset += 2 + consumed
+        elif not flags & 0x10 and datatype in _LENGTH_PREFIXED_ELEMENT_TYPES:
+            # WSTRING/BLOB/string elements carry their byte length as a VLQ
+            # prefix, so the walk can continue past them — the PAOM string
+            # (element 319) sits between the version elements on real PLCs.
+            try:
+                length, consumed = decode_uint32_vlq(raw, offset + 2)
+            except ValueError:
+                break
+            if offset + 2 + consumed + length > len(raw):
+                break
+            offset += 2 + consumed + length
+        else:
+            # An element whose length we cannot determine: stop rather than
+            # guess a boundary.
+            break
+    return elements
 
 
-def extract_session_oms_version(raw: bytes) -> Optional[tuple[int, int]]:
+def extract_session_oms_version(raw: bytes) -> Optional[tuple[int, Optional[int]]]:
     """Read (SystemOMS, ProjectOMS) from a raw ServerSessionVersion value.
 
     SystemOMS is the negotiated OMS session version (64..448, V1..V7); it
     gates which optional request fields the PLC understands. ProjectOMS is
-    the version of the loaded project; **0 means the controller has no
-    project loaded**, which surfaces as confusing generic session failures
-    when a caller tries to browse.
+    the version of the loaded project; an explicit 0 means the controller has
+    no project loaded, which otherwise surfaces as confusing generic session
+    failures when a caller tries to browse.
 
-    Returns None when the struct carries no readable versions, which is the
+    Returns None when the struct carries no readable SystemOMS, which is the
     case for the bare-UDINT ServerSessionVersion older emulators and PLCs
-    send.
+    send. ProjectOMS is None when element 316 is absent: absent is not the
+    same as an explicit "no project", and only the explicit 0 is reported as
+    one.
 
     ```python
     system_oms, project_oms = extract_session_oms_version(connection.server_session_version)
     ```
     """
-    system_oms = _find_struct_element_uint(raw, SESSION_VERSION_SYSTEM_OMS_ID)
+    elements = _iter_struct_element_uints(raw)
+    system_oms = elements.get(SESSION_VERSION_SYSTEM_OMS_ID)
     if system_oms is None:
         return None
-    project_oms = _find_struct_element_uint(raw, SESSION_VERSION_PROJECT_OMS_ID)
-    return system_oms, project_oms if project_oms is not None else 0
+    return system_oms, elements.get(SESSION_VERSION_PROJECT_OMS_ID)
 
 
 def decide_legitimation_mode(version_string: str) -> Optional[LegitimationType]:

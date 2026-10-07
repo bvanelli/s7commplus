@@ -920,7 +920,7 @@ class S7CommPlusConnection:
         # ServerSessionVersion is captured as its raw typed value (flags+datatype+data)
         # so it can be echoed back verbatim — real S7-1500 PLCs send it as a Struct.
         self._server_session_version: Optional[bytes] = None
-        self._session_oms_version: Optional[tuple[int, int]] = None
+        self._session_oms_version: Optional[tuple[int, Optional[int]]] = None
         self._session_oms_version_cache_key: Optional[bytes] = None
         self._session_setup_ok: bool = False
         # PLC-provided 8-byte public-key checksum (parsed from the
@@ -1040,13 +1040,15 @@ class S7CommPlusConnection:
         return self._protection_level
 
     @property
-    def session_oms_version(self) -> Optional[tuple[int, int]]:
+    def session_oms_version(self) -> Optional[tuple[int, Optional[int]]]:
         """(SystemOMS, ProjectOMS) negotiated for the session, or ``None``.
 
         SystemOMS is the OMS session version (64..448, V1..V7) that gates
         which optional request fields the PLC understands. ProjectOMS is the
-        version of the loaded project; 0 means the controller has no project
-        loaded. ``None`` when the PLC sent no readable versions.
+        version of the loaded project, where an explicit 0 means the
+        controller has no project loaded; ``None`` means the PLC did not send
+        element 316 at all. ``None`` for the whole tuple when the PLC sent no
+        readable versions.
         """
         if self._server_session_version is None:
             return None
@@ -1175,7 +1177,7 @@ class S7CommPlusConnection:
                 if oms_versions is not None:
                     system_oms, project_oms = oms_versions
                     logger.info(f"OMS session version: system={system_oms}, project={project_oms}")
-                    if project_oms == 0:
+                    if project_oms == 0:  # an explicit 0, not an absent element
                         logger.warning(
                             "Controller reports ProjectOMS 0: no project is loaded, so browsing and "
                             "symbolic access will find nothing"

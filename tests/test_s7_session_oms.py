@@ -47,9 +47,42 @@ class TestExtractSessionOmsVersion:
         raw = _session_version_struct(64, 0)
         assert extract_session_oms_version(raw) == (64, 0)
 
-    def test_absent_project_oms_reports_zero(self) -> None:
+    def test_absent_project_oms_is_none_not_zero(self) -> None:
+        # Absent element 316 must not read as "no project loaded"; only an
+        # explicit 0 does.
         raw = _session_version_struct(448, None)
-        assert extract_session_oms_version(raw) == (448, 0)
+        assert extract_session_oms_version(raw) == (448, None)
+
+    def test_lookalike_bytes_inside_another_element_are_not_matched(self) -> None:
+        # A byte sequence shaped like element 315 inside a WString's content
+        # must be skipped by element boundaries, not matched by a byte scan.
+        lookalike = encode_uint32_vlq(SESSION_VERSION_SYSTEM_OMS_ID) + bytes([0x00, DataType.UDINT]) + encode_uint32_vlq(64)
+        buf = bytearray()
+        buf += bytes([0x00, DataType.STRUCT])
+        buf += struct.pack(">I", 314)
+        buf += encode_uint32_vlq(SESSION_VERSION_SYSTEM_OMS_ID)
+        buf += bytes([0x00, DataType.UDINT]) + encode_uint32_vlq(320)
+        buf += encode_uint32_vlq(319)
+        buf += bytes([0x00, DataType.WSTRING]) + encode_uint32_vlq(len(lookalike)) + lookalike
+        buf += encode_uint32_vlq(SESSION_VERSION_PROJECT_OMS_ID)
+        buf += bytes([0x00, DataType.UDINT]) + encode_uint32_vlq(5)
+        buf += encode_uint32_vlq(0)
+        assert extract_session_oms_version(bytes(buf)) == (320, 5)
+
+    def test_paom_string_between_the_version_elements_is_skipped(self) -> None:
+        # Real PLCs send the PAOM string (element 319) between 315 and 316.
+        paom = b"1;6ES7 215-1AG40-0XB0;V4.2"
+        buf = bytearray()
+        buf += bytes([0x00, DataType.STRUCT])
+        buf += struct.pack(">I", 314)
+        buf += encode_uint32_vlq(SESSION_VERSION_SYSTEM_OMS_ID)
+        buf += bytes([0x00, DataType.UDINT]) + encode_uint32_vlq(128)
+        buf += encode_uint32_vlq(319)
+        buf += bytes([0x00, DataType.WSTRING]) + encode_uint32_vlq(len(paom)) + paom
+        buf += encode_uint32_vlq(SESSION_VERSION_PROJECT_OMS_ID)
+        buf += bytes([0x00, DataType.UDINT]) + encode_uint32_vlq(128)
+        buf += encode_uint32_vlq(0)
+        assert extract_session_oms_version(bytes(buf)) == (128, 128)
 
     def test_bare_udint_returns_none(self) -> None:
         # Older PLCs and the plain emulator send ServerSessionVersion as a

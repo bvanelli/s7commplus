@@ -129,12 +129,13 @@ class S7CommPlusClient:
         return self._connection.protection_level
 
     @property
-    def session_oms_version(self) -> Optional[tuple[int, int]]:
+    def session_oms_version(self) -> Optional[tuple[int, Optional[int]]]:
         """(SystemOMS, ProjectOMS) negotiated for the session, or ``None``.
 
         SystemOMS is the OMS session version (64..448, V1..V7); ProjectOMS is
-        the loaded project's version, where 0 means the controller has no
-        project loaded. ``None`` before connect or when unreadable.
+        the loaded project's version, where an explicit 0 means the controller
+        has no project loaded and ``None`` means the element was not sent.
+        ``None`` for the whole tuple before connect or when unreadable.
         """
         if self._connection is None:
             return None

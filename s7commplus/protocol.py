@@ -200,8 +200,9 @@ class Ids(IntEnum):
     # Remaining native-object roots under the AS root (RID 1). Useful as
     # EXPLORE starting points beyond the three above: the hardware
     # configuration tree, the folder/log containers, and the CPU objects.
-    # Reference: thomas-v2/S7CommPlusDriver/Core/Ids.cs (NativeObjects.*).
-    # RID 35 is omitted: reference tables disagree on its name.
+    # Source: TIA Portal session captures (CreateObject/EXPLORE responses);
+    # Ids.cs only defines RIDs 3, 8, 52 and 80-84. Not verified against a
+    # live PLC. RID 35 is omitted: sources disagree on its name.
     NATIVE_THE_AS_ROOT_RID = 1
     NATIVE_THE_HW_CONFIGURATION_RID = 2
     NATIVE_THE_FOLDERS_RID = 4
@@ -276,7 +277,10 @@ class Ids(IntEnum):
     # ServerSessionVersion (struct 314) elements. 315/319 are what the client
     # reads (protocol version, device PAOM string); 316-318 and 320 are the
     # project-side counterparts a PLC may also send.
-    # Reference: thomas-v2/S7CommPlusDriver/Core/Ids.cs (LID_SessionVersion.*)
+    # Source: 306 and 319 are thomas-v2/S7CommPlusDriver/Core/Ids.cs
+    # (ServerSessionVersion, LID_SessionVersionSystemPAOMString). The struct
+    # id 314 and elements 315-318, 320 come from TIA Portal session captures
+    # (CreateObject responses); not verified against a live PLC.
     SESSION_VERSION_STRUCT = 314
     SESSION_VERSION_SYSTEM_OMS = 315
     SESSION_VERSION_PROJECT_OMS = 316
@@ -286,8 +290,8 @@ class Ids(IntEnum):
     SESSION_VERSION_PROJECT_PAOM_STRING = 320
 
     # ServerSession attributes reported in the CreateObject response object.
-    # Reference: thomas-v2/S7CommPlusDriver/Core/Ids.cs (ServerSession.*,
-    # ClientSession.*)
+    # Source: TIA Portal session captures (CreateObject responses); Ids.cs
+    # only defines 300, 303, 304, 306. Not verified against a live PLC.
     SERVER_SESSION_CLIENT_ID = 289
     SERVER_SESSION_USER = 296
     SERVER_SESSION_APPLICATION = 297

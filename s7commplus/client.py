@@ -5,7 +5,8 @@ Reference: thomas-v2/S7CommPlusDriver (C#, LGPL-3.0)
 
 import logging
 import struct
-from collections.abc import Callable, Mapping, Sequence
+from collections import deque
+from collections.abc import Callable, Iterator, Mapping, Sequence
 from typing import Any, Optional, TypeAlias, TypeVar
 
 from .error import S7ConnectionError, S7ProtocolError
@@ -32,12 +33,25 @@ from .codec import (
 )
 from .catalog import SymbolCatalog, SymbolicTag, TagResult
 from .connection import FamilyOnlyFingerprintError, S7CommPlusConnection, SessionKeyCandidateRejectedError
-from .protocol import DataType, ElementID, FunctionCode, Ids, ObjectId, ProtocolVersion
+from .protocol import (
+    DataType,
+    ElementID,
+    FunctionCode,
+    Ids,
+    ObjectId,
+    ProtocolVersion,
+    block_language_name,
+    remote_tsap_for_connection_type,
+)
 from .subscription import (
+    SubscriptionDiagnostics,
     SubscriptionItem,
     SubscriptionNotification,
+    SubscriptionRegistry,
+    SubscriptionRestoreResult,
     build_delete_subscription_request,
     build_subscription_request,
+    notification_subscription_id,
     parse_subscription_notification,
 )
 from .vlq import decode_uint32_vlq, decode_uint64_vlq, encode_uint32_vlq
@@ -80,6 +94,9 @@ class S7CommPlusClient:
         self._connect_params: Optional[dict[str, Any]] = None
         self._subscription_change_counter = 1
         self._subscription_relation_id = 0x7FFFC001
+        self._subscriptions = SubscriptionRegistry()
+        self._alarm_subscription_ids: set[int] = set()
+        self._alarm_notification_frames: deque[bytes] = deque(maxlen=100)
         self._symbol_catalog: Optional[SymbolCatalog] = None
 
     @property
@@ -115,11 +132,46 @@ class S7CommPlusClient:
         return self._connection.tls_active
 
     @property
+    def secured_session(self) -> bool:
+        """Whether the PLC advertised a secured session requiring SessionKey auth.
+
+        ``False`` before connect() or when the PLC reports no role attribute.
+        """
+        if self._connection is None:
+            return False
+        return self._connection.secured_session
+
+    @property
+    def server_session_roles(self) -> Optional[int]:
+        """The ServerSession.Roles mask (attribute 305), or ``None``.
+
+        The mask of every role the session may take, as opposed to the single
+        `Role` that `secured_session` reads. The individual bit meanings are
+        not decoded; ``None`` when the PLC did not send the attribute.
+        """
+        if self._connection is None:
+            return None
+        return self._connection.server_session_roles
+
+    @property
     def protection_level(self) -> Optional[int]:
         """Effective protection level reported by the PLC (see `AccessLevel`)."""
         if self._connection is None:
             return None
         return self._connection.protection_level
+
+    @property
+    def session_oms_version(self) -> Optional[tuple[int, Optional[int]]]:
+        """(SystemOMS, ProjectOMS) negotiated for the session, or ``None``.
+
+        SystemOMS is the OMS session version (64..448, V1..V7); ProjectOMS is
+        the loaded project's version, where an explicit 0 means the controller
+        has no project loaded and ``None`` means the element was not sent.
+        ``None`` for the whole tuple before connect or when unreadable.
+        """
+        if self._connection is None:
+            return None
+        return self._connection.session_oms_version
 
     def connect(
         self,
@@ -135,7 +187,8 @@ class S7CommPlusClient:
         allow_legacy_key_fallback: bool = True,
         legacy_session_key_refresh_interval: Optional[float] = 25 * 60.0,
         *,
-        legacy_s7_1500: bool = False,
+        legacy_s7_1500: bool | None = None,
+        connection_type: int | str | None = None,
     ) -> None:
         """Connect to an S7-1200/1500 PLC using S7CommPlus.
 
@@ -153,11 +206,23 @@ class S7CommPlusClient:
                 fresh sessions when a legacy PLC omits its key id.
             legacy_session_key_refresh_interval: Seconds between legacy
                 SessionKey renewals, or ``None`` to disable them.
-            legacy_s7_1500: Enable the non-TLS S7-1500 FW 2.6 browse/read
-                profile validated in issue #12.
+            legacy_s7_1500: Override the non-TLS V1 SessionKey profile (structured
+                browse, V2 object qualifier, trailing IntegrityId, chained fragment
+                HMAC). ``None`` (default) selects it automatically for every V1
+                SessionKey session, as the S7-1500 FW 2.6 (issue #12) and S7-1200
+                FW V4.2 controllers need it; ``False`` forces the classic layout and
+                ``True`` is only an explicit spelling of the automatic choice.
+            connection_type: COTP identity to connect as: ``"hmi"`` (default,
+                the HMI/SCADA data-client role), ``"es"`` (engineering station,
+                TIA-Portal style) or ``"pg"`` (programming device). The TSAP
+                strings name the client role; whether a given firmware serves
+                engineering-style operations differently per role is not
+                verified against a PLC, so try ``"es"`` if the default is
+                refused.
         """
         if legacy_s7_1500 and use_tls:
             raise ValueError("legacy_s7_1500 requires use_tls=False")
+        remote_tsap_for_connection_type(connection_type)  # validate early
         self._symbol_catalog = None
         self._connect_params = {
             "host": host,
@@ -170,6 +235,7 @@ class S7CommPlusClient:
             "allow_legacy_key_fallback": allow_legacy_key_fallback,
             "legacy_session_key_refresh_interval": legacy_session_key_refresh_interval,
             "legacy_s7_1500": legacy_s7_1500,
+            "connection_type": connection_type,
         }
         self._open_connection()
 
@@ -187,7 +253,7 @@ class S7CommPlusClient:
             except SessionKeyCandidateRejectedError:
                 logger.info("Cached SessionKey candidate %s was rejected; trying remaining family keys", cached)
                 _LEGACY_KEY_CACHE.pop(cache_key, None)
-                from .session_auth.keys import parse_fingerprint
+                from .v1_session_key.keys import parse_fingerprint
 
                 family, _ = parse_fingerprint(cached)
                 self._probe_family_keys(family, excluded={cached})
@@ -206,7 +272,12 @@ class S7CommPlusClient:
         """Open exactly one transport/session, optionally with one key candidate."""
         assert self._connect_params is not None
         p = self._connect_params
-        self._connection = S7CommPlusConnection(host=p["host"], port=p["port"], legacy_s7_1500=p["legacy_s7_1500"])
+        self._connection = S7CommPlusConnection(
+            host=p["host"],
+            port=p["port"],
+            legacy_s7_1500=p["legacy_s7_1500"],
+            connection_type=p["connection_type"],
+        )
         self._connection.connect(
             use_tls=p["use_tls"],
             tls_cert=p["tls_cert"],
@@ -223,7 +294,7 @@ class S7CommPlusClient:
     def _probe_family_keys(self, family: int, excluded: set[str] | None = None) -> None:
         """Try each same-family key on a new connection and cache the winner."""
         assert self._connect_params is not None
-        from .session_auth.keys import fingerprints_for_family
+        from .v1_session_key.keys import fingerprints_for_family
 
         excluded = excluded or set()
         candidates = [fingerprint for fingerprint in fingerprints_for_family(family) if fingerprint not in excluded]
@@ -250,6 +321,9 @@ class S7CommPlusClient:
         symbolic ``GetMultiVariables`` read per connection, so multi-step flows
         such as :meth:`browse` need a fresh session to continue.
         """
+        self._subscriptions.clear()
+        self._alarm_subscription_ids.clear()
+        self._alarm_notification_frames.clear()
         if self._connection is not None:
             try:
                 self._connection.disconnect()
@@ -272,6 +346,9 @@ class S7CommPlusClient:
 
     def disconnect(self) -> None:
         """Disconnect from PLC."""
+        self._subscriptions.clear()
+        self._alarm_subscription_ids.clear()
+        self._alarm_notification_frames.clear()
         if self._connection:
             self._connection.disconnect()
             self._connection = None
@@ -295,7 +372,7 @@ class S7CommPlusClient:
         if self._connection.requires_substreamed:
             return self._db_read_substreamed(db_number, start, size)
 
-        payload = _build_read_payload([(db_number, start, size)], self._connection.protocol_version)
+        payload = _build_read_payload([(db_number, start, size)], self._connection.object_qualifier_version)
         response = self._connection.send_request(FunctionCode.GET_MULTI_VARIABLES, payload)
         results = _parse_read_response(response)
         if not results:
@@ -346,7 +423,7 @@ class S7CommPlusClient:
                 self._db_write_substreamed(db_number, start, data, datatype)
             return
 
-        payload = _build_write_payload(items, self._connection.protocol_version)
+        payload = _build_write_payload(items, self._connection.object_qualifier_version)
         response = self._connection.send_request(FunctionCode.SET_MULTI_VARIABLES, payload)
         _parse_write_response(response)
 
@@ -382,7 +459,7 @@ class S7CommPlusClient:
         if self._connection.requires_substreamed:
             return [self._db_read_substreamed(db, start, size) for db, start, size in items]
 
-        payload = _build_read_payload(items, self._connection.protocol_version)
+        payload = _build_read_payload(items, self._connection.object_qualifier_version)
         response = self._connection.send_request(FunctionCode.GET_MULTI_VARIABLES, payload)
         parsed = _parse_read_response(response)
         return [r if r is not None else b"" for r in parsed]
@@ -412,7 +489,7 @@ class S7CommPlusClient:
             response = self._connection.send_request(FunctionCode.GET_VAR_SUBSTREAMED, payload)
             return _parse_substreamed_read_response(response)
 
-        payload = _build_area_read_payload(area_rid, start, size, self._connection.protocol_version)
+        payload = _build_area_read_payload(area_rid, start, size, self._connection.object_qualifier_version)
         response = self._connection.send_request(FunctionCode.GET_MULTI_VARIABLES, payload)
         results = _parse_read_response(response)
         if not results or results[0] is None:
@@ -444,7 +521,7 @@ class S7CommPlusClient:
             self._connection.send_request(FunctionCode.SET_VAR_SUBSTREAMED, payload)
             return
 
-        payload = _build_area_write_payload(area_rid, start, data, self._connection.protocol_version, datatype=datatype)
+        payload = _build_area_write_payload(area_rid, start, data, self._connection.object_qualifier_version, datatype=datatype)
         response = self._connection.send_request(FunctionCode.SET_MULTI_VARIABLES, payload)
         _parse_write_response(response)
 
@@ -485,8 +562,7 @@ class S7CommPlusClient:
         if self._connection is None:
             raise RuntimeError("Not connected")
 
-        version = ProtocolVersion.V2 if self._connection.legacy_s7_1500 else self._connection.protocol_version
-        payload = _build_symbolic_read_payload(access_area, lids, symbol_crc, version)
+        payload = _build_symbolic_read_payload(access_area, lids, symbol_crc, self._connection.object_qualifier_version)
         response = self._connection.send_request(FunctionCode.GET_MULTI_VARIABLES, payload)
         results = _parse_read_response(response)
         if not results or results[0] is None:
@@ -513,8 +589,7 @@ class S7CommPlusClient:
         if not items:
             return []
 
-        version = ProtocolVersion.V2 if self._connection.legacy_s7_1500 else self._connection.protocol_version
-        payload = _build_multi_symbolic_read_payload(items, version)
+        payload = _build_multi_symbolic_read_payload(items, self._connection.object_qualifier_version)
         response = self._connection.send_request(FunctionCode.GET_MULTI_VARIABLES, payload)
         results = _parse_read_response(response, expected_count=len(items))
         if len(results) != len(items):
@@ -620,7 +695,7 @@ class S7CommPlusClient:
             for tag, data in zip(tags, values.values())
             if tag.datatype is not None
         ]
-        payload = _build_multi_symbolic_write_payload(items, self._connection.protocol_version)
+        payload = _build_multi_symbolic_write_payload(items, self._connection.object_qualifier_version)
         response = self._connection.send_request(FunctionCode.SET_MULTI_VARIABLES, payload)
         try:
             errors = _parse_write_response_errors(response, expected_count=len(tags))
@@ -768,7 +843,18 @@ class S7CommPlusClient:
         .. warning:: This method is **experimental** and may change.
 
         Returns:
-            List of dicts with keys ``name``, ``number``, ``rid``.
+            List of dicts with keys ``name``, ``number``, ``rid``,
+            ``language`` (block language name or ``None``),
+            ``knowhow_protected`` and ``unlinked``.
+
+        Note:
+            ``knowhow_protected`` reports the presence of the
+            ``Block.KnowhowProtected`` attribute. The assumption — not
+            verified against a PLC — is that PLCs send the attribute only for
+            protected blocks; if a firmware sends it for every block, this
+            reads as ``True`` for all of them. The struct's ``Mode`` element
+            would be the exact signal, but no capture showing the attribute
+            for an unprotected block is available to pin its encoding.
         """
         if self._connection is None:
             raise RuntimeError("Not connected")
@@ -883,9 +969,11 @@ class S7CommPlusClient:
 
     def create_subscription(
         self,
-        items: Sequence[SubscriptionItem | str],
+        items: Sequence[SubscriptionItem | SymbolicTag | str],
         cycle_ms: int = 100,
         credit_limit: int = 10,
+        credit_step: int = 5,
+        queue_size: int = 100,
     ) -> int:
         """Create a data change subscription.
 
@@ -901,6 +989,8 @@ class S7CommPlusClient:
             cycle_ms: Sampling cycle in milliseconds.
             credit_limit: Number of notification credits. The default of 10
                 matches the value accepted by real S7-1500 PLCs.
+            credit_step: Credits added before a finite limit expires.
+            queue_size: Maximum buffered notifications for this subscription.
 
         Returns:
             Subscription object ID assigned by the PLC.
@@ -910,13 +1000,23 @@ class S7CommPlusClient:
         if self._connection.subscription_container_id == 0:
             raise RuntimeError("PLC did not provide a subscription container object")
 
-        normalized = [SubscriptionItem.from_access_sequence(item) if isinstance(item, str) else item for item in items]
+        if not 0 <= credit_step <= 255:
+            raise ValueError("credit_step must be between 0 and 255")
+        normalized = [
+            SubscriptionItem.from_access_sequence(item)
+            if isinstance(item, str)
+            else SubscriptionItem.from_tag(item)
+            if isinstance(item, SymbolicTag)
+            else item
+            for item in items
+        ]
+        change_counter = self._subscription_change_counter
         payload, integrity_tail = build_subscription_request(
             self._connection.subscription_container_id,
             normalized,
             cycle_ms=cycle_ms,
             credit_limit=credit_limit,
-            change_counter=self._subscription_change_counter,
+            change_counter=change_counter,
             relation_id=self._subscription_relation_id,
         )
         response = self._connection.send_request(
@@ -931,14 +1031,107 @@ class S7CommPlusClient:
         self._subscription_change_counter = self._subscription_change_counter % 0xFF + 1
         self._subscription_relation_id = (self._subscription_relation_id + 1) & 0xFFFFFFFF
         subscription_id = object_ids[0]
+        self._subscriptions.register(
+            subscription_id,
+            normalized,
+            change_counter=change_counter,
+            credit_limit=credit_limit,
+            credit_step=credit_step,
+            queue_size=queue_size,
+            cycle_ms=cycle_ms,
+        )
         logger.info(f"Subscription created, id={subscription_id:#x}")
         return subscription_id
 
-    def receive_subscription_notification(self) -> SubscriptionNotification:
-        """Block until the PLC sends one data-subscription notification."""
+    def resubscribe(self) -> SubscriptionRestoreResult:
+        """Recreate the data subscriptions lost with the previous session.
+
+        Call it after reconnecting. Every subscription that was live when the
+        session ended is created again with its items, cycle, credits, queue size
+        and callbacks; the PLC assigns new IDs, which ``restored`` maps from the old
+        ones. A subscription the PLC rejects (for example a renamed tag) lands in
+        ``failed`` without stopping the others and stays pending for a retry.
+        Notifications from the gap are not replayed. Alarm subscriptions are not
+        restored.
+
+        .. warning:: This method is **experimental** and may change.
+        """
+        restored: dict[int, int] = {}
+        failed: dict[int, Exception] = {}
+        for spec in self._subscriptions.pending_restore:
+            try:
+                new_id = self.create_subscription(
+                    spec.items,
+                    cycle_ms=spec.cycle_ms,
+                    credit_limit=spec.credit_limit,
+                    credit_step=spec.credit_step,
+                    queue_size=spec.queue_size,
+                )
+            except Exception as exc:
+                logger.warning(f"Could not restore subscription {spec.subscription_id:#x}: {exc}")
+                failed[spec.subscription_id] = exc
+                continue
+            for callback in spec.callbacks:
+                self._subscriptions.add_callback(new_id, callback)
+            self._subscriptions.mark_restored(spec.subscription_id)
+            restored[spec.subscription_id] = new_id
+        return SubscriptionRestoreResult(restored, failed)
+
+    def forget_lost_subscriptions(self) -> None:
+        """Stop remembering the subscriptions lost with the previous session."""
+        self._subscriptions.forget_pending_restore()
+
+    def receive_subscription_notification(self, subscription_id: int | None = None) -> SubscriptionNotification:
+        """Block until one routed data notification is available."""
         if self._connection is None:
             raise RuntimeError("Not connected")
-        return parse_subscription_notification(self._connection.receive_notification())
+        if subscription_id is not None:
+            queued = self._subscriptions.pop(subscription_id)
+            if queued is not None:
+                return queued
+        while True:
+            frame = self._connection.receive_notification()
+            frame_subscription_id = notification_subscription_id(frame)
+            if frame_subscription_id in self._alarm_subscription_ids:
+                self._alarm_notification_frames.append(frame)
+                continue
+            notification = parse_subscription_notification(frame)
+            matched, credit_update = self._subscriptions.route(notification)
+            if not matched:
+                continue
+            if credit_update is not None:
+                self._connection.send_subscription_credit(notification.subscription_id, credit_update)
+            target_id = notification.subscription_id if subscription_id is None else subscription_id
+            queued = self._subscriptions.pop(target_id)
+            if queued is not None:
+                return queued
+
+    def iter_subscription_notifications(
+        self, subscription_id: int, limit: int | None = None
+    ) -> Iterator[SubscriptionNotification]:
+        """Yield routed notifications, optionally stopping after ``limit``."""
+        delivered = 0
+        while limit is None or delivered < limit:
+            yield self.receive_subscription_notification(subscription_id)
+            delivered += 1
+
+    def add_subscription_callback(self, subscription_id: int, callback: Callable[[SubscriptionNotification], None]) -> None:
+        """Invoke ``callback`` whenever this client dispatches an update."""
+        self._subscriptions.add_callback(subscription_id, callback)
+
+    def remove_subscription_callback(self, subscription_id: int, callback: Callable[[SubscriptionNotification], None]) -> None:
+        self._subscriptions.remove_callback(subscription_id, callback)
+
+    def subscription_diagnostics(self, subscription_id: int) -> SubscriptionDiagnostics:
+        """Return queue overflow and sequence-gap counters."""
+        diagnostics = self._subscriptions.diagnostics(subscription_id)
+        return SubscriptionDiagnostics(
+            diagnostics.subscription_id,
+            diagnostics.queued_notifications,
+            diagnostics.dropped_notifications,
+            diagnostics.missed_sequence_updates,
+            getattr(self._connection, "_notification_frame_overflows", 0),
+        )
 
     def delete_subscription(self, subscription_id: int) -> None:
         """Delete a data change subscription.
@@ -957,6 +1150,11 @@ class S7CommPlusClient:
         # result. The reference driver deletes that container, not the child ID.
         payload = build_delete_subscription_request(self._connection.subscription_container_id, self._connection.protocol_version)
         self._connection.send_request(FunctionCode.DELETE_OBJECT, payload)
+        for active_id in self._subscriptions.subscription_ids:
+            self._subscriptions.unregister(active_id)
+        self._alarm_subscription_ids.clear()
+        self._alarm_notification_frames.clear()
+        self._connection._notification_frames.clear()
         logger.info(f"Subscription {subscription_id:#x} deleted")
 
     def create_alarm_subscription(
@@ -992,7 +1190,9 @@ class S7CommPlusClient:
         object_ids, _, return_value = parse_create_object_session_id(response)
         if return_value != 0 or not object_ids:
             raise RuntimeError(f"Alarm subscription failed: PLC returned {return_value:#x}")
-        return object_ids[0]
+        subscription_id = object_ids[0]
+        self._alarm_subscription_ids.add(subscription_id)
+        return subscription_id
 
     def delete_alarm_subscription(self, subscription_id: int) -> None:
         """Delete an alarm subscription created by this client."""
@@ -1004,17 +1204,34 @@ class S7CommPlusClient:
             self._connection.subscription_container_id, self._connection.protocol_version
         )
         self._connection.send_request(FunctionCode.DELETE_OBJECT, payload)
+        for active_id in self._subscriptions.subscription_ids:
+            self._subscriptions.unregister(active_id)
+        self._alarm_subscription_ids.clear()
+        self._alarm_notification_frames.clear()
+        self._connection._notification_frames.clear()
         logger.info(f"Alarm subscription {subscription_id:#x} deleted")
 
     def receive_alarm_notification(self, language_ids: Optional[list[LanguageId | int]] = None) -> AlarmNotification:
         """Block until the PLC sends one alarm notification.
 
-        Do not run this alongside a data-subscription receive loop on the same
-        connection: mixed notification dispatch is not supported yet.
+        Data notifications encountered first are routed to their bounded queues.
         """
         if self._connection is None:
             raise RuntimeError("Not connected")
-        return parse_alarm_notification(self._connection.receive_notification(), language_ids)
+        while True:
+            frame = (
+                self._alarm_notification_frames.popleft()
+                if self._alarm_notification_frames
+                else self._connection.receive_notification()
+            )
+            frame_subscription_id = notification_subscription_id(frame)
+            if self._subscriptions.contains(frame_subscription_id):
+                notification = parse_subscription_notification(frame)
+                matched, credit_update = self._subscriptions.route(notification)
+                if matched and credit_update is not None:
+                    self._connection.send_subscription_credit(frame_subscription_id, credit_update)
+                continue
+            return parse_alarm_notification(frame, language_ids)
 
     def read_alarms(self, language_ids: Optional[list[LanguageId | int]] = None) -> list[Alarm]:
         """Return the PLC's current active alarm state.
@@ -1552,7 +1769,8 @@ def _parse_explore_datablocks(response: bytes) -> list[dict[str, Any]]:
         _, consumed = decode_uint64_vlq(response, offset)
         offset += consumed
 
-    stack: list[list[Any]] = []  # each entry: [relation_id, class_id, name]
+    # Each stack entry: [relation_id, class_id, name, language, knowhow, unlinked]
+    stack: list[list[Any]] = []
     while offset < len(response):
         tag = response[offset]
 
@@ -1568,24 +1786,38 @@ def _parse_explore_datablocks(response: bytes) -> list[dict[str, Any]]:
             offset += consumed
             _attr_id, consumed = decode_uint32_vlq(response, offset)  # AttributeId
             offset += consumed
-            stack.append([relid, class_id, ""])
+            stack.append([relid, class_id, "", None, False, False])
 
         elif tag == ElementID.TERMINATING_OBJECT:
             offset += 1
             if stack:
-                relid, class_id, name = stack.pop()
+                relid, class_id, name, language, knowhow, unlinked = stack.pop()
                 if class_id == Ids.DB_CLASS_RID and (relid >> 16) == 0x8A0E:
-                    datablocks.append({"name": name, "number": relid & 0xFFFF, "rid": relid})
+                    datablocks.append(
+                        {
+                            "name": name,
+                            "number": relid & 0xFFFF,
+                            "rid": relid,
+                            "language": language,
+                            "knowhow_protected": knowhow,
+                            "unlinked": unlinked,
+                        }
+                    )
 
         elif tag == ElementID.ATTRIBUTE:
             offset += 1
             attr_id, consumed = decode_uint32_vlq(response, offset)
             offset += consumed
+            value_start = offset
             try:
                 value, consumed = decode_pvalue_to_bytes(response, offset)
             except (ValueError, IndexError):
                 break
-            offset += consumed
+            # The two typed-value header bytes ([flags][datatype]) sit at the
+            # value's start; decode_pvalue_to_bytes returns only the payload.
+            attribute_flags = response[value_start] if value_start < len(response) else 0
+            attribute_datatype = response[value_start + 1] if value_start + 1 < len(response) else 0
+            offset = value_start + consumed
             if attr_id == Ids.OBJECT_VARIABLE_TYPE_NAME and stack:
                 # Block names arrive as a WString. On the S7-1500 the ASCII range is
                 # transmitted one byte per character (no null high-bytes), so the
@@ -1604,6 +1836,29 @@ def _parse_explore_datablocks(response: bytes) -> list[dict[str, Any]]:
                     stack[-1][2] = name.rstrip("\x00")
                 except Exception:
                     pass
+
+            elif attr_id == Ids.BLOCK_BLOCK_LANGUAGE and stack:
+                # Language is a fixed-width USINT (one byte) or UINT (two,
+                # big-endian) depending on firmware — never a VLQ, so a code
+                # of 0x80 or more must not be read as a continuation byte.
+                if value:
+                    if not attribute_flags & 0x10 and attribute_datatype == DataType.USINT and len(value) >= 1:
+                        stack[-1][3] = block_language_name(value[0])
+                    elif not attribute_flags & 0x10 and attribute_datatype in (DataType.UINT, DataType.WORD) and len(value) >= 2:
+                        stack[-1][3] = block_language_name(int.from_bytes(value[:2], "big"))
+                    else:
+                        # Unknown shape: leave the language unset rather than
+                        # misread it.
+                        pass
+
+            elif attr_id == Ids.BLOCK_KNOWHOW_PROTECTED and stack:
+                # A present KnowhowProtected attribute means the block is protected;
+                # its value is struct 0xD77, whose presence alone is the signal.
+                stack[-1][4] = True
+
+            elif attr_id == Ids.BLOCK_UNLINKED and stack:
+                if value:
+                    stack[-1][5] = value[0] != 0
 
         else:
             # Response-preamble fields before the first object, or unhandled element

@@ -664,7 +664,7 @@ class TestSessionKeyIntegration:
     def session_key_server(self, monkeypatch: pytest.MonkeyPatch) -> Generator[S7CommPlusServer, None, None]:
         # The emulator does not own Siemens' private key, so make the client-side
         # key exchange deterministic and configure the matching negotiated key.
-        from s7commplus.session_auth import legacy_auth, legitimate
+        from s7commplus.v1_session_key import handshake, legitimation
 
         def authenticate(challenge: bytes, public_key: bytes, family: int) -> tuple[bytes, bytes]:
             assert challenge == TEST_CHALLENGE
@@ -672,8 +672,8 @@ class TestSessionKeyIntegration:
             assert int(family) == 1
             return bytes(180), TEST_SESSION_KEY
 
-        monkeypatch.setattr(legacy_auth, "authenticate_real_plc", authenticate)
-        monkeypatch.setattr(legitimate, "solve_legitimate_challenge_real_plc", lambda *args: bytes(248))
+        monkeypatch.setattr(handshake, "authenticate_real_plc", authenticate)
+        monkeypatch.setattr(legitimation, "solve_legitimate_challenge_real_plc", lambda *args: bytes(248))
         srv = S7CommPlusServer(
             public_key_fingerprint=TEST_FINGERPRINT,
             session_challenge=TEST_CHALLENGE,
@@ -741,7 +741,16 @@ class TestSessionKeyIntegration:
         client = S7CommPlusClient()
         client.connect("127.0.0.1", port=SESSION_KEY_PORT)
         try:
-            assert client.list_datablocks() == [{"name": "DB1", "number": 1, "rid": 0x8A0E0001}]
+            assert client.list_datablocks() == [
+                {
+                    "name": "DB1",
+                    "number": 1,
+                    "rid": 0x8A0E0001,
+                    "language": None,
+                    "knowhow_protected": False,
+                    "unlinked": False,
+                }
+            ]
         finally:
             client.disconnect()
 

@@ -26,7 +26,18 @@ from s7commplus.connection import S7CommPlusConnection, _strip_paom_string_in_se
 from s7commplus.codec import encode_header, encode_object_qualifier, encode_pvalue_blob
 from s7commplus.codec import _pvalue_element_size as _element_size
 from s7commplus.codec import skip_typed_value, parse_server_session_version
-from s7commplus.protocol import DataType, ElementID, FunctionCode, Ids, ObjectId, Opcode, ProtocolVersion
+from s7commplus.protocol import (
+    DataType,
+    ElementID,
+    FunctionCode,
+    Ids,
+    ObjectId,
+    Opcode,
+    ProtocolVersion,
+    ServiceResult,
+    block_language_name,
+    service_result_code,
+)
 from s7commplus.vlq import (
     encode_uint32_vlq,
     encode_uint64_vlq,
@@ -36,6 +47,93 @@ from s7commplus.vlq import (
 
 
 # -- Payload builder / parser tests --
+
+
+class TestProtocolConstants:
+    """Pin wire values of the protocol enums.
+
+    These are on-the-wire facts; a change here is a protocol-visible change
+    and must be justified in CHANGES.md.
+    """
+
+    def test_function_code_values(self) -> None:
+        expected = {
+            "ERROR": 0x04B1,
+            "EXPLORE": 0x04BB,
+            "CREATE_OBJECT": 0x04CA,
+            "DELETE_OBJECT": 0x04D4,
+            "SET_VARIABLE": 0x04F2,
+            "GET_VARIABLE": 0x04FC,
+            "ADD_LINK": 0x0506,
+            "REMOVE_LINK": 0x051A,
+            "GET_LINK": 0x0524,
+            "NOTIFY": 0x052E,
+            "SET_MULTI_VARIABLES": 0x0542,
+            "GET_MULTI_VARIABLES": 0x054C,
+            "BEGIN_SEQUENCE": 0x0556,
+            "END_SEQUENCE": 0x0560,
+            "INVOKE": 0x056B,
+            "SET_VAR_SUBSTREAMED": 0x057C,
+            "GET_VAR_SUBSTREAMED": 0x0586,
+            "GET_VARIABLES_ADDRESS": 0x0590,
+            "ABORT": 0x059A,
+            "ERROR2": 0x05A9,
+            "INIT_SSL": 0x05B3,
+        }
+        for name, value in expected.items():
+            assert FunctionCode[name] == value, name
+
+    def test_function_codes_are_unique(self) -> None:
+        values = [int(code) for code in FunctionCode]
+        assert len(values) == len(set(values))
+
+    def test_element_id_values(self) -> None:
+        expected = {
+            "START_OF_OBJECT": 0xA1,
+            "TERMINATING_OBJECT": 0xA2,
+            "ATTRIBUTE": 0xA3,
+            "RELATION": 0xA4,
+            "ERROR": 0xA5,
+            "INCLUDE_OBJECT": 0xA6,
+            "START_OF_TAG_DESCRIPTION": 0xA7,
+            "TERMINATING_TAG_DESCRIPTION": 0xA8,
+            "LINK_NAMESPACE": 0xA9,
+            "TYPE_MICRO_INFO": 0xAB,
+            "TYPE_MICRO_NAMES": 0xAC,
+        }
+        for name, value in expected.items():
+            assert ElementID[name] == value, name
+
+    def test_element_id_aliases_point_at_the_type_list_tags(self) -> None:
+        # The parser names 0xAB/0xAC VARTYPE/VARNAME list; the wire tags are
+        # the type-micro list tags, and both spellings must stay in sync.
+        assert ElementID.VARTYPE_LIST == ElementID.TYPE_MICRO_INFO == 0xAB
+        assert ElementID.VARNAME_LIST == ElementID.TYPE_MICRO_NAMES == 0xAC
+
+    def test_session_version_struct_elements(self) -> None:
+        assert Ids.SESSION_VERSION_STRUCT == 314
+        assert Ids.SESSION_VERSION_SYSTEM_OMS == 315
+        assert Ids.SESSION_VERSION_PROJECT_OMS == 316
+        assert Ids.SESSION_VERSION_SYSTEM_PAOM == 317
+        assert Ids.SESSION_VERSION_PROJECT_PAOM == 318
+        assert Ids.SESSION_VERSION_SYSTEM_PAOM_STRING == 319
+        assert Ids.SESSION_VERSION_PROJECT_PAOM_STRING == 320
+
+    def test_native_object_roots(self) -> None:
+        assert Ids.NATIVE_THE_AS_ROOT_RID == 1
+        assert Ids.NATIVE_THE_HW_CONFIGURATION_RID == 2
+        assert Ids.NATIVE_THE_PLC_PROGRAM_RID == 3
+        assert Ids.NATIVE_THE_CPU_RID == 48
+        assert Ids.NATIVE_THE_CPU_EXEC_UNIT_RID == 52
+        assert Ids.NATIVE_THE_WEB_SERVER_RID == 53
+        assert Ids.NATIVE_THE_CPU_DISPLAY_RID == 54
+
+    def test_server_session_attribute_ids(self) -> None:
+        assert Ids.SERVER_SESSION_CLIENT_ID == 289
+        assert Ids.SERVER_SESSION_TIMEOUT == 302
+        assert Ids.SERVER_SESSION_ROLES == 305
+        assert Ids.CLIENT_SESSION_PASSWORD == 309
+        assert Ids.CLIENT_SESSION_LEGITIMATED == 310
 
 
 class TestBuildReadPayload:
@@ -768,7 +866,129 @@ class TestExploreDatablocks:
         assert len(dbs) == 1
         assert dbs[0]["number"] == 42
         assert dbs[0]["rid"] == Ids.DB_ACCESS_AREA_BASE | 42
-        assert dbs[0]["name"] == "DataBlock_1"
+
+    @staticmethod
+    def _db_object(db_number: int, name: bytes = b"DataBlock_1", extra_attributes: bytes = b"") -> bytes:
+        from s7commplus.protocol import Ids
+
+        r = bytearray()
+        r += bytes([ElementID.START_OF_OBJECT])
+        r += struct.pack(">I", Ids.DB_ACCESS_AREA_BASE | db_number)
+        r += encode_uint32_vlq(Ids.DB_CLASS_RID)
+        r += encode_uint32_vlq(0)  # ClassFlags
+        r += encode_uint32_vlq(0)  # AttributeId
+        r += bytes([ElementID.ATTRIBUTE])
+        r += encode_uint32_vlq(Ids.OBJECT_VARIABLE_TYPE_NAME)
+        r += bytes([0x00, DataType.WSTRING]) + encode_uint32_vlq(len(name)) + name
+        r += extra_attributes
+        r += bytes([ElementID.TERMINATING_OBJECT])
+        return bytes(r)
+
+    def test_parse_explore_datablocks_defaults_without_block_metadata(self) -> None:
+        r = encode_uint64_vlq(0) + self._db_object(7)
+        dbs = _parse_explore_datablocks(bytes(r))
+        assert dbs == [
+            {
+                "name": "DataBlock_1",
+                "number": 7,
+                "rid": Ids.DB_ACCESS_AREA_BASE | 7,
+                "language": None,
+                "knowhow_protected": False,
+                "unlinked": False,
+            }
+        ]
+
+    def test_parse_explore_datablocks_reports_knowhow_protection(self) -> None:
+        # KnowhowProtected (0x9DC) is struct 0xD77; its presence marks the block.
+        # Struct ids are fixed 4-byte values, member keys are VLQ.
+        knowhow = (
+            bytes([ElementID.ATTRIBUTE])
+            + encode_uint32_vlq(Ids.BLOCK_KNOWHOW_PROTECTED)
+            + bytes([0x00, DataType.STRUCT])
+            + struct.pack(">I", Ids.KNOWHOW_PROTECTION_STRUCT)
+            + encode_uint32_vlq(Ids.KNOWHOW_PROTECTION_MODE)
+            + bytes([0x00, DataType.WORD])
+            + struct.pack(">H", 1)
+            + encode_uint32_vlq(0)  # struct terminator key
+        )
+        r = encode_uint64_vlq(0) + self._db_object(8, extra_attributes=knowhow)
+        dbs = _parse_explore_datablocks(bytes(r))
+        assert dbs[0]["knowhow_protected"] is True
+        assert dbs[0]["language"] is None
+
+    def test_parse_explore_datablocks_reports_language(self) -> None:
+        from s7commplus.protocol import Ids
+
+        language = (
+            bytes([ElementID.ATTRIBUTE]) + encode_uint32_vlq(Ids.BLOCK_BLOCK_LANGUAGE) + bytes([0x00, DataType.USINT, 4])  # SCL
+        )
+        r = encode_uint64_vlq(0) + self._db_object(9, extra_attributes=language)
+        dbs = _parse_explore_datablocks(bytes(r))
+        assert dbs[0]["language"] == "SCL"
+        assert dbs[0]["knowhow_protected"] is False
+
+    def test_parse_explore_datablocks_reports_unknown_language(self) -> None:
+        language = (
+            bytes([ElementID.ATTRIBUTE]) + encode_uint32_vlq(Ids.BLOCK_BLOCK_LANGUAGE) + bytes([0x00, DataType.USINT, 0x7B])
+        )
+        r = encode_uint64_vlq(0) + self._db_object(10, extra_attributes=language)
+        dbs = _parse_explore_datablocks(bytes(r))
+        assert dbs[0]["language"] == "language 123"
+
+    def test_parse_explore_datablocks_language_codes_at_and_above_128(self) -> None:
+        # A USINT code of 0x80+ would look like a VLQ continuation if decoded
+        # as VLQ; it must be read as the single byte it is. 201 is MOTION_DB,
+        # 300 (above any single byte) arrives as a UINT.
+        motion_db = (
+            bytes([ElementID.ATTRIBUTE]) + encode_uint32_vlq(Ids.BLOCK_BLOCK_LANGUAGE) + bytes([0x00, DataType.USINT, 201])
+        )
+        dbs = _parse_explore_datablocks(encode_uint64_vlq(0) + self._db_object(12, extra_attributes=motion_db))
+        assert dbs[0]["language"] == "MOTION_DB"
+
+        as_uint = (
+            bytes([ElementID.ATTRIBUTE])
+            + encode_uint32_vlq(Ids.BLOCK_BLOCK_LANGUAGE)
+            + bytes([0x00, DataType.UINT])
+            + struct.pack(">H", 300)
+        )
+        dbs = _parse_explore_datablocks(encode_uint64_vlq(0) + self._db_object(13, extra_attributes=as_uint))
+        assert dbs[0]["language"] == "GRAPH_ACTIONS"  # 300 is a defined code
+
+        unknown_uint = (
+            bytes([ElementID.ATTRIBUTE])
+            + encode_uint32_vlq(Ids.BLOCK_BLOCK_LANGUAGE)
+            + bytes([0x00, DataType.UINT])
+            + struct.pack(">H", 1234)
+        )
+        dbs = _parse_explore_datablocks(encode_uint64_vlq(0) + self._db_object(14, extra_attributes=unknown_uint))
+        assert dbs[0]["language"] == "language 1234"
+
+    def test_parse_explore_datablocks_reports_unlinked(self) -> None:
+        unlinked = bytes([ElementID.ATTRIBUTE]) + encode_uint32_vlq(Ids.BLOCK_UNLINKED) + bytes([0x00, DataType.BOOL, 1])
+        r = encode_uint64_vlq(0) + self._db_object(11, extra_attributes=unlinked)
+        dbs = _parse_explore_datablocks(bytes(r))
+        assert dbs[0]["unlinked"] is True
+
+
+class TestBlockLanguage:
+    def test_known_codes(self) -> None:
+        from s7commplus.protocol import BlockLanguage
+
+        assert BlockLanguage.STL == 1
+        assert BlockLanguage.LAD == 2
+        assert BlockLanguage.FBD == 3
+        assert BlockLanguage.SCL == 4
+        assert BlockLanguage.DB == 5
+        assert BlockLanguage.GRAPH == 6
+        assert BlockLanguage.CPU_DB == 8
+        assert BlockLanguage.C_FOR_S7 == 21
+        assert BlockLanguage.MC7PLUS == 400
+
+    def test_names(self) -> None:
+        assert block_language_name(0) == "UNDEF"
+        assert block_language_name(4) == "SCL"
+        assert block_language_name(201) == "MOTION_DB"
+        assert block_language_name(4242) == "language 4242"
 
 
 class TestReassembledPayload:
@@ -797,6 +1017,22 @@ class TestReassembledPayload:
     def test_multiple_fragments_split_across_reads(self) -> None:
         conn = self._conn_yielding([self._frag(b"abc"), self._frag(b"de"), self._TRAILER])
         assert conn._recv_reassembled_payload() == b"abcde"
+
+    _SYSTEM_EVENT = bytes([0x72, ProtocolVersion.SYSTEM_EVENT, 0x00, 0x10]) + bytes(16)
+
+    @pytest.mark.parametrize("split", [1, 3, 7, 1024])
+    def test_system_event_between_fragments_is_skipped(self, split: int) -> None:
+        stream = self._frag(b"abc") + self._SYSTEM_EVENT + self._frag(b"de") + self._SYSTEM_EVENT + self._TRAILER
+        conn = self._conn_yielding([stream[i : i + split] for i in range(0, len(stream), split)])
+        assert conn._recv_reassembled_payload() == b"abcde"
+
+    def test_too_many_system_events_during_reassembly_raises(self) -> None:
+        from s7commplus.connection import _MAX_SYSTEM_EVENTS_PER_RESPONSE
+        from s7commplus.error import S7ProtocolError
+
+        conn = self._conn_yielding([self._frag(b"abc")] + [self._SYSTEM_EVENT] * (_MAX_SYSTEM_EVENTS_PER_RESPONSE + 1))
+        with pytest.raises(S7ProtocolError, match="SystemEvents"):
+            conn._recv_reassembled_payload()
 
     def test_v3_session_key_hmac_is_stripped_from_each_fragment(self) -> None:
         conn = self._conn_yielding([])
@@ -912,3 +1148,179 @@ class TestV3ResponseIntegrity:
         with pytest.raises(S7IntegrityError, match="unauthenticated frame version"):
             conn.send_request(FunctionCode.GET_MULTI_VARIABLES)
         assert not conn.connected
+
+
+class TestLegitimationRejection:
+    # Legitimation response of an S7-1215C (FW V4.2) with no password, reported on PR #44.
+    _REJECTED = bytes.fromhex("c1c691908086e7fffe0500000000")
+
+    def test_rejection_hidden_by_integrity_id_strip_is_detected(self) -> None:
+        from s7commplus.connection import _check_v1_legitimation_response, _strip_response_integrity_id
+        from s7commplus.error import S7ConnectionError
+
+        stripped = _strip_response_integrity_id(FunctionCode.SET_VAR_SUBSTREAMED, self._REJECTED, True, False)
+        _check_v1_legitimation_response(stripped)  # the stripped reading alone looks like success
+        with pytest.raises(S7ConnectionError, match="rejected"):
+            _check_v1_legitimation_response(stripped, self._REJECTED)
+
+    def test_success_with_leading_integrity_id_is_accepted(self) -> None:
+        from s7commplus.connection import _check_v1_legitimation_response
+
+        raw = bytes([0x05, 0x00, 0x00, 0x00])  # IntegrityId 5, return value 0
+        _check_v1_legitimation_response(raw[1:], raw)
+
+    def test_async_client_checks_raw_response(self) -> None:
+        from s7commplus.async_client import S7CommPlusAsyncClient
+
+        client = S7CommPlusAsyncClient()
+        assert client._response_payload(FunctionCode.SET_VAR_SUBSTREAMED, self._REJECTED) is not None
+        assert client._last_raw_response_payload == self._REJECTED
+
+
+class TestServiceResultCodes:
+    """The legitimation outcomes a PLC can answer with besides plain zero."""
+
+    @pytest.mark.parametrize(
+        ("code", "expected"),
+        [
+            (0, ServiceResult.OK),
+            (-2, ServiceResult.INVALID_VALUE_TYPE),
+            (-118, ServiceResult.SERVICE_SESSION_DELEGITIMATED_LEGACY),
+            (17, ServiceResult.SESSION_PRE_LEGITIMIZED),
+            (22, ServiceResult.SERVICE_SESSION_DELEGITIMATED),
+            (25, ServiceResult.SERVICE_LEGITIMATED_FOR_LEVEL2),
+            (33, ServiceResult.SERVICE_LEGITIMATED_FOR_LEVEL1),
+        ],
+    )
+    def test_enum_values(self, code: int, expected: ServiceResult) -> None:
+        assert ServiceResult(code) is expected
+
+    @pytest.mark.parametrize(
+        ("return_value", "expected_code"),
+        [
+            (0, 0),  # plain success
+            (-118, -118),  # legacy bare negative
+            (0x8318890001B3FFFE, -2),  # composite from issue #70: sign-extended low word
+            (0x8318890001B3FF9A, -102),  # arbitrary negative low word
+            (17, 17),  # positive informational stays itself
+            (25, 25),
+            (0x100, 256),  # low word without the sign bit is the value itself
+        ],
+    )
+    def test_service_result_code_extracts_the_low_word(self, return_value: int, expected_code: int) -> None:
+        assert service_result_code(return_value) == expected_code
+
+
+class TestLegitimationOutcomes:
+    """Positive legitimation outcomes must be accepted; wrong password must raise."""
+
+    @staticmethod
+    def _payload(return_value: int) -> bytes:
+        return encode_uint64_vlq(return_value if return_value >= 0 else return_value + (1 << 64)) + b"\x00" * 4
+
+    @pytest.mark.parametrize(
+        "code",
+        [
+            ServiceResult.OK,
+            ServiceResult.SESSION_PRE_LEGITIMIZED,
+            ServiceResult.SERVICE_LEGITIMATED_FOR_LEVEL1,
+            ServiceResult.SERVICE_LEGITIMATED_FOR_LEVEL2,
+            ServiceResult.SERVICE_LEGITIMATED_FOR_LEVEL3,
+        ],
+    )
+    def test_accepted_outcomes(self, code: ServiceResult) -> None:
+        from s7commplus.connection import _check_v1_legitimation_response
+
+        _check_v1_legitimation_response(self._payload(int(code)))
+
+    @pytest.mark.parametrize(
+        "code",
+        [
+            ServiceResult.SERVICE_SESSION_DELEGITIMATED,
+            ServiceResult.SERVICE_SESSION_DELEGITIMATED_LEGACY,
+        ],
+    )
+    def test_wrong_password_raises_authentication_error(self, code: ServiceResult) -> None:
+        from s7commplus.connection import _check_v1_legitimation_response
+        from s7commplus.error import S7AuthenticationError
+
+        with pytest.raises(S7AuthenticationError, match="wrong password"):
+            _check_v1_legitimation_response(self._payload(int(code)))
+
+    def test_composite_rejection_raises_with_decoded_code(self) -> None:
+        """The composite value from issue #70 decodes to code -2, a generic rejection."""
+        from s7commplus.connection import _check_v1_legitimation_response
+        from s7commplus.error import S7ConnectionError
+
+        composite = 0x8318890001B3FFFE
+        raw = encode_uint64_vlq(composite) + b"\x00" * 4
+        with pytest.raises(S7ConnectionError, match="rejected"):
+            _check_v1_legitimation_response(b"", raw)
+
+    def test_composite_wrong_password_code_raises_authentication_error(self) -> None:
+        """A composite whose low word is the delegitimated code is a wrong-password answer."""
+        from s7commplus.connection import _check_v1_legitimation_response
+        from s7commplus.error import S7AuthenticationError
+
+        # Same shape as the issue-70 value, but the low word is 22 (delegitimated).
+        composite = 0x8318890001B3FF9A - 0x8318890001B3FF9A % 0x10000 - 0x1_0000 + 22
+        raw = encode_uint64_vlq(composite) + b"\x00" * 4
+        with pytest.raises(S7AuthenticationError, match="wrong password"):
+            _check_v1_legitimation_response(b"", raw)
+
+    def test_other_negative_failure_raises_connection_error(self) -> None:
+        from s7commplus.connection import _check_v1_legitimation_response
+        from s7commplus.error import S7ConnectionError
+
+        with pytest.raises(S7ConnectionError, match="rejected"):
+            _check_v1_legitimation_response(self._payload(-3))
+
+    @staticmethod
+    def _integrity_id_first(integrity_id: int, return_value: int) -> tuple[bytes, bytes]:
+        """(payload, raw_payload) where the raw response starts with an IntegrityId."""
+        payload = encode_uint64_vlq(return_value if return_value >= 0 else return_value + (1 << 64))
+        raw = encode_uint32_vlq(integrity_id) + payload
+        return payload, raw
+
+    @pytest.mark.parametrize("integrity_id", [0, 17, 22, 25])
+    def test_rejection_raises_even_when_an_integrity_id_precedes_it(self, integrity_id: int) -> None:
+        """The negative return value is a rejection regardless of a leading IntegrityId."""
+        from s7commplus.connection import _check_v1_legitimation_response
+        from s7commplus.error import S7ConnectionError
+
+        rejection = 0x8318890001B3FFFE
+        payload = encode_uint64_vlq(rejection)
+        raw = encode_uint32_vlq(integrity_id) + payload
+        with pytest.raises(S7ConnectionError, match="rejected"):
+            _check_v1_legitimation_response(payload, raw)
+
+    @pytest.mark.parametrize("integrity_id", [0, 17, 22, 25, 26, 33, 1000])
+    def test_success_with_leading_integrity_id_is_accepted(self, integrity_id: int) -> None:
+        """A positive IntegrityId ahead of return value 0 must not raise.
+
+        In particular an IntegrityId of 22 (the delegitimated code) is just a
+        counter and must not be mistaken for a wrong-password answer.
+        """
+        from s7commplus.connection import _check_v1_legitimation_response
+
+        payload, raw = self._integrity_id_first(integrity_id, 0)
+        _check_v1_legitimation_response(payload, raw)
+
+    def test_level_outcome_from_the_return_value_position_is_accepted(self) -> None:
+        from s7commplus.connection import _check_v1_legitimation_response
+
+        payload, raw = self._integrity_id_first(5, int(ServiceResult.SERVICE_LEGITIMATED_FOR_LEVEL1))
+        _check_v1_legitimation_response(payload, raw)
+
+    @pytest.mark.parametrize("integrity_id", [0, 17, 22, 25, 26, 33, 1000])
+    def test_empty_payload_with_a_leading_integrity_id_is_accepted(self, integrity_id: int) -> None:
+        """An empty payload means no return-value reading exists.
+
+        The raw reading starts with an IntegrityId, which must not be
+        interpreted as a code: there is no payload reading to trust, so
+        nothing raises.
+        """
+        from s7commplus.connection import _check_v1_legitimation_response
+
+        _raw_payload, _ = self._integrity_id_first(integrity_id, 0)
+        _check_v1_legitimation_response(b"", _raw_payload)

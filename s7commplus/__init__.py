@@ -13,6 +13,7 @@ Usage::
     data = client.db_read(1, 0, 4)
 """
 
+from .async_client import AsyncSubscriptionQueue
 from .async_client import S7CommPlusAsyncClient as AsyncClient
 from .alarm import Alarm, AlarmNotification, AlarmText, LanguageId
 from .blob_decompressor import PresetStream, decompress_blob, find_and_decompress, iter_preset_streams
@@ -20,9 +21,11 @@ from .catalog import ArrayDimension, SymbolCatalog, SymbolicTag, TagResult
 from .client import DBWriteItem, SymbolicReadItem
 from .client import S7CommPlusClient as Client
 from .connection import S7CommPlusConnection
+from .devices import DEVICE_NAMES, device_family, device_name
+from .object_model import attribute_name, describe_attribute
 from .server import CPUState, DataBlock
 from .server import S7CommPlusServer as Server
-from .subscription import SubscriptionItem, SubscriptionNotification
+from .subscription import SubscriptionDiagnostics, SubscriptionItem, SubscriptionNotification, SubscriptionRestoreResult
 from .tag_browser import (
     DataBlock as ExploreDataBlock,
 )
@@ -40,10 +43,12 @@ __all__ = [
     "AlarmText",
     "ArrayDimension",
     "AsyncClient",
+    "AsyncSubscriptionQueue",
     "CPUState",
     "Client",
     "DBWriteItem",
     "DataBlock",
+    "DEVICE_NAMES",
     "ExploreDataBlock",
     "LanguageId",
     "Member",
@@ -52,6 +57,8 @@ __all__ = [
     "Server",
     "SubscriptionItem",
     "SubscriptionNotification",
+    "SubscriptionRestoreResult",
+    "SubscriptionDiagnostics",
     "SymbolCatalog",
     "SymbolicReadItem",
     "SymbolicTag",
@@ -60,6 +67,10 @@ __all__ = [
     "block_interface_from_explore",
     "datablocks_from_explore",
     "decompress_blob",
+    "attribute_name",
+    "describe_attribute",
+    "device_family",
+    "device_name",
     "find_and_decompress",
     "iter_preset_streams",
     "tags_from_explore",

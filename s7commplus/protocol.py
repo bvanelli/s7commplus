@@ -8,7 +8,8 @@ Reference: thomas-v2/S7CommPlusDriver (C#, LGPL-3.0)
 Reference: Wireshark S7CommPlus dissector
 """
 
-from enum import IntEnum
+import functools
+from enum import IntEnum, IntFlag
 
 
 # Protocol identification byte (vs 0x32 for legacy S7comm)
@@ -46,6 +47,8 @@ class FunctionCode(IntEnum):
     """S7CommPlus function codes.
 
     These identify the type of operation in a request/response pair.
+    Value sequence 1211-1434 (decimal) matches the RequestRID tables in
+    Wireshark's S7CommPlus dissector and thomas-v2/S7CommPlusDriver.
     """
 
     ERROR = 0x04B1
@@ -68,6 +71,10 @@ class FunctionCode(IntEnum):
     ABORT = 0x059A
     ERROR2 = 0x05A9
     INIT_SSL = 0x05B3
+    # The Notify function (1326) is the server-initiated counterpart of the
+    # subscription SetVariable credit: it frames a notification's response
+    # bookkeeping. It shares its opcode byte with Opcode.NOTIFICATION.
+    NOTIFY = 0x052E
 
 
 class ElementID(IntEnum):
@@ -75,16 +82,25 @@ class ElementID(IntEnum):
 
     S7CommPlus uses a tagged object model where data is structured as
     nested objects with attributes, similar to TLV encoding.
+    Values 0xA1-0xAC match the serialization tag table in Wireshark's
+    S7CommPlus dissector.
     """
 
     START_OF_OBJECT = 0xA1
     TERMINATING_OBJECT = 0xA2
     ATTRIBUTE = 0xA3
     RELATION = 0xA4
+    ERROR = 0xA5
+    INCLUDE_OBJECT = 0xA6
     START_OF_TAG_DESCRIPTION = 0xA7
     TERMINATING_TAG_DESCRIPTION = 0xA8
-    VARTYPE_LIST = 0xAB
-    VARNAME_LIST = 0xAC
+    LINK_NAMESPACE = 0xA9
+    TYPE_MICRO_INFO = 0xAB
+    TYPE_MICRO_NAMES = 0xAC
+    # Aliases for the type-metadata list tags above, retained because the
+    # tag_browser/typeinfo parsers and their tests refer to them by these names.
+    VARTYPE_LIST = TYPE_MICRO_INFO
+    VARNAME_LIST = TYPE_MICRO_NAMES
 
 
 class ObjectId(IntEnum):
@@ -108,6 +124,59 @@ class ObjectId(IntEnum):
 # The remote TSAP is the ASCII string "SIMATIC-ROOT-HMI" (16 bytes)
 S7COMMPLUS_LOCAL_TSAP = 0x0600
 S7COMMPLUS_REMOTE_TSAP = b"SIMATIC-ROOT-HMI"
+
+
+class ConnectionType(IntEnum):
+    """COTP called-TSAP identities an S7CommPlus client can present.
+
+    S7CommPlus replaces the classic numeric rack/slot TSAPs with ASCII names
+    for the client role. The default ``HMI`` identity is what this library has
+    always used; ``ES``/``PG`` are offered so a caller can present a different
+    role, which may matter on firmware that treats roles differently (not
+    verified against a PLC).
+
+    Reference: Wireshark S7CommPlus dissector (TSAP strings) and
+    thomas-v2/S7CommPlusDriver.
+    """
+
+    HMI = 0  # HMI/SCADA-style data client (default)
+    ES = 1  # Engineering station (TIA Portal style)
+    PG = 2  # Programming device
+
+
+_CONNECTION_TYPE_REMOTE_TSAPS: dict[int, bytes] = {
+    ConnectionType.HMI: b"SIMATIC-ROOT-HMI",
+    ConnectionType.ES: b"SIMATIC-ROOT-ES",
+    ConnectionType.PG: b"SIMATIC-ROOT-PG",
+}
+
+
+def remote_tsap_for_connection_type(connection_type: int | str | None) -> bytes:
+    """Return the COTP called TSAP for a connection type.
+
+    Args:
+        connection_type: A ``ConnectionType`` member, one of the case-
+            insensitive names ``"hmi"``, ``"es"``, ``"pg"``, or ``None`` for
+            the default ``"hmi"``.
+
+    Raises:
+        ValueError: If the connection type is not recognized.
+    """
+    if connection_type is None:
+        return S7COMMPLUS_REMOTE_TSAP
+    if isinstance(connection_type, str):
+        try:
+            connection_type = ConnectionType[connection_type.strip().upper()]
+        except KeyError:
+            raise ValueError(f"Unknown connection type {connection_type!r}; expected one of 'hmi', 'es', 'pg'") from None
+    elif isinstance(connection_type, bool) or not isinstance(connection_type, int):
+        # bool is an int subclass, so True/False would otherwise silently
+        # select ES/HMI.
+        raise ValueError(f"Unknown connection type {connection_type!r}; expected one of 'hmi', 'es', 'pg'")
+    tsap = _CONNECTION_TYPE_REMOTE_TSAPS.get(int(connection_type))
+    if tsap is None:
+        raise ValueError(f"Unknown connection type {connection_type!r}; expected one of 'hmi', 'es', 'pg'")
+    return tsap
 
 
 class DataType(IntEnum):
@@ -182,6 +251,25 @@ class Ids(IntEnum):
     NATIVE_THE_ALARM_SUBSYSTEM_RID = 8
     NATIVE_THE_CPU_EXEC_UNIT_RID = 52
 
+    # Remaining native-object roots under the AS root (RID 1). Useful as
+    # EXPLORE starting points beyond the three above: the hardware
+    # configuration tree, the folder/log containers, and the CPU objects.
+    # Source: TIA Portal session captures (CreateObject/EXPLORE responses);
+    # Ids.cs only defines RIDs 3, 8, 52 and 80-84. Not verified against a
+    # live PLC. RID 35 is omitted: sources disagree on its name.
+    NATIVE_THE_AS_ROOT_RID = 1
+    NATIVE_THE_HW_CONFIGURATION_RID = 2
+    NATIVE_THE_FOLDERS_RID = 4
+    NATIVE_THE_LOGS_RID = 5
+    NATIVE_THE_SW_EVENTS_RID = 10
+    NATIVE_THE_TIS_SUBSYSTEM_RID = 11
+    NATIVE_THE_STATION_CONFIGURATION_RID = 30
+    NATIVE_THE_CPU_RID = 48
+    NATIVE_THE_CPU_COMMON_RID = 50
+    NATIVE_THE_CARD_READER_WRITER_RID = 51
+    NATIVE_THE_WEB_SERVER_RID = 53
+    NATIVE_THE_CPU_DISPLAY_RID = 54
+
     # Object attributes for EXPLORE responses
     OBJECT_VARIABLE_TYPE_NAME = 233
     BLOCK_BLOCK_NUMBER = 2521
@@ -190,6 +278,26 @@ class Ids(IntEnum):
     AS_OBJECT_ES_COMMENT = 4288
     CPU_EXEC_UNIT_EXECUTING = 8064  # 0x1F80; observed as 1 in RUN and 0 in STOP
     CPU_EXEC_UNIT_OPERATING_MODE = 8065  # 0x1F81; observed as 7 in RUN and 0 in STOP
+    # CPUexecUnit attributes: OperatingState (0xD9E, read-only) and its
+    # writable counterpart OperatingStateREQ (0x877), which takes the
+    # OperatingStateRequest values. Reference:
+    # thomas-v2/S7CommPlusDriver/Core/Ids.cs (CPUexecUnit.*)
+    CPU_EXEC_UNIT_OPERATING_STATE = 0xD9E
+    CPU_EXEC_UNIT_OPERATING_STATE_REQ = 0x877
+
+    # Block object attributes (ClassId Block = 0x9EA). Reported by EXPLORE for
+    # program blocks; the know-how flag explains a block whose tag tree cannot
+    # be browsed. Source: TIA Portal EXPLORE captures; Ids.cs defines only
+    # Block_BlockNumber (2521). Not verified against a live PLC.
+    BLOCK_BLOCKNUMBER = 0x9D9
+    BLOCK_BLOCK_LANGUAGE = 0x9DA
+    BLOCK_KNOWHOW_PROTECTED = 0x9DC
+    BLOCK_UNLINKED = 0x9DF
+    BLOCK_CRC = 0x9E4
+    # Struct 0xD77 the KnowhowProtected attribute carries: Mode (BITSET16) and
+    # Password (byte array).
+    KNOWHOW_PROTECTION_STRUCT = 0xD77
+    KNOWHOW_PROTECTION_MODE = 0xD78
 
     # Type info classes
     CLASS_TYPE_INFO = 511
@@ -240,9 +348,33 @@ class Ids(IntEnum):
     EFFECTIVE_PROTECTION_LEVEL = 1842
     ACTIVE_PROTECTION_LEVEL = 1843
 
-    # ServerSessionVersion struct element carrying the device "PAOM string"
-    # which selects the legitimation mode.
+    # ServerSessionVersion (struct 314) elements. 315/319 are what the client
+    # reads (protocol version, device PAOM string); 316-318 and 320 are the
+    # project-side counterparts a PLC may also send.
+    # Source: 306 and 319 are thomas-v2/S7CommPlusDriver/Core/Ids.cs
+    # (ServerSessionVersion, LID_SessionVersionSystemPAOMString). The struct
+    # id 314 and elements 315-318, 320 come from TIA Portal session captures
+    # (CreateObject responses); not verified against a live PLC.
+    SESSION_VERSION_STRUCT = 314
+    SESSION_VERSION_SYSTEM_OMS = 315
+    SESSION_VERSION_PROJECT_OMS = 316
+    SESSION_VERSION_SYSTEM_PAOM = 317
+    SESSION_VERSION_PROJECT_PAOM = 318
     SESSION_VERSION_SYSTEM_PAOM_STRING = 319
+    SESSION_VERSION_PROJECT_PAOM_STRING = 320
+
+    # ServerSession attributes reported in the CreateObject response object.
+    # Source: TIA Portal session captures (CreateObject responses); Ids.cs
+    # only defines 300, 303, 304, 306. Not verified against a live PLC.
+    SERVER_SESSION_CLIENT_ID = 289
+    SERVER_SESSION_USER = 296
+    SERVER_SESSION_APPLICATION = 297
+    SERVER_SESSION_HOST = 298
+    SERVER_SESSION_ROLE = 299
+    SERVER_SESSION_TIMEOUT = 302
+    SERVER_SESSION_ROLES = 305
+    CLIENT_SESSION_PASSWORD = 309
+    CLIENT_SESSION_LEGITIMATED = 310
 
     # Struct and element IDs of the encrypted new-mode legitimation payload
     LEGITIMATION_PAYLOAD_STRUCT = 40400
@@ -336,6 +468,295 @@ class LegitimationId(IntEnum):
     LEGITIMATE = 1846
 
 
+class BlockLanguage(IntEnum):
+    """Programming language of a program block (attribute 0x9DA).
+
+    Source: TIA Portal block-property captures; the codes are the SIMATIC
+    block-language identifiers. Not verified against a live PLC.
+    """
+
+    UNDEF = 0
+    STL = 1
+    LAD = 2
+    FBD = 3
+    SCL = 4
+    DB = 5
+    GRAPH = 6
+    SDB = 7
+    CPU_DB = 8
+    CPU_SDB = 17
+    C_FOR_S7 = 21
+    HIGRAPH = 22
+    CFC = 23
+    SFC = 24
+    S7_PDIAG = 29
+    RSE = 31
+    F_STL = 32
+    F_LAD = 33
+    F_FBD = 34
+    F_DB = 35
+    F_CALL = 36
+    TECHNO_DB = 37
+    F_LAD_LIB = 38
+    F_FDB_LIB = 39
+    CLASSIC_ENCRYPTION = 41
+    FCP = 50
+    LAD_IEC = 100
+    FBD_IEC = 101
+    FLD = 102
+    MOTION_DB = 201
+    GRAPH_ACTIONS = 300
+    GRAPH_SEQUENCE = 301
+    GRAPH_ADDINFOS = 303
+    GRAPH_PLUS = 310
+    MC7PLUS = 400
+
+
+def block_language_name(code: int) -> str:
+    """Return the conventional name of a block language code, ``"Undef"`` for 0.
+
+    Unknown codes return a ``"language <n>"`` spelling rather than raising, so
+    an unrecognized value from newer firmware degrades to a readable string.
+    """
+    try:
+        return BlockLanguage(code).name
+    except ValueError:
+        return f"language {code}"
+
+
+class AttributeFlags(IntFlag):
+    """Access flags of an object attribute in the S7CommPlus object model.
+
+    Every attribute carries a bitmask describing who may read or write it and
+    under which conditions. The interesting ones for a client: whether a write
+    needs legitimation first, whether the attribute is read-only for clients,
+    and whether it may change while the CPU runs.
+
+    Source: TIA Portal attribute-metadata captures; Ids.cs defines no
+    attribute flags. 23 nonzero flags plus the zero ``TO_BE_CONFIGURED``
+    value. Not verified against a live PLC.
+    """
+
+    TO_BE_CONFIGURED = 0
+    APPLICATION_READABLE = 0x00000001
+    APPLICATION_WRITABLE = 0x00000002
+    IS_IN = 0x00000004
+    IS_OUT = 0x00000008
+    CORE = 0x00000010
+    PERSISTENT = 0x00000020
+    BL = 0x00000040
+    AS_EVALUATION_REQUIRED = 0x00000100
+    SEPARATE_LOAD_MEMORY_FILE_ALLOWED = 0x00000200
+    CLIENT_READONLY = 0x00000400
+    SERVER_ONLY = 0x00000800
+    CHANGEABLE_IN_RUN = 0x00002000
+    NEEDS_LEGITIMATION = 0x00004000
+    NORMAL_ACCESS = 0x00008000
+    STREAMING = 0x00010000
+    IS_QUALIFIER = 0x00040000
+    HMI_ACCESSIBLE = 0x00100000
+    HMI_CACHED = 0x00200000
+    HMI_READONLY = 0x00400000
+    HMI_VISIBLE = 0x00800000
+    PLAIN_MEMBER_CLASSIC = 0x01000000
+    PLAIN_MEMBER_RETAIN = 0x02000000
+    IS_HOST_RELEVANT = 0x08000000
+
+
+def attribute_flags_description(flags: int) -> str:
+    """Describe an attribute-flags bitmask as a comma-separated name list.
+
+    Known bits decode to their names; unknown bits render as ``bit 0x...`` so
+    a flags value from newer firmware stays readable.
+
+    >>> attribute_flags_description(0x4000)
+    'needs_legitimation'
+    """
+    value = AttributeFlags(flags)
+    names = [name.lower() for member in AttributeFlags if member.value and value & member for name in [str(member.name)]]
+    unknown = flags & ~_KNOWN_ATTRIBUTE_FLAG_BITS
+    if unknown:
+        names.append(f"bit 0x{unknown:X}")
+    return ", ".join(names) if names else "none"
+
+
+_KNOWN_ATTRIBUTE_FLAG_BITS = functools.reduce(int.__or__, (int(member.value) for member in AttributeFlags))
+
+
+# --- INVOKE method identifiers -------------------------------------------------
+#
+# INVOKE calls a method on a PLC object: TargetObjectId (RID), TargetMethodId,
+# then sparse in/inout argument arrays. The method ids below are the ones the
+# protocol's method surface defines. A RemoteFileAccessManager instance is not
+# a fixed RID: the client creates the object and the PLC assigns the RID, so
+# callers track the CreateObject response.
+#
+# Source: TIA Portal method-call captures (file transfer, runtime update and
+# full-download sessions) plus the protocol's own method naming; Ids.cs
+# defines none of these. ResolveAddressRemote's RID was seen in a
+# resolve-address exchange. Not verified against a live PLC.
+
+#: RemoteFileAccessManager methods (on a created RemoteFileAccessManager object).
+REMOTE_FILE_ACCESS_MANAGER_METHODS: dict[int, str] = {
+    1: "Init",
+    2: "OpenFile",
+    3: "ReadFile",
+    4: "WriteFile",
+    5: "CloseFile",
+    6: "OpenDir",
+    7: "ReadDir",
+    8: "CloseDir",
+    9: "DeleteFile",
+    10: "CreateDir",
+    11: "DeleteDir",
+    12: "GetFileInfo",
+    13: "RenameFile",
+    15: "Reserve",
+    16: "Unreserve",
+}
+
+#: HMI/RuntimeUpdate service methods (fixed method ids on their service objects).
+HMI_METHODS: dict[int, str] = {
+    18667: "AddonObject.CheckCompat",
+    18827: "RuntimeUpdateService.BeginRuntimeUpdate",
+    18829: "RuntimeUpdateService.FinishRuntimeUpdate",
+    18878: "RuntimeUpdateService.UninstallAddon",
+    15000009: "DownloadService.PreFullDownload",
+    15000011: "DownloadService.PostFullDownload",
+    15000013: "DownloadService.CheckFullDownload",
+    15000016: "DownloadService.ActivateDownload",
+    15000019: "DownloadService.AbortFullDownload",
+    15000035: "ScsProject.GetFullDownloadServiceRid",
+    15000039: "ProjectManager.GetScsProject",
+}
+
+# RID and method id of the address-resolution method: INVOKE(1387, 1387)
+# resolves a symbolic name to its access address without enumerating the
+# object tree, an alternative to the GetVariablesAddress function.
+RESOLVE_ADDRESS_REMOTE_RID = 1387
+RESOLVE_ADDRESS_REMOTE_METHOD = 1387
+
+
+def invoke_method_name(
+    target_object_id: int,
+    target_method_id: int,
+    remote_file_access_manager_rids: frozenset[int] | set[int] | None = None,
+) -> str:
+    """Return a readable name for an INVOKE (RID, method id) pair.
+
+    The address resolver is identified by its well-known RID; service methods
+    by their fixed ids. RemoteFileAccessManager methods resolve only when the
+    caller says the object is a file manager — its RID is assigned per session
+    by the PLC, so the caller passes the RID it received from CreateObject
+    (one or more, as ``remote_file_access_manager_rids``). Without that
+    knowledge a small method id is just a small method id, and the pair
+    degrades to a neutral ``"method 0x..."`` spelling rather than being
+    mislabelled as a file-access call.
+    """
+    if target_object_id == RESOLVE_ADDRESS_REMOTE_RID:
+        return "ResolveAddressRemote"
+    if target_method_id in HMI_METHODS:
+        return HMI_METHODS[target_method_id]
+    if remote_file_access_manager_rids and target_object_id in remote_file_access_manager_rids:
+        if target_method_id in REMOTE_FILE_ACCESS_MANAGER_METHODS:
+            return f"RemoteFileAccessManager.{REMOTE_FILE_ACCESS_MANAGER_METHODS[target_method_id]}"
+    return f"method 0x{target_method_id:X}"
+
+
+class ServiceResult(IntEnum):
+    """Result codes a PLC returns in place of 0 (success) for a service.
+
+    S7CommPlus services answer with a 64-bit return value whose low bits
+    carry one of these codes. Positive values are informational outcomes
+    (the request still succeeded); negative values are failures. The
+    numeric values also appear in the low word of composite return values
+    (error flag | error source | code), which is why a rejected request
+    commonly shows up as a large value such as ``0x8318890001B3FFFE``
+    (code -2 from source 0x19).
+
+    Reference: Wireshark S7CommPlus dissector result-code table and
+    thomas-v2/S7CommPlusDriver result handling.
+    """
+
+    # --- Legitimation outcomes (SetVariable on ServerSession) ---
+    # A PLC may report that the session already carries a lower protection
+    # level than the requested one, or was legitimated to a specific level.
+    # All of these mean the legitimation itself succeeded.
+    SESSION_PRE_LEGITIMIZED = 17
+    SERVICE_LEGITIMATED_FOR_LEVEL1 = 33
+    SERVICE_LEGITIMATED_FOR_LEVEL2 = 25
+    SERVICE_LEGITIMATED_FOR_LEVEL3 = 26
+    # The PLC answered the challenge with the wrong password.
+    SERVICE_SESSION_DELEGITIMATED = 22
+    SERVICE_SESSION_DELEGITIMATED_LEGACY = -118
+
+    # --- Common service outcomes ---
+    SERVICE_IGNORED = 18
+    SERVICE_EXECUTED_WITH_PARTIAL_ERROR = 19
+    SERVICE_SUBSCRIPTION_TOO_MANY_NOTIFIES = 21
+    SERVICE_SUBSCRIPTION_DISABLED = 24
+    SERVICE_TRANSACTION_ABORTED = 34
+    TEMPORARILY_OUT_OF_RESOURCES = 37
+    LEGITIM_LEVEL_CURRENTLY_DISABLED = 38
+    END_OF_FILE = 23
+    BLOB_REALLOCATED = 35
+    BLOB_END_REACHED = 40
+
+    # --- Negative failure codes (low word of a composite return value) ---
+    OK = 0
+    INVALID_VALUE_TYPE = -2
+    INVALID_ARGUMENT_VALUE = -3
+    NOT_ENOUGH_MEMORY = -4
+    UNKNOWN_ERROR = -1
+
+
+def service_result_code(return_value: int) -> int:
+    """Extract the ServiceResult code from a composite return value.
+
+    A composite return value packs ``error flag | error source | code`` into
+    the upper bits with the code's sign-extended low word at the bottom:
+
+    - a plain small negative number is already the code (legacy encoding),
+    - a value with the top bit set has its low 16 bits sign-extended, whether
+      it arrives as an unsigned 64-bit value or as its negative Python int.
+
+    >>> service_result_code(0x8318890001B3FFFE)
+    -2
+    >>> service_result_code(-2)
+    -2
+    >>> service_result_code(-9000293222178357250)  # the same value, negative
+    -2
+    >>> service_result_code(0)
+    0
+    """
+    if -(1 << 16) < return_value < 0:
+        return return_value  # a plain legacy code, not a composite
+    low = return_value & 0xFFFF
+    return low - 0x10000 if low & 0x8000 else low
+
+
+class OperatingStateRequest(IntEnum):
+    """Values written to CPUexecUnit.OperatingStateREQ (attribute 0x877).
+
+    Source: TIA Portal captures of operating-state requests. Unverified
+    against a real PLC — see #8. Any future write path must be opt-in and
+    clearly named, per that issue.
+    """
+
+    STOP = 1
+    RESET_RETENTIVE = 2
+    RUN = 3
+    RUN_REDUNDANT = 4
+
+
+# Values of the read-only OperatingState attribute (0xD9E) seen in TIA
+# Portal captures: 4 while stopped, 8 while running. "Observed" means seen in
+# those captures only — no live PLC was available to confirm, and the
+# STARTUP/HOLD-family values in between are not pinned.
+OPERATING_STATE_STOP_OBSERVED = 4
+OPERATING_STATE_RUN_OBSERVED = 8
+
+
 class SoftDataType(IntEnum):
     """PLC soft data types (used in variable metadata / tag descriptions).
 
@@ -389,3 +810,33 @@ class SoftDataType(IntEnum):
     LTOD = 65
     LDT = 66
     DTL = 67
+
+
+class ErrorSource(IntEnum):
+    """Subsystems that a composite return value can name as the error source.
+
+    A rejected service reports a composite 64-bit value whose low word is the
+    `ServiceResult` code and whose upper bits identify the reporting
+    subsystem. The exact bit layout of the upper bits varies by firmware and
+    is not decoded here; the enum documents the source identifiers so a
+    decoded value can be named once the layout is confirmed against a capture.
+
+    Reference: Wireshark S7CommPlus dissector error-source table and
+    thomas-v2/S7CommPlusDriver result handling.
+    """
+
+    OBJECT_MANAGEMENT_SYSTEM = 0
+    OPERATING_STATE_CONTROL = 1
+    LOAD_MEMORY_CONTROL = 3
+    WORKING_MEMORY_CONTROL = 4
+    TEST_DEBUG_SYSTEM = 7
+    ALARMING_SYSTEM = 8
+    ONBOARD_COMPILER = 13
+    KERNEL = 14
+    GENERAL_AS_OBJECT_MODEL_ERRORS = 25
+    GENERAL_HARDWARE_CONFIGURATION_ERRORS = 26
+    FILESYSTEM = 32
+    COMMUNICATION_SYSTEM = 33
+    EXECUTION_LEVEL_SYSTEM = 64
+    T_BLOCKS = 91
+    IE_CONFIG = 92

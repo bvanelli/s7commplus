@@ -61,6 +61,7 @@ from .legitimation import (
     build_new_response,
     decide_legitimation_mode,
     derive_legitimation_key,
+    extract_session_oms_version,
     extract_session_version_string,
 )
 from .protocol import (
@@ -920,6 +921,8 @@ class S7CommPlusConnection:
         # ServerSessionVersion is captured as its raw typed value (flags+datatype+data)
         # so it can be echoed back verbatim — real S7-1500 PLCs send it as a Struct.
         self._server_session_version: Optional[bytes] = None
+        self._session_oms_version: Optional[tuple[int, Optional[int]]] = None
+        self._session_oms_version_cache_key: Optional[bytes] = None
         self._session_setup_ok: bool = False
         # PLC-provided 8-byte public-key checksum (parsed from the
         # ObjectVariableTypeName "01:HEX" attribute in the CreateObject
@@ -1036,6 +1039,26 @@ class S7CommPlusConnection:
     def protection_level(self) -> Optional[int]:
         """Effective protection level reported by the PLC (see `AccessLevel`)."""
         return self._protection_level
+
+    @property
+    def session_oms_version(self) -> Optional[tuple[int, Optional[int]]]:
+        """(SystemOMS, ProjectOMS) negotiated for the session, or ``None``.
+
+        SystemOMS is the OMS session version (64..448, V1..V7) that gates
+        which optional request fields the PLC understands. ProjectOMS is the
+        version of the loaded project, where an explicit 0 means the
+        controller has no project loaded; ``None`` means the PLC did not send
+        element 316 at all. ``None`` for the whole tuple when the PLC sent no
+        readable versions.
+        """
+        if self._server_session_version is None:
+            return None
+        if self._session_oms_version_cache_key is self._server_session_version:
+            return self._session_oms_version
+        versions = extract_session_oms_version(self._server_session_version)
+        self._session_oms_version = versions
+        self._session_oms_version_cache_key = self._server_session_version
+        return versions
 
     def connect(
         self,
@@ -1154,6 +1177,15 @@ class S7CommPlusConnection:
                 self._protection_level = self._get_effective_protection_level()
                 if self._protection_level is not None:
                     logger.info(f"PLC reports protection level: {self._protection_level}")
+                oms_versions = self.session_oms_version
+                if oms_versions is not None:
+                    system_oms, project_oms = oms_versions
+                    logger.info(f"OMS session version: system={system_oms}, project={project_oms}")
+                    if project_oms == 0:  # an explicit 0, not an absent element
+                        logger.warning(
+                            "Controller reports ProjectOMS 0: no project is loaded, so browsing and "
+                            "symbolic access will find nothing"
+                        )
 
             self._connected = True
             self._schedule_session_key_refresh()
@@ -1396,6 +1428,8 @@ class S7CommPlusConnection:
         self._sequence_number = 0
         self._protocol_version = 0
         self._server_session_version = None
+        self._session_oms_version = None
+        self._session_oms_version_cache_key = None
         self._public_key_checksum = None
         self._public_key_fingerprint = None
         self._session_challenge = None

@@ -103,6 +103,95 @@ def extract_session_version_string(raw: bytes) -> Optional[str]:
             continue
 
 
+# Element ids of the ServerSessionVersion struct (314): the negotiated OMS
+# session version (315, SystemOMS) and its project-side counterpart (316,
+# ProjectOMS). ProjectOMS == 0 means the controller has no project loaded.
+# Reference: thomas-v2/S7CommPlusDriver/Core/Ids.cs (LID_SessionVersion.*)
+SESSION_VERSION_SYSTEM_OMS_ID = 315
+SESSION_VERSION_PROJECT_OMS_ID = 316
+
+# Element value types whose length is a VLQ prefix, so a struct walk can skip
+# past them without knowing their layout.
+_LENGTH_PREFIXED_ELEMENT_TYPES = frozenset({DataType.WSTRING, DataType.BLOB, DataType.S7STRING})
+
+
+def _iter_struct_element_uints(raw: bytes) -> dict[int, int]:
+    """Walk the elements of a ServerSessionVersion struct value by boundary.
+
+    A raw typed value is ``[flags][STRUCT][fixed u32 struct id][elements...][terminator]``
+    where each element is ``[VLQ key][flags][datatype][value]``. Walking at
+    element boundaries (rather than searching for key bytes, which can match
+    inside another element's data) returns the UDINT elements keyed by id.
+    Malformed values yield whatever decoded before the damage; a value that
+    is not a struct at all yields an empty dict.
+    """
+    if len(raw) < 2 or raw[1] != DataType.STRUCT:
+        return {}
+    offset = 6  # flags + datatype + 4-byte fixed struct id
+    elements: dict[int, int] = {}
+    while offset < len(raw):
+        try:
+            key, consumed = decode_uint32_vlq(raw, offset)
+        except ValueError:
+            break
+        offset += consumed
+        if key == 0:  # struct terminator
+            break
+        if offset + 2 > len(raw):
+            break
+        flags = raw[offset]
+        datatype = raw[offset + 1]
+        if not flags & 0x10 and datatype == DataType.UDINT:
+            try:
+                value, consumed = decode_uint32_vlq(raw, offset + 2)
+            except ValueError:
+                break
+            elements[key] = value
+            offset += 2 + consumed
+        elif not flags & 0x10 and datatype in _LENGTH_PREFIXED_ELEMENT_TYPES:
+            # WSTRING/BLOB/string elements carry their byte length as a VLQ
+            # prefix, so the walk can continue past them — the PAOM string
+            # (element 319) sits between the version elements on real PLCs.
+            try:
+                length, consumed = decode_uint32_vlq(raw, offset + 2)
+            except ValueError:
+                break
+            if offset + 2 + consumed + length > len(raw):
+                break
+            offset += 2 + consumed + length
+        else:
+            # An element whose length we cannot determine: stop rather than
+            # guess a boundary.
+            break
+    return elements
+
+
+def extract_session_oms_version(raw: bytes) -> Optional[tuple[int, Optional[int]]]:
+    """Read (SystemOMS, ProjectOMS) from a raw ServerSessionVersion value.
+
+    SystemOMS is the negotiated OMS session version (64..448, V1..V7); it
+    gates which optional request fields the PLC understands. ProjectOMS is
+    the version of the loaded project; an explicit 0 means the controller has
+    no project loaded, which otherwise surfaces as confusing generic session
+    failures when a caller tries to browse.
+
+    Returns None when the struct carries no readable SystemOMS, which is the
+    case for the bare-UDINT ServerSessionVersion older emulators and PLCs
+    send. ProjectOMS is None when element 316 is absent: absent is not the
+    same as an explicit "no project", and only the explicit 0 is reported as
+    one.
+
+    ```python
+    system_oms, project_oms = extract_session_oms_version(connection.server_session_version)
+    ```
+    """
+    elements = _iter_struct_element_uints(raw)
+    system_oms = elements.get(SESSION_VERSION_SYSTEM_OMS_ID)
+    if system_oms is None:
+        return None
+    return system_oms, elements.get(SESSION_VERSION_PROJECT_OMS_ID)
+
+
 def decide_legitimation_mode(version_string: str) -> Optional[LegitimationType]:
     """Decide legacy (SHA-1 XOR) vs new (AES-256-CBC) legitimation from the firmware.
 

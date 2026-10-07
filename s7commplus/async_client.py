@@ -112,6 +112,7 @@ from .legitimation import (
     build_new_response,
     decide_legitimation_mode,
     derive_legitimation_key,
+    extract_session_oms_version,
     extract_session_version_string,
 )
 from .protocol import (
@@ -205,6 +206,8 @@ class S7CommPlusAsyncClient:
         # ServerSessionVersion is captured as its raw typed value (flags+datatype+data)
         # so it can be echoed back verbatim — real S7-1500 PLCs send it as a Struct.
         self._server_session_version: Optional[bytes] = None
+        self._session_oms_version: Optional[tuple[int, Optional[int]]] = None
+        self._session_oms_version_cache_key: Optional[bytes] = None
         self._session_setup_ok: bool = False
         # Effective protection level, read once the session is up
         self._protection_level: Optional[int] = None
@@ -258,6 +261,24 @@ class S7CommPlusAsyncClient:
     def protection_level(self) -> Optional[int]:
         """Effective protection level reported by the PLC (see `AccessLevel`)."""
         return self._protection_level
+
+    @property
+    def session_oms_version(self) -> Optional[tuple[int, Optional[int]]]:
+        """(SystemOMS, ProjectOMS) negotiated for the session, or ``None``.
+
+        SystemOMS is the OMS session version (64..448, V1..V7); ProjectOMS is
+        the loaded project's version, where an explicit 0 means the controller
+        has no project loaded and ``None`` means the element was not sent.
+        ``None`` for the whole tuple before connect or when unreadable.
+        """
+        if self._server_session_version is None:
+            return None
+        if self._session_oms_version_cache_key is self._server_session_version:
+            return self._session_oms_version
+        versions = extract_session_oms_version(self._server_session_version)
+        self._session_oms_version = versions
+        self._session_oms_version_cache_key = self._server_session_version
+        return versions
 
     @property
     def legacy_s7_1500(self) -> bool:
@@ -486,6 +507,14 @@ class S7CommPlusAsyncClient:
             self._protection_level = await self._get_effective_protection_level()
             if self._protection_level is not None:
                 logger.info(f"PLC reports protection level: {self._protection_level}")
+            oms_versions = self.session_oms_version
+            if oms_versions is not None:
+                system_oms, project_oms = oms_versions
+                logger.info(f"OMS session version: system={system_oms}, project={project_oms}")
+                if project_oms == 0:
+                    logger.warning(
+                        "Controller reports ProjectOMS 0: no project is loaded, so browsing and symbolic access will find nothing"
+                    )
 
             self._connected = True
             self._schedule_session_key_refresh()
@@ -741,6 +770,8 @@ class S7CommPlusAsyncClient:
         self._oms_secret = None
         self._symbol_catalog = None
         self._server_session_version = None
+        self._session_oms_version = None
+        self._session_oms_version_cache_key = None
         self._session_setup_ok = False
         self._protection_level = None
         self._public_key_fingerprint = None

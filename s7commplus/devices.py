@@ -5,8 +5,10 @@ order number (for example ``6ES7 215-1AG40-0XB0``); this module turns it
 into the human-readable module name (``CPU 1215C DC/DC/DC``) and a device
 family classification.
 
-Reference: Siemens SIMATIC order-number scheme as tabulated by the
-Wireshark S7CommPlus dissector and the thomas-v2/S7CommPlusDriver device list.
+Source: Siemens SIMATIC order-number scheme, transcribed from TIA Portal's
+device catalog. Hand-copied and not independently checkable; the
+check_devices_table script validates its shape. Not verified against a live
+PLC.
 """
 
 from __future__ import annotations
@@ -19,15 +21,15 @@ import re
 # controllers, and PLCSIM. Classic S7-300/400 modules are deliberately
 # absent: they speak classic S7, not S7CommPlus.
 DEVICE_NAMES: dict[str, str] = {
-    "6AG1 212-1AE40-2XB0": "S7-1200 CPU 1212C DC/DC/DC SIPLUS",
-    "6AG1 212-1AE40-4XB0": "S7-1200 CPU 1212C DC/DC/DC SIPLUS",
+    "6AG1 212-1AE40-2XB0": "CPU 1212C DC/DC/DC SIPLUS",
+    "6AG1 212-1AE40-4XB0": "CPU 1212C DC/DC/DC SIPLUS",
     "6AG1 212-1BE40-2XB0": "CPU 1212C AC/DC/Rly SIPLUS",
     "6AG1 212-1BE40-4XB0": "CPU 1212C AC/DC/Rly SIPLUS",
     "6AG1 212-1HE40-2XB0": "CPU 1212C DC/DC/Rly SIPLUS",
     "6AG1 212-1HE40-4XB0": "CPU 1212C DC/DC/Rly SIPLUS",
-    "6AG1 214-1AG40-2XB0": "S7-1200 CPU 1214C DC/DC/DC SIPLUS",
-    "6AG1 214-1AG40-4XB0": "S7-1200 CPU 1214C DC/DC/DC SIPLUS",
-    "6AG1 214-1AG40-5XB0": "S7-1200 CPU 1214C DC/DC/DC SIPLUS",
+    "6AG1 214-1AG40-2XB0": "CPU 1214C DC/DC/DC SIPLUS",
+    "6AG1 214-1AG40-4XB0": "CPU 1214C DC/DC/DC SIPLUS",
+    "6AG1 214-1AG40-5XB0": "CPU 1214C DC/DC/DC SIPLUS",
     "6AG1 214-1BG40-2XB0": "CPU 1214C AC/DC/Rly SIPLUS",
     "6AG1 214-1BG40-4XB0": "CPU 1214C AC/DC/Rly SIPLUS",
     "6AG1 214-1BG40-5XB0": "CPU 1214C AC/DC/Rly SIPLUS",

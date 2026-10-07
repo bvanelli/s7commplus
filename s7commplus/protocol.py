@@ -507,6 +507,75 @@ def attribute_flags_description(flags: int) -> str:
 _KNOWN_ATTRIBUTE_FLAG_BITS = functools.reduce(int.__or__, (int(member.value) for member in AttributeFlags))
 
 
+# --- INVOKE method identifiers -------------------------------------------------
+#
+# INVOKE calls a method on a PLC object: TargetObjectId (RID), TargetMethodId,
+# then sparse in/inout argument arrays. The method ids below are the ones the
+# protocol's method surface defines. A RemoteFileAccessManager instance is not
+# a fixed RID: the client creates the object and the PLC assigns the RID, so
+# callers track the CreateObject response.
+#
+# Reference: Wireshark S7CommPlus dissector and
+# thomas-v2/S7CommPlusDriver/Core/Ids.cs.
+
+#: RemoteFileAccessManager methods (on a created RemoteFileAccessManager object).
+REMOTE_FILE_ACCESS_MANAGER_METHODS: dict[int, str] = {
+    1: "Init",
+    2: "OpenFile",
+    3: "ReadFile",
+    4: "WriteFile",
+    5: "CloseFile",
+    6: "OpenDir",
+    7: "ReadDir",
+    8: "CloseDir",
+    9: "DeleteFile",
+    10: "CreateDir",
+    11: "DeleteDir",
+    12: "GetFileInfo",
+    13: "RenameFile",
+    15: "Reserve",
+    16: "Unreserve",
+}
+
+#: HMI/RuntimeUpdate service methods (fixed method ids on their service objects).
+HMI_METHODS: dict[int, str] = {
+    18667: "AddonObject.CheckCompat",
+    18827: "RuntimeUpdateService.BeginRuntimeUpdate",
+    18829: "RuntimeUpdateService.FinishRuntimeUpdate",
+    18878: "RuntimeUpdateService.UninstallAddon",
+    15000009: "DownloadService.PreFullDownload",
+    15000011: "DownloadService.PostFullDownload",
+    15000013: "DownloadService.CheckFullDownload",
+    15000016: "DownloadService.ActivateDownload",
+    15000019: "DownloadService.AbortFullDownload",
+    15000035: "ScsProject.GetFullDownloadServiceRid",
+    15000039: "ProjectManager.GetScsProject",
+}
+
+# RID and method id of the address-resolution method: INVOKE(1387, 1387)
+# resolves a symbolic name to its access address without enumerating the
+# object tree, an alternative to the GetVariablesAddress function.
+RESOLVE_ADDRESS_REMOTE_RID = 1387
+RESOLVE_ADDRESS_REMOTE_METHOD = 1387
+
+
+def invoke_method_name(target_object_id: int, target_method_id: int) -> str:
+    """Return a readable name for an INVOKE (RID, method id) pair.
+
+    The address resolver is identified by its well-known RID; service methods
+    by their fixed ids. RemoteFileAccessManager methods resolve by method id
+    alone because the object's RID is assigned per session. Unknown pairs
+    degrade to a ``"method 0x..."`` spelling rather than raising.
+    """
+    if target_object_id == RESOLVE_ADDRESS_REMOTE_RID:
+        return "ResolveAddressRemote"
+    if target_method_id in HMI_METHODS:
+        return HMI_METHODS[target_method_id]
+    if target_method_id in REMOTE_FILE_ACCESS_MANAGER_METHODS:
+        return f"RemoteFileAccessManager.{REMOTE_FILE_ACCESS_MANAGER_METHODS[target_method_id]}"
+    return f"method 0x{target_method_id:X}"
+
+
 class SoftDataType(IntEnum):
     """PLC soft data types (used in variable metadata / tag descriptions).
 

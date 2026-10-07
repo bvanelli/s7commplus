@@ -34,7 +34,9 @@ from s7commplus.protocol import (
     ObjectId,
     Opcode,
     ProtocolVersion,
+    ServiceResult,
     block_language_name,
+    service_result_code,
 )
 from s7commplus.vlq import (
     encode_uint32_vlq,
@@ -1173,3 +1175,152 @@ class TestLegitimationRejection:
         client = S7CommPlusAsyncClient()
         assert client._response_payload(FunctionCode.SET_VAR_SUBSTREAMED, self._REJECTED) is not None
         assert client._last_raw_response_payload == self._REJECTED
+
+
+class TestServiceResultCodes:
+    """The legitimation outcomes a PLC can answer with besides plain zero."""
+
+    @pytest.mark.parametrize(
+        ("code", "expected"),
+        [
+            (0, ServiceResult.OK),
+            (-2, ServiceResult.INVALID_VALUE_TYPE),
+            (-118, ServiceResult.SERVICE_SESSION_DELEGITIMATED_LEGACY),
+            (17, ServiceResult.SESSION_PRE_LEGITIMIZED),
+            (22, ServiceResult.SERVICE_SESSION_DELEGITIMATED),
+            (25, ServiceResult.SERVICE_LEGITIMATED_FOR_LEVEL2),
+            (33, ServiceResult.SERVICE_LEGITIMATED_FOR_LEVEL1),
+        ],
+    )
+    def test_enum_values(self, code: int, expected: ServiceResult) -> None:
+        assert ServiceResult(code) is expected
+
+    @pytest.mark.parametrize(
+        ("return_value", "expected_code"),
+        [
+            (0, 0),  # plain success
+            (-118, -118),  # legacy bare negative
+            (0x8318890001B3FFFE, -2),  # composite from issue #70: sign-extended low word
+            (0x8318890001B3FF9A, -102),  # arbitrary negative low word
+            (17, 17),  # positive informational stays itself
+            (25, 25),
+            (0x100, 256),  # low word without the sign bit is the value itself
+        ],
+    )
+    def test_service_result_code_extracts_the_low_word(self, return_value: int, expected_code: int) -> None:
+        assert service_result_code(return_value) == expected_code
+
+
+class TestLegitimationOutcomes:
+    """Positive legitimation outcomes must be accepted; wrong password must raise."""
+
+    @staticmethod
+    def _payload(return_value: int) -> bytes:
+        return encode_uint64_vlq(return_value if return_value >= 0 else return_value + (1 << 64)) + b"\x00" * 4
+
+    @pytest.mark.parametrize(
+        "code",
+        [
+            ServiceResult.OK,
+            ServiceResult.SESSION_PRE_LEGITIMIZED,
+            ServiceResult.SERVICE_LEGITIMATED_FOR_LEVEL1,
+            ServiceResult.SERVICE_LEGITIMATED_FOR_LEVEL2,
+            ServiceResult.SERVICE_LEGITIMATED_FOR_LEVEL3,
+        ],
+    )
+    def test_accepted_outcomes(self, code: ServiceResult) -> None:
+        from s7commplus.connection import _check_v1_legitimation_response
+
+        _check_v1_legitimation_response(self._payload(int(code)))
+
+    @pytest.mark.parametrize(
+        "code",
+        [
+            ServiceResult.SERVICE_SESSION_DELEGITIMATED,
+            ServiceResult.SERVICE_SESSION_DELEGITIMATED_LEGACY,
+        ],
+    )
+    def test_wrong_password_raises_authentication_error(self, code: ServiceResult) -> None:
+        from s7commplus.connection import _check_v1_legitimation_response
+        from s7commplus.error import S7AuthenticationError
+
+        with pytest.raises(S7AuthenticationError, match="wrong password"):
+            _check_v1_legitimation_response(self._payload(int(code)))
+
+    def test_composite_rejection_raises_with_decoded_code(self) -> None:
+        """The composite value from issue #70 decodes to code -2, a generic rejection."""
+        from s7commplus.connection import _check_v1_legitimation_response
+        from s7commplus.error import S7ConnectionError
+
+        composite = 0x8318890001B3FFFE
+        raw = encode_uint64_vlq(composite) + b"\x00" * 4
+        with pytest.raises(S7ConnectionError, match="rejected"):
+            _check_v1_legitimation_response(b"", raw)
+
+    def test_composite_wrong_password_code_raises_authentication_error(self) -> None:
+        """A composite whose low word is the delegitimated code is a wrong-password answer."""
+        from s7commplus.connection import _check_v1_legitimation_response
+        from s7commplus.error import S7AuthenticationError
+
+        # Same shape as the issue-70 value, but the low word is 22 (delegitimated).
+        composite = 0x8318890001B3FF9A - 0x8318890001B3FF9A % 0x10000 - 0x1_0000 + 22
+        raw = encode_uint64_vlq(composite) + b"\x00" * 4
+        with pytest.raises(S7AuthenticationError, match="wrong password"):
+            _check_v1_legitimation_response(b"", raw)
+
+    def test_other_negative_failure_raises_connection_error(self) -> None:
+        from s7commplus.connection import _check_v1_legitimation_response
+        from s7commplus.error import S7ConnectionError
+
+        with pytest.raises(S7ConnectionError, match="rejected"):
+            _check_v1_legitimation_response(self._payload(-3))
+
+    @staticmethod
+    def _integrity_id_first(integrity_id: int, return_value: int) -> tuple[bytes, bytes]:
+        """(payload, raw_payload) where the raw response starts with an IntegrityId."""
+        payload = encode_uint64_vlq(return_value if return_value >= 0 else return_value + (1 << 64))
+        raw = encode_uint32_vlq(integrity_id) + payload
+        return payload, raw
+
+    @pytest.mark.parametrize("integrity_id", [0, 17, 22, 25])
+    def test_rejection_raises_even_when_an_integrity_id_precedes_it(self, integrity_id: int) -> None:
+        """The negative return value is a rejection regardless of a leading IntegrityId."""
+        from s7commplus.connection import _check_v1_legitimation_response
+        from s7commplus.error import S7ConnectionError
+
+        rejection = 0x8318890001B3FFFE
+        payload = encode_uint64_vlq(rejection)
+        raw = encode_uint32_vlq(integrity_id) + payload
+        with pytest.raises(S7ConnectionError, match="rejected"):
+            _check_v1_legitimation_response(payload, raw)
+
+    @pytest.mark.parametrize("integrity_id", [0, 17, 22, 25, 26, 33, 1000])
+    def test_success_with_leading_integrity_id_is_accepted(self, integrity_id: int) -> None:
+        """A positive IntegrityId ahead of return value 0 must not raise.
+
+        In particular an IntegrityId of 22 (the delegitimated code) is just a
+        counter and must not be mistaken for a wrong-password answer.
+        """
+        from s7commplus.connection import _check_v1_legitimation_response
+
+        payload, raw = self._integrity_id_first(integrity_id, 0)
+        _check_v1_legitimation_response(payload, raw)
+
+    def test_level_outcome_from_the_return_value_position_is_accepted(self) -> None:
+        from s7commplus.connection import _check_v1_legitimation_response
+
+        payload, raw = self._integrity_id_first(5, int(ServiceResult.SERVICE_LEGITIMATED_FOR_LEVEL1))
+        _check_v1_legitimation_response(payload, raw)
+
+    @pytest.mark.parametrize("integrity_id", [0, 17, 22, 25, 26, 33, 1000])
+    def test_empty_payload_with_a_leading_integrity_id_is_accepted(self, integrity_id: int) -> None:
+        """An empty payload means no return-value reading exists.
+
+        The raw reading starts with an IntegrityId, which must not be
+        interpreted as a code: there is no payload reading to trust, so
+        nothing raises.
+        """
+        from s7commplus.connection import _check_v1_legitimation_response
+
+        _raw_payload, _ = self._integrity_id_first(integrity_id, 0)
+        _check_v1_legitimation_response(b"", _raw_payload)

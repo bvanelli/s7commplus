@@ -86,6 +86,8 @@ from .protocol import (
     ObjectId,
     Opcode,
     ProtocolVersion,
+    ServiceResult,
+    service_result_code,
 )
 from .vlq import decode_uint32_vlq, decode_uint64_vlq, encode_uint32_vlq, encode_uint64_vlq
 
@@ -817,14 +819,44 @@ def _build_v1_legitimation_payload(session_id: int, sequence_number: int, legiti
     return payload
 
 
+_LEGITIMATION_ACCEPTED = frozenset(
+    {
+        ServiceResult.OK,
+        ServiceResult.SESSION_PRE_LEGITIMIZED,
+        ServiceResult.SERVICE_LEGITIMATED_FOR_LEVEL1,
+        ServiceResult.SERVICE_LEGITIMATED_FOR_LEVEL2,
+        ServiceResult.SERVICE_LEGITIMATED_FOR_LEVEL3,
+    }
+)
+_LEGITIMATION_REJECTED = frozenset(
+    {
+        ServiceResult.SERVICE_SESSION_DELEGITIMATED,
+        ServiceResult.SERVICE_SESSION_DELEGITIMATED_LEGACY,
+    }
+)
+
+
 def _check_v1_legitimation_response(payload: bytes, raw_payload: Optional[bytes] = None) -> None:
-    """Raise when the PLC rejects the legitimation blob with a negative return value.
+    """Raise when the PLC rejects the legitimation blob.
 
     ``payload`` has had a leading IntegrityId stripped, but this PLC family may
     send the return value first, so the stripped bytes can start inside it.
-    ``raw_payload`` is the response before stripping; a negative return value
-    in either reading is a rejection (an IntegrityId never decodes as one).
+    ``raw_payload`` is the response before stripping.
+
+    Two readings are checked, in two passes:
+
+    1. Any reading decoding to a negative value is a rejection — an
+       IntegrityId never decodes as negative, so a negative is always the
+       return value. This is the check ``master`` performs.
+    2. Positive codes are only trusted from ``payload``, the return-value
+       position: ``raw_payload`` may start with an IntegrityId, which is a
+       positive number that could masquerade as any code. In that position
+       the delegitimated code means the wrong password, and the level
+       outcomes (already legitimized, legitimated to a level) mean success.
+       When ``payload`` is empty or does not decode, there is no
+       return-value reading at all, so no positive code is interpreted.
     """
+    payload_reading: Optional[tuple[int, int]] = None  # (signed_value, raw_value) from payload
     for candidate in (raw_payload, payload):
         if not candidate:
             continue
@@ -833,10 +865,27 @@ def _check_v1_legitimation_response(payload: bytes, raw_payload: Optional[bytes]
         except ValueError:
             continue
         signed = return_value if return_value < (1 << 63) else return_value - (1 << 64)
+        if candidate is payload:
+            payload_reading = (signed, return_value)
         if signed < 0:
+            # Pass 1: a negative reading is always the return value, in either
+            # reading position, and always a rejection.
+            if service_result_code(signed) in _LEGITIMATION_REJECTED:
+                raise S7AuthenticationError(
+                    f"Post-auth legitimation rejected by PLC (wrong password): return_value=0x{return_value:X}"
+                )
             raise S7ConnectionError(f"Post-auth legitimation rejected by PLC: return_value=0x{return_value:X}")
-    if payload:
-        logger.debug("Legitimation response accepted")
+
+    if payload_reading is None:
+        return
+
+    # Pass 2: positive codes, only from the return-value reading of payload —
+    # never from raw_payload, whose first value may be an IntegrityId.
+    signed, return_value = payload_reading
+    if signed in _LEGITIMATION_REJECTED:
+        raise S7AuthenticationError(f"Post-auth legitimation rejected by PLC (wrong password): return_value=0x{return_value:X}")
+    if signed in _LEGITIMATION_ACCEPTED:
+        logger.debug("Legitimation response accepted (return_value=%d)", signed)
 
 
 def _frame_request(request: bytes, protocol_version: int, session_key: Optional[bytes]) -> bytes:

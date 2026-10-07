@@ -657,6 +657,78 @@ def invoke_method_name(
     return f"method 0x{target_method_id:X}"
 
 
+class ServiceResult(IntEnum):
+    """Result codes a PLC returns in place of 0 (success) for a service.
+
+    S7CommPlus services answer with a 64-bit return value whose low bits
+    carry one of these codes. Positive values are informational outcomes
+    (the request still succeeded); negative values are failures. The
+    numeric values also appear in the low word of composite return values
+    (error flag | error source | code), which is why a rejected request
+    commonly shows up as a large value such as ``0x8318890001B3FFFE``
+    (code -2 from source 0x19).
+
+    Reference: Wireshark S7CommPlus dissector result-code table and
+    thomas-v2/S7CommPlusDriver result handling.
+    """
+
+    # --- Legitimation outcomes (SetVariable on ServerSession) ---
+    # A PLC may report that the session already carries a lower protection
+    # level than the requested one, or was legitimated to a specific level.
+    # All of these mean the legitimation itself succeeded.
+    SESSION_PRE_LEGITIMIZED = 17
+    SERVICE_LEGITIMATED_FOR_LEVEL1 = 33
+    SERVICE_LEGITIMATED_FOR_LEVEL2 = 25
+    SERVICE_LEGITIMATED_FOR_LEVEL3 = 26
+    # The PLC answered the challenge with the wrong password.
+    SERVICE_SESSION_DELEGITIMATED = 22
+    SERVICE_SESSION_DELEGITIMATED_LEGACY = -118
+
+    # --- Common service outcomes ---
+    SERVICE_IGNORED = 18
+    SERVICE_EXECUTED_WITH_PARTIAL_ERROR = 19
+    SERVICE_SUBSCRIPTION_TOO_MANY_NOTIFIES = 21
+    SERVICE_SUBSCRIPTION_DISABLED = 24
+    SERVICE_TRANSACTION_ABORTED = 34
+    TEMPORARILY_OUT_OF_RESOURCES = 37
+    LEGITIM_LEVEL_CURRENTLY_DISABLED = 38
+    END_OF_FILE = 23
+    BLOB_REALLOCATED = 35
+    BLOB_END_REACHED = 40
+
+    # --- Negative failure codes (low word of a composite return value) ---
+    OK = 0
+    INVALID_VALUE_TYPE = -2
+    INVALID_ARGUMENT_VALUE = -3
+    NOT_ENOUGH_MEMORY = -4
+    UNKNOWN_ERROR = -1
+
+
+def service_result_code(return_value: int) -> int:
+    """Extract the ServiceResult code from a composite return value.
+
+    A composite return value packs ``error flag | error source | code`` into
+    the upper bits with the code's sign-extended low word at the bottom:
+
+    - a plain small negative number is already the code (legacy encoding),
+    - a value with the top bit set has its low 16 bits sign-extended, whether
+      it arrives as an unsigned 64-bit value or as its negative Python int.
+
+    >>> service_result_code(0x8318890001B3FFFE)
+    -2
+    >>> service_result_code(-2)
+    -2
+    >>> service_result_code(-9000293222178357250)  # the same value, negative
+    -2
+    >>> service_result_code(0)
+    0
+    """
+    if -(1 << 16) < return_value < 0:
+        return return_value  # a plain legacy code, not a composite
+    low = return_value & 0xFFFF
+    return low - 0x10000 if low & 0x8000 else low
+
+
 class SoftDataType(IntEnum):
     """PLC soft data types (used in variable metadata / tag descriptions).
 

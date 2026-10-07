@@ -37,6 +37,20 @@ bundled keys from that family on fresh sessions and cache the confirmed key
 for the PLC. Set `allow_legacy_key_fallback=False` on `connect()` when key
 probing must be disabled.
 
+The order number a PLC reports during connect can be turned into a readable
+module name and family:
+
+```python
+from s7commplus import device_family, device_name
+
+device_name("6ES7 512-1DK01-0AB0")   # 'CPU 1512SP-1 PN'
+device_family("6ES7 512-1DK01-0AB0")  # 's7-1500-sp'
+```
+
+`DEVICE_NAMES` holds the full table (S7-1200/1500 controllers, SIPLUS
+variants, software controllers and PLCSIM; classic S7-300/400 is out of
+scope). `python tools/check_devices_table.py` validates its shape.
+
 ## Development
 
 Cloning the repository is only necessary for developing or testing

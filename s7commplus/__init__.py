@@ -22,6 +22,7 @@ from .client import DBWriteItem, SymbolicReadItem
 from .client import S7CommPlusClient as Client
 from .connection import S7CommPlusConnection
 from .devices import DEVICE_NAMES, device_family, device_name
+from .object_model import attribute_name, describe_attribute
 from .server import CPUState, DataBlock
 from .server import S7CommPlusServer as Server
 from .subscription import SubscriptionDiagnostics, SubscriptionItem, SubscriptionNotification, SubscriptionRestoreResult
@@ -65,6 +66,8 @@ __all__ = [
     "block_interface_from_explore",
     "datablocks_from_explore",
     "decompress_blob",
+    "attribute_name",
+    "describe_attribute",
     "device_family",
     "device_name",
     "find_and_decompress",

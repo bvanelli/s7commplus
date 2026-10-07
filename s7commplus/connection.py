@@ -989,6 +989,7 @@ class S7CommPlusConnection:
         # ServerSession.Role from the CreateObject response; the
         # 0x20000000 bit marks a PLC that runs a secured session.
         self._server_session_role: Optional[int] = None
+        self._server_session_roles: Optional[int] = None
 
         # 20-byte session challenge from CreateObject response, used
         # to generate the SecurityKeyEncryptedKey blob (pre-TLS auth).
@@ -1060,6 +1061,16 @@ class S7CommPlusConnection:
         the attribute.
         """
         return bool(self._server_session_role and self._server_session_role & SERVER_SESSION_ROLE_SECURED_BIT)
+
+    @property
+    def server_session_roles(self) -> Optional[int]:
+        """The ServerSession.Roles mask (attribute 305), or ``None``.
+
+        The mask of every role the session may take, as opposed to the single
+        `Role` that `secured_session` reads. The individual bit meanings are
+        not decoded; ``None`` when the PLC did not send the attribute.
+        """
+        return self._server_session_roles
 
     @property
     def integrity_id_read(self) -> int:
@@ -1507,6 +1518,7 @@ class S7CommPlusConnection:
         self._public_key_checksum = None
         self._public_key_fingerprint = None
         self._server_session_role = None
+        self._server_session_roles = None
         self._session_challenge = None
         self._session_key = None
         self._v1_session_key_public_key = b""
@@ -2177,6 +2189,7 @@ class S7CommPlusConnection:
             logger.info(f"Session challenge captured ({len(attrs.session_challenge)} bytes)")
         if attrs.server_session_role is not None:
             self._server_session_role = attrs.server_session_role
+            self._server_session_roles = attrs.server_session_roles
             if attrs.server_session_role & SERVER_SESSION_ROLE_SECURED_BIT:
                 logger.info(
                     "ServerSession.Role bit 0x20000000 is set; observed on secured "

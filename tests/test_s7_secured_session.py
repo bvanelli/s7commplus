@@ -10,6 +10,7 @@ from s7commplus.client import S7CommPlusClient
 from s7commplus.codec import (
     SERVER_SESSION_ROLE_ID,
     SERVER_SESSION_ROLE_SECURED_BIT,
+    SERVER_SESSION_ROLES_ID,
     parse_create_object_attributes,
 )
 from s7commplus.protocol import DataType, ElementID
@@ -135,3 +136,58 @@ class TestEndToEnd:
             assert client.secured_session is False
         finally:
             client.disconnect()
+
+
+class TestServerSessionRoles:
+    """The Roles mask (305) parses alongside Role (299)."""
+
+    def test_roles_attribute_is_extracted(self) -> None:
+        payload = _udint_attribute(SERVER_SESSION_ROLES_ID, 0x7)
+        attrs = parse_create_object_attributes(payload)
+        assert attrs.server_session_roles == 0x7
+
+    def test_role_and_roles_together(self) -> None:
+        payload = _udint_attribute(SERVER_SESSION_ROLE_ID, 1) + _udint_attribute(SERVER_SESSION_ROLES_ID, 0x1F)
+        attrs = parse_create_object_attributes(payload)
+        assert attrs.server_session_role == 1
+        assert attrs.server_session_roles == 0x1F
+
+    def test_absent_roles_stays_none(self) -> None:
+        payload = _udint_attribute(SERVER_SESSION_ROLE_ID, 1)
+        attrs = parse_create_object_attributes(payload)
+        assert attrs.server_session_roles is None
+
+    def test_truncated_roles_value_does_not_crash(self) -> None:
+        payload = bytes([0xA3]) + encode_uint32_vlq(SERVER_SESSION_ROLES_ID) + bytes([0x00, 0x04])
+        attrs = parse_create_object_attributes(payload)
+        assert attrs.server_session_roles is None
+
+    def test_property_on_connection(self) -> None:
+        from s7commplus.connection import S7CommPlusConnection
+
+        connection = S7CommPlusConnection("127.0.0.1")
+        assert connection.server_session_roles is None
+        connection._server_session_roles = 0x1F
+        assert connection.server_session_roles == 0x1F
+
+    @pytest.mark.asyncio
+    async def test_property_on_async_client(self) -> None:
+        from s7commplus.async_client import S7CommPlusAsyncClient
+
+        client = S7CommPlusAsyncClient()
+        assert client.server_session_roles is None
+        client._server_session_roles = 7
+        assert client.server_session_roles == 7
+
+
+def test_sync_client_exposes_roles_next_to_secured_session() -> None:
+    # Client parity with the connection and async client (#85 review).
+    from s7commplus.client import S7CommPlusClient
+    from s7commplus.connection import S7CommPlusConnection
+
+    client = S7CommPlusClient()
+    assert client.server_session_roles is None
+    connection = S7CommPlusConnection("127.0.0.1")
+    connection._server_session_roles = 0x1F
+    client._connection = connection
+    assert client.server_session_roles == 0x1F

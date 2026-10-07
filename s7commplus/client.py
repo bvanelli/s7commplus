@@ -142,6 +142,18 @@ class S7CommPlusClient:
         return self._connection.secured_session
 
     @property
+    def server_session_roles(self) -> Optional[int]:
+        """The ServerSession.Roles mask (attribute 305), or ``None``.
+
+        The mask of every role the session may take, as opposed to the single
+        `Role` that `secured_session` reads. The individual bit meanings are
+        not decoded; ``None`` when the PLC did not send the attribute.
+        """
+        if self._connection is None:
+            return None
+        return self._connection.server_session_roles
+
+    @property
     def protection_level(self) -> Optional[int]:
         """Effective protection level reported by the PLC (see `AccessLevel`)."""
         if self._connection is None:

@@ -257,8 +257,10 @@ class S7CommPlusAsyncClient:
         """Whether the PLC advertised a secured session requiring SessionKey auth.
 
         Read from the ServerSession.Role attribute of the CreateObject
-        response (bit 0x20000000). ``False`` when the PLC did not report a
-        role, which includes every PLC that does not implement the attribute.
+        response (bit 0x20000000, observed set on secured PLCs in TIA Portal
+        captures; not verified against a live PLC). ``False`` when the PLC did
+        not report a role, which includes every PLC that does not implement
+        the attribute.
         """
         return bool(self._server_session_role and self._server_session_role & SERVER_SESSION_ROLE_SECURED_BIT)
 
@@ -1839,8 +1841,9 @@ class S7CommPlusAsyncClient:
             self._server_session_role = attrs.server_session_role
             if attrs.server_session_role & SERVER_SESSION_ROLE_SECURED_BIT:
                 logger.info(
-                    "PLC reports a secured session (ServerSession.Role bit 0x20000000); "
-                    "SessionKey authentication will be required"
+                    "ServerSession.Role bit 0x20000000 is set; observed on secured "
+                    "(SessionKey-protected) PLCs in TIA Portal captures, so SessionKey "
+                    "authentication is likely required"
                 )
 
     def _try_session_key_auth(self) -> Optional[tuple[bytes, bytes]]:

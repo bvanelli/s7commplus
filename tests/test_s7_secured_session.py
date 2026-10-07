@@ -52,6 +52,28 @@ class TestParseServerSessionRole:
         attrs = parse_create_object_attributes(payload)
         assert attrs.server_session_role is None
 
+    def test_truncated_attribute_header_does_not_crash(self) -> None:
+        # An attribute cut off right after its id leaves no room for the
+        # typed-value header; the parser must not crash or misread.
+        payload = bytes([0xA3]) + bytes.fromhex("8239")  # ATTRIBUTE + key 299, then nothing
+        attrs = parse_create_object_attributes(payload)
+        assert attrs.server_session_role is None
+
+    def test_truncated_role_value_leaves_role_unset(self) -> None:
+        # The role attribute's typed-value header present, its VLQ value cut
+        # off: the role stays unset. The scan continues and the parser
+        # reports the same malformed-input error as before this attribute
+        # existed (the truncation leaves no valid following element).
+        payload = bytes([0xA3]) + bytes.fromhex("8239") + bytes([0x00, 0x04])
+        with pytest.raises(ValueError):
+            parse_create_object_attributes(payload)
+
+        # The same shape for a different attribute must behave identically —
+        # the new branch adds no new failure mode.
+        payload = bytes([0xA3]) + bytes.fromhex("8a39") + bytes([0x00, 0x04])  # key 12345
+        with pytest.raises(ValueError):
+            parse_create_object_attributes(payload)
+
 
 class TestSecuredSessionProperty:
     def test_false_before_connect(self) -> None:

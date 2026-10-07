@@ -25,9 +25,11 @@ from .vlq import (
     encode_uint64_vlq,
 )
 
-# ServerSession.Role (attribute 299): the roles the session may take. Bit
-# 0x20000000 marks a PLC that runs a secured (SessionKey-protected) session.
-# Reference: thomas-v2/S7CommPlusDriver/Core/Ids.cs (ServerSession.Role)
+# ServerSession.Role (attribute 299): the roles the session may take. The
+# bit below was observed set on PLCs running a secured (SessionKey-protected)
+# session in TIA Portal captures; the meaning is inferred from those captures
+# and not verified against a live PLC. Ids.cs defines no ServerSession.Role
+# and no role bits.
 SERVER_SESSION_ROLE_ID = 299
 SERVER_SESSION_ROLE_SECURED_BIT = 0x20000000
 
@@ -788,7 +790,12 @@ def parse_create_object_attributes(payload: bytes) -> CreateObjectAttributes:
 
             elif attr_id == SERVER_SESSION_ROLE_ID and datatype == DataType.UDINT and not flags & 0x10:
                 offset += 2
-                value, consumed = decode_uint32_vlq(payload, offset)
+                try:
+                    value, consumed = decode_uint32_vlq(payload, offset)
+                except ValueError:
+                    # Truncated value: leave the role unset and let the outer
+                    # loop's bounds checks terminate the scan.
+                    break
                 offset += consumed
                 result.server_session_role = value
 

@@ -46,6 +46,23 @@ Other behaviour changes:
   these PLCs (#44).
 * Opt-in `legacy_s7_1500=True` profile for the non-TLS S7-1512SP on firmware 2.6:
   browse and symbolic reads (#35, #12).
+* Complete data-subscription lifecycle in both clients: subscriptions from
+  catalog tags, symbolic access strings or explicit items; typed and raw
+  notifications; bounded queues, callbacks and sync/async iterators with
+  overflow diagnostics; finite-credit replenishment; data and alarm routing;
+  early-notification buffering and stale-ID protection. Subscriptions are
+  released on disconnect (#36, #7).
+* `Client.resubscribe()` and `AsyncClient.resubscribe()` recreate the data
+  subscriptions the PLC released after a reconnect. The returned
+  `SubscriptionRestoreResult` maps each old ID to its new one, reports
+  subscriptions the PLC rejected in `failed` without stopping the others, and
+  `forget_lost_subscriptions()` drops what is still pending. It is opt-in:
+  nothing is recreated implicitly, notifications from the gap are not replayed
+  and alarm subscriptions are not restored (#69, #67).
+* PLCSIM / PLCSIM Advanced (key family 03) V1 SessionKey authentication, with an
+  ECIES-over-P-256 seed (#65, #56). Emulator-tested only; see the known
+  limitations.
+* `Ids` gains the data-interface and comment attribute ids (#60).
 
 ### Performance
 
@@ -71,15 +88,25 @@ Other behaviour changes:
 ### Bug fixes and hardening
 
 * Stop logging the SessionKey session challenge bytes (#44).
-* V1 SessionKey connects without a password no longer send the post-auth
-  legitimation, which S7-1200 PLCs with key family 01 reject while still serving
-  reads. A wrong password still raises `S7ConnectionError` (#70).
+* A V1 SessionKey connect without a password no longer sends the post-auth
+  legitimation. S7-1200 PLCs with key family 01 reject it but still serve reads,
+  so the connect used to fail. A wrong password still raises
+  `S7ConnectionError` (#70, #71).
+* SetupSession replies now go through the response dispatcher: a fatal
+  SystemEvent is reported instead of being mistaken for a successful setup, and
+  the reply function and sequence number are validated (#39, #34).
+* `explore()` sends the structured EXPLORE request (#59), and the named tag API
+  sends SymbolCRC 0 (#58).
+* The server emulator refuses items it cannot resolve and writes whose value is
+  not the size their address names (#62).
 * The real-PLC acceptance runner redacts the tester's hostname from JUnit
   reports (#38).
 
 ### Documentation
 
 * PyPI is the documented installation path for stable users (#31).
+* A maintainer map of the V1 SessionKey call path, with a failure-diagnosis
+  guide (#37), and the observed firmware-to-session-path mapping (#57).
 * Explain previously "unknown" protocol bytes from independent TIA Portal
   captures (#46), and document request-counter, notification-frame and
   diagnostic-subscription behaviour (#47).
@@ -88,18 +115,20 @@ Other behaviour changes:
 
 * Golden TIA Portal ↔ PLCSIM capture fixtures with pinned parser regression
   tests (#48).
+* CI runs the oldest and newest Linux, macOS and Windows runners (#63).
 * Tests that study retired HarpoS7 code are marked `analysis` and run with
   `pytest --analysis`. CI passes the flag; a plain `pytest` takes about a
   minute (#44).
 
 ### Known limitations
 
-* The rewritten cryptography and the async V1 SessionKey path are verified
-  against HarpoS7's vectors, captured TIA traffic and the emulator. Hardware
-  validation on V1 S7-1200/S7-1500 controllers is pending (#44).
+* The rewritten cryptography is verified against HarpoS7's vectors, captured
+  TIA traffic and the emulator, and was confirmed on an S7-1200 1215C (FW V4.2)
+  with both the sync and async clients (#44). A V1 S7-1500 retest of the new
+  code is still pending.
 * PLCSIM's legacy authentication (key family 03) is implemented (#56) but only
   tested against the emulator. It skips the post-auth legitimation and rejects a
-  `password` until a real PLCSIM capture shows what PLCSIM expects.
+  `password` until a real PLCSIM capture shows what PLCSIM expects (#66).
 
 ### Thanks
 

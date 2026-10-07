@@ -8,7 +8,8 @@ Reference: thomas-v2/S7CommPlusDriver (C#, LGPL-3.0)
 Reference: Wireshark S7CommPlus dissector
 """
 
-from enum import IntEnum
+import functools
+from enum import IntEnum, IntFlag
 
 
 # Protocol identification byte (vs 0x32 for legacy S7comm)
@@ -445,6 +446,65 @@ class LegitimationId(IntEnum):
     # from LEGITIMATE (1846) which is the password-auth challenge response.
     SESSION_SETUP_LEGITIMATION = 1830
     LEGITIMATE = 1846
+
+
+class AttributeFlags(IntFlag):
+    """Access flags of an object attribute in the S7CommPlus object model.
+
+    Every attribute carries a bitmask describing who may read or write it and
+    under which conditions. The interesting ones for a client: whether a write
+    needs legitimation first, whether the attribute is read-only for clients,
+    and whether it may change while the CPU runs.
+
+    Source: TIA Portal attribute-metadata captures; Ids.cs defines no
+    attribute flags. 23 nonzero flags plus the zero ``TO_BE_CONFIGURED``
+    value. Not verified against a live PLC.
+    """
+
+    TO_BE_CONFIGURED = 0
+    APPLICATION_READABLE = 0x00000001
+    APPLICATION_WRITABLE = 0x00000002
+    IS_IN = 0x00000004
+    IS_OUT = 0x00000008
+    CORE = 0x00000010
+    PERSISTENT = 0x00000020
+    BL = 0x00000040
+    AS_EVALUATION_REQUIRED = 0x00000100
+    SEPARATE_LOAD_MEMORY_FILE_ALLOWED = 0x00000200
+    CLIENT_READONLY = 0x00000400
+    SERVER_ONLY = 0x00000800
+    CHANGEABLE_IN_RUN = 0x00002000
+    NEEDS_LEGITIMATION = 0x00004000
+    NORMAL_ACCESS = 0x00008000
+    STREAMING = 0x00010000
+    IS_QUALIFIER = 0x00040000
+    HMI_ACCESSIBLE = 0x00100000
+    HMI_CACHED = 0x00200000
+    HMI_READONLY = 0x00400000
+    HMI_VISIBLE = 0x00800000
+    PLAIN_MEMBER_CLASSIC = 0x01000000
+    PLAIN_MEMBER_RETAIN = 0x02000000
+    IS_HOST_RELEVANT = 0x08000000
+
+
+def attribute_flags_description(flags: int) -> str:
+    """Describe an attribute-flags bitmask as a comma-separated name list.
+
+    Known bits decode to their names; unknown bits render as ``bit 0x...`` so
+    a flags value from newer firmware stays readable.
+
+    >>> attribute_flags_description(0x4000)
+    'needs_legitimation'
+    """
+    value = AttributeFlags(flags)
+    names = [name.lower() for member in AttributeFlags if member.value and value & member for name in [str(member.name)]]
+    unknown = flags & ~_KNOWN_ATTRIBUTE_FLAG_BITS
+    if unknown:
+        names.append(f"bit 0x{unknown:X}")
+    return ", ".join(names) if names else "none"
+
+
+_KNOWN_ATTRIBUTE_FLAG_BITS = functools.reduce(int.__or__, (int(member.value) for member in AttributeFlags))
 
 
 class SoftDataType(IntEnum):

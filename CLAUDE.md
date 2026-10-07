@@ -217,6 +217,9 @@ server emulator or captured byte fixtures when possible.
 - Use logging rather than `print()` for library diagnostics.
 - Keep public functions and methods typed; MyPy strict mode must remain clean.
 - Prefer small, focused changes and one coherent purpose per pull request.
+- Give a checkable source for every new protocol id, enum value or table entry
+  (a capture, a dissector table, or the file and line that really lists it), and
+  say when a value is unverified or seen on only one PLC and firmware.
 - Do not add `snap7` compatibility shims or restore legacy S7 modules here; the
   package boundary is intentional.
 - Do not make unrelated changes to generated authentication code, binary

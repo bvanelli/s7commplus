@@ -67,8 +67,8 @@ from .protocol import (
     FLAGS_34_FUNCTION_CODES,
     READ_FUNCTION_CODES,
     S7COMMPLUS_LOCAL_TSAP,
-    S7COMMPLUS_REMOTE_TSAP,
     AccessLevel,
+    remote_tsap_for_connection_type,
     DataType,
     ElementID,
     FunctionCode,
@@ -892,6 +892,7 @@ class S7CommPlusConnection:
         port: int = 102,
         *,
         legacy_s7_1500: bool | None = None,
+        connection_type: int | str | None = None,
     ):
         self._legacy_s7_1500 = legacy_s7_1500
         self._last_raw_response_payload: Optional[bytes] = None
@@ -902,7 +903,7 @@ class S7CommPlusConnection:
             host=host,
             port=port,
             local_tsap=S7COMMPLUS_LOCAL_TSAP,
-            remote_tsap=S7COMMPLUS_REMOTE_TSAP,
+            remote_tsap=remote_tsap_for_connection_type(connection_type),
         )
 
         self._ssl_context: Optional[ssl.SSLContext] = None

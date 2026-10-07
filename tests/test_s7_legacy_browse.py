@@ -133,7 +133,7 @@ def test_reconnect_preserves_profile(enabled: bool) -> None:
         client._open_connection()
         assert factory.call_count == 2
         for call in factory.call_args_list:
-            assert call.kwargs == {"host": "127.0.0.1", "port": 102, "legacy_s7_1500": enabled}
+            assert call.kwargs == {"host": "127.0.0.1", "port": 102, "legacy_s7_1500": enabled, "connection_type": None}
 
 
 def test_incompatible_tls_option_fails_before_network_io() -> None:

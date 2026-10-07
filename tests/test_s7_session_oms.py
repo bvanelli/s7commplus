@@ -137,3 +137,24 @@ class TestEndToEnd:
             assert client.session_oms_version is None
         finally:
             client.disconnect()
+
+
+class TestOmsSessionVersionName:
+    def test_known_versions(self) -> None:
+        from s7commplus.legitimation import oms_session_version_name
+
+        assert oms_session_version_name(64) == "V1"
+        assert oms_session_version_name(128) == "V2"
+        assert oms_session_version_name(448) == "V7"
+
+    def test_unknown_values_degrade(self) -> None:
+        from s7commplus.legitimation import oms_session_version_name
+
+        assert oms_session_version_name(512) == "OMS 512"
+        assert oms_session_version_name(0) == "OMS 0"
+        assert oms_session_version_name(65) == "OMS 65"  # between versions
+
+    def test_version_values_are_the_documented_steps(self) -> None:
+        from s7commplus.legitimation import OMS_SESSION_VERSION_VALUES
+
+        assert OMS_SESSION_VERSION_VALUES == {f"V{i}": 64 * i for i in range(1, 8)}

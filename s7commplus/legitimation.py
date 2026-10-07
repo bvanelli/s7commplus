@@ -103,6 +103,66 @@ def extract_session_version_string(raw: bytes) -> Optional[str]:
             continue
 
 
+# Element ids of the ServerSessionVersion struct (314): the negotiated OMS
+# session version (315, SystemOMS) and its project-side counterpart (316,
+# ProjectOMS). ProjectOMS == 0 means the controller has no project loaded.
+# Reference: thomas-v2/S7CommPlusDriver/Core/Ids.cs (LID_SessionVersion.*)
+SESSION_VERSION_SYSTEM_OMS_ID = 315
+SESSION_VERSION_PROJECT_OMS_ID = 316
+
+
+def _find_struct_element_uint(raw: bytes, element_id: int) -> Optional[int]:
+    """Read a UDINT element of the ServerSessionVersion struct, None if absent.
+
+    Looks for ``[VLQ key][flags][UDINT][VLQ value]`` with flags not marking an
+    array, so a same-id element of another shape is skipped rather than
+    misread.
+    """
+    needle = encode_uint32_vlq(element_id)
+    search_from = 0
+    while True:
+        index = raw.find(needle, search_from)
+        if index < 0:
+            return None
+        search_from = index + 1
+        value_at = index + len(needle)
+        if value_at + 2 > len(raw):
+            continue
+        if raw[value_at] & 0x10:  # array-typed: not the scalar we want
+            continue
+        if raw[value_at + 1] != DataType.UDINT:
+            continue
+        try:
+            value, _consumed = decode_uint32_vlq(raw, value_at + 2)
+        except ValueError:
+            continue
+        return value
+
+
+def extract_session_oms_version(raw: bytes) -> Optional[tuple[int, int]]:
+    """Read (SystemOMS, ProjectOMS) from a raw ServerSessionVersion value.
+
+    SystemOMS is the negotiated OMS session version (64..448, V1..V7); it
+    gates which optional request fields the PLC understands. ProjectOMS is
+    the version of the loaded project; **0 means the controller has no
+    project loaded**, which surfaces as confusing generic session failures
+    when a caller tries to browse.
+
+    Returns None when the struct carries no readable versions, which is the
+    case for the bare-UDINT ServerSessionVersion older emulators and PLCs
+    send.
+
+    ```python
+    system_oms, project_oms = extract_session_oms_version(connection.server_session_version)
+    ```
+    """
+    system_oms = _find_struct_element_uint(raw, SESSION_VERSION_SYSTEM_OMS_ID)
+    if system_oms is None:
+        return None
+    project_oms = _find_struct_element_uint(raw, SESSION_VERSION_PROJECT_OMS_ID)
+    return system_oms, project_oms if project_oms is not None else 0
+
+
 def decide_legitimation_mode(version_string: str) -> Optional[LegitimationType]:
     """Decide legacy (SHA-1 XOR) vs new (AES-256-CBC) legitimation from the firmware.
 

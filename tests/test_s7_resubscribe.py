@@ -215,3 +215,84 @@ async def test_async_close_remembers_subscriptions_and_disconnect_keeps_them() -
     assert [spec.subscription_id for spec in client._subscriptions.pending_restore] == [first]
     client.forget_lost_subscriptions()
     assert client._subscriptions.pending_restore == ()
+
+
+# A PLC may hand the same subscription ID to the recreated subscription. Nothing
+# received before the reconnect may reach it.
+
+
+def test_sync_resubscribe_with_a_reused_id_drops_what_arrived_before_the_reconnect() -> None:
+    client, _ = _sync_client(_created(OLD_FIRST))
+    first = client.create_subscription(["8A0E0007.A"])
+    delivered: list[SubscriptionNotification] = []
+    client.add_subscription_callback(first, delivered.append)
+    counter = _counter(client, first)
+
+    # One notification is already queued for the caller; another is buffered
+    # because its subscription was not registered when it arrived.
+    assert client._subscriptions.route(parse_subscription_notification(_notification_frame(first, counter)))[0] is True
+    next_counter = counter % 0xFF + 1  # the counter the recreated subscription will carry
+    client._subscriptions._orphans.append(parse_subscription_notification(_notification_frame(first, next_counter)))
+    assert len(delivered) == 1
+
+    client.disconnect()  # the same clear a reconnect does
+    connection = MagicMock(subscription_container_id=0x3C2, protocol_version=ProtocolVersion.V2)
+    connection.send_request.side_effect = [_created(OLD_FIRST)]  # the PLC reuses the ID
+    client._connection = connection
+
+    result = client.resubscribe()
+
+    assert result.restored == {first: first}
+    assert client._subscriptions.pending_restore == ()
+    assert client._subscriptions.pop(first) is None  # nothing from the old session was carried over
+    assert client.subscription_diagnostics(first).queued_notifications == 0
+    assert len(delivered) == 1  # the buffered stale notification was not delivered either
+
+    fresh = parse_subscription_notification(_notification_frame(first, _counter(client, first)))
+    assert client._subscriptions.route(fresh)[0] is True
+    assert len(delivered) == 2  # the callback followed the subscription and fires once per notification
+
+
+@pytest.mark.asyncio
+async def test_async_resubscribe_with_a_reused_id_drops_what_arrived_before_the_reconnect() -> None:
+    client = _async_client()
+    client._send_request = AsyncMock(side_effect=[_created(OLD_FIRST)])
+    first = await client.create_subscription(["8A0E0007.A"])
+    delivered: list[SubscriptionNotification] = []
+    client._subscriptions.add_callback(first, delivered.append)
+    counter = _counter(client, first)
+    assert client._subscriptions.route(parse_subscription_notification(_notification_frame(first, counter)))[0] is True
+    next_counter = counter % 0xFF + 1  # the counter the recreated subscription will carry
+    client._subscriptions._orphans.append(parse_subscription_notification(_notification_frame(first, next_counter)))
+
+    client._subscriptions.clear()  # what _close() does when the session ends
+    client._send_request = AsyncMock(side_effect=[_created(OLD_FIRST)])
+
+    result = await client.resubscribe()
+
+    assert result.restored == {first: first}
+    assert client._subscriptions.pop(first) is None
+    assert len(delivered) == 1
+    fresh = parse_subscription_notification(_notification_frame(first, _counter(client, first)))
+    assert client._subscriptions.route(fresh)[0] is True
+    assert len(delivered) == 2
+
+
+def test_resubscribe_ignores_a_notification_for_a_subscription_that_was_not_restored() -> None:
+    client, _ = _sync_client(_created(OLD_FIRST), _created(OLD_SECOND))
+    first = client.create_subscription(["8A0E0007.A"])
+    second = client.create_subscription(["8A0E0007.B"])
+    client.disconnect()
+    connection = MagicMock(subscription_container_id=0x3C2, protocol_version=ProtocolVersion.V2)
+    connection.send_request.side_effect = [_created(NEW_FIRST), _rejected()]
+    client._connection = connection
+
+    result = client.resubscribe()
+
+    assert result.restored == {first: NEW_FIRST}
+    assert list(result.failed) == [second]
+    # The rejected subscription has no live ID, so a late frame for its old ID
+    # reaches no queue and no callback.
+    late = parse_subscription_notification(_notification_frame(second))
+    assert client._subscriptions.route(late)[0] is False
+    assert client._subscriptions.contains(second) is False

@@ -69,6 +69,7 @@ from .legitimation import (
     derive_legitimation_key,
     extract_session_oms_version,
     extract_session_version_string,
+    oms_session_version_name,
 )
 from .protocol import (
     FLAGS_34_FUNCTION_CODES,
@@ -1201,7 +1202,10 @@ class S7CommPlusConnection:
                 oms_versions = self.session_oms_version
                 if oms_versions is not None:
                     system_oms, project_oms = oms_versions
-                    logger.info(f"OMS session version: system={system_oms}, project={project_oms}")
+                    logger.info(
+                        f"OMS session version: system={oms_session_version_name(system_oms)}"
+                        f" ({system_oms}), project={project_oms}"
+                    )
                     if project_oms == 0:  # an explicit 0, not an absent element
                         logger.warning(
                             "Controller reports ProjectOMS 0: no project is loaded, so browsing and "

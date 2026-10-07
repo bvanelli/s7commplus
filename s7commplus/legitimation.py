@@ -114,6 +114,25 @@ SESSION_VERSION_PROJECT_OMS_ID = 316
 # past them without knowing their layout.
 _LENGTH_PREFIXED_ELEMENT_TYPES = frozenset({DataType.WSTRING, DataType.BLOB, DataType.S7STRING})
 
+# The OMS session version space: 64..448 in steps of 64, V1..V7. The negotiated
+# SystemOMS gates which optional request fields the PLC understands; the
+# per-version field layouts are not pinned here, only the version numbering.
+# Source: TIA Portal session captures; not verified against a live PLC.
+OMS_SESSION_VERSION_VALUES = {f"V{index}": 64 * index for index in range(1, 8)}
+
+
+def oms_session_version_name(value: int) -> str:
+    """Name an OMS session version value, ``"V1"``..``"V7"``.
+
+    Unknown values (a future firmware's version, or a non-version number)
+    render as ``"OMS <value>"`` rather than raising, so callers logging or
+    displaying the negotiated version degrade gracefully.
+    """
+    for name, version_value in OMS_SESSION_VERSION_VALUES.items():
+        if value == version_value:
+            return name
+    return f"OMS {value}"
+
 
 def _iter_struct_element_uints(raw: bytes) -> dict[int, int]:
     """Walk the elements of a ServerSessionVersion struct value by boundary.

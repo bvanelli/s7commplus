@@ -840,15 +840,20 @@ def _check_v1_legitimation_response(payload: bytes, raw_payload: Optional[bytes]
 
     ``payload`` has had a leading IntegrityId stripped, but this PLC family may
     send the return value first, so the stripped bytes can start inside it.
-    ``raw_payload`` is the response before stripping; a negative return value
-    in either reading is a rejection (an IntegrityId never decodes as one).
+    ``raw_payload`` is the response before stripping.
 
-    A rejection is the sign-extended ``ServiceSessionDelegitimated`` code
-    (the wrong-password answer) or any other negative code. Positive
-    legitimation outcomes — already legitimized, or legitimated to a
-    specific level — are accepted, because the PLC reports the level the
-    session actually reached rather than a plain zero.
+    Two readings are checked, in two passes:
+
+    1. Any reading decoding to a negative value is a rejection — an
+       IntegrityId never decodes as negative, so a negative is always the
+       return value. This is the check ``master`` performs.
+    2. Positive codes are only trusted from ``payload``, the return-value
+       position: ``raw_payload`` may start with an IntegrityId, which is a
+       positive number that could masquerade as any code. In that position
+       the delegitimated code means the wrong password, and the level
+       outcomes (already legitimized, legitimated to a level) mean success.
     """
+    readings: list[tuple[int, int]] = []  # (signed_value, raw_value) per decodable reading
     for candidate in (raw_payload, payload):
         if not candidate:
             continue
@@ -857,18 +862,26 @@ def _check_v1_legitimation_response(payload: bytes, raw_payload: Optional[bytes]
         except ValueError:
             continue
         signed = return_value if return_value < (1 << 63) else return_value - (1 << 64)
-        code = signed if signed in _LEGITIMATION_REJECTED else service_result_code(signed)
-        if code in _LEGITIMATION_REJECTED or signed in _LEGITIMATION_REJECTED:
-            raise S7AuthenticationError(
-                f"Post-auth legitimation rejected by PLC (wrong password): return_value=0x{return_value:X}"
-            )
+        readings.append((signed, return_value))
         if signed < 0:
+            # Pass 1: a negative reading is always the return value, in either
+            # reading position, and always a rejection.
+            if service_result_code(signed) in _LEGITIMATION_REJECTED:
+                raise S7AuthenticationError(
+                    f"Post-auth legitimation rejected by PLC (wrong password): return_value=0x{return_value:X}"
+                )
             raise S7ConnectionError(f"Post-auth legitimation rejected by PLC: return_value=0x{return_value:X}")
-        if signed in _LEGITIMATION_ACCEPTED:
-            logger.debug("Legitimation response accepted (return_value=%d)", signed)
-            return
-    if payload:
-        logger.debug("Legitimation response accepted")
+
+    if not readings:
+        return
+
+    # Pass 2: positive codes, only from the return-value position. Find the
+    # reading of ``payload`` (its last element, appended after raw_payload).
+    signed, return_value = readings[-1]
+    if signed in _LEGITIMATION_REJECTED:
+        raise S7AuthenticationError(f"Post-auth legitimation rejected by PLC (wrong password): return_value=0x{return_value:X}")
+    if signed in _LEGITIMATION_ACCEPTED:
+        logger.debug("Legitimation response accepted (return_value=%d)", signed)
 
 
 def _frame_request(request: bytes, protocol_version: int, session_key: Optional[bytes]) -> bytes:

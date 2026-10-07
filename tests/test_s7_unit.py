@@ -1274,3 +1274,40 @@ class TestLegitimationOutcomes:
 
         with pytest.raises(S7ConnectionError, match="rejected"):
             _check_v1_legitimation_response(self._payload(-3))
+
+    @staticmethod
+    def _integrity_id_first(integrity_id: int, return_value: int) -> tuple[bytes, bytes]:
+        """(payload, raw_payload) where the raw response starts with an IntegrityId."""
+        payload = encode_uint64_vlq(return_value if return_value >= 0 else return_value + (1 << 64))
+        raw = encode_uint32_vlq(integrity_id) + payload
+        return payload, raw
+
+    @pytest.mark.parametrize("integrity_id", [0, 17, 22, 25])
+    def test_rejection_raises_even_when_an_integrity_id_precedes_it(self, integrity_id: int) -> None:
+        """The negative return value is a rejection regardless of a leading IntegrityId."""
+        from s7commplus.connection import _check_v1_legitimation_response
+        from s7commplus.error import S7ConnectionError
+
+        rejection = 0x8318890001B3FFFE
+        payload = encode_uint64_vlq(rejection)
+        raw = encode_uint32_vlq(integrity_id) + payload
+        with pytest.raises(S7ConnectionError, match="rejected"):
+            _check_v1_legitimation_response(payload, raw)
+
+    @pytest.mark.parametrize("integrity_id", [0, 17, 22, 25, 26, 33, 1000])
+    def test_success_with_leading_integrity_id_is_accepted(self, integrity_id: int) -> None:
+        """A positive IntegrityId ahead of return value 0 must not raise.
+
+        In particular an IntegrityId of 22 (the delegitimated code) is just a
+        counter and must not be mistaken for a wrong-password answer.
+        """
+        from s7commplus.connection import _check_v1_legitimation_response
+
+        payload, raw = self._integrity_id_first(integrity_id, 0)
+        _check_v1_legitimation_response(payload, raw)
+
+    def test_level_outcome_from_the_return_value_position_is_accepted(self) -> None:
+        from s7commplus.connection import _check_v1_legitimation_response
+
+        payload, raw = self._integrity_id_first(5, int(ServiceResult.SERVICE_LEGITIMATED_FOR_LEVEL1))
+        _check_v1_legitimation_response(payload, raw)

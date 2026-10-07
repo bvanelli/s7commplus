@@ -43,11 +43,24 @@ class TestInvokeMethodName:
         # The RID alone identifies the resolver even with a foreign method id.
         assert invoke_method_name(RESOLVE_ADDRESS_REMOTE_RID, 9999) == "ResolveAddressRemote"
 
-    def test_file_access_methods_resolve_by_method_id(self) -> None:
-        # A RemoteFileAccessManager RID is session-assigned, so only the method
-        # id can identify it.
-        assert invoke_method_name(0x8A110001, 3) == "RemoteFileAccessManager.ReadFile"
-        assert invoke_method_name(0x8A110001, 6) == "RemoteFileAccessManager.OpenDir"
+    def test_file_access_methods_resolve_only_for_a_known_manager_rid(self) -> None:
+        # The RID is session-assigned, so the caller must say which object is
+        # the file manager.
+        known = {0x8A110001}
+        assert invoke_method_name(0x8A110001, 3, known) == "RemoteFileAccessManager.ReadFile"
+        assert invoke_method_name(0x8A110001, 6, known) == "RemoteFileAccessManager.OpenDir"
+
+    def test_unrelated_rid_with_a_small_method_id_is_not_mislabelled(self) -> None:
+        # Without manager knowledge, method id 2 on any object is just an
+        # unknown method — not "OpenFile".
+        assert invoke_method_name(1234, 2) == "method 0x2"
+        assert invoke_method_name(0x8A0E0001, 1) == "method 0x1"
+        # And even a known manager object does not claim unknown method ids.
+        assert invoke_method_name(0x8A110001, 14, {0x8A110001}) == "method 0xE"
+
+    def test_service_methods_still_resolve_without_manager_knowledge(self) -> None:
+        # Fixed service ids are unambiguous on their own.
+        assert invoke_method_name(0, 18829) == "RuntimeUpdateService.FinishRuntimeUpdate"
 
     def test_service_methods_resolve_by_fixed_id(self) -> None:
         assert invoke_method_name(0, 18829) == "RuntimeUpdateService.FinishRuntimeUpdate"

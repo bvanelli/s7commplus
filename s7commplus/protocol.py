@@ -559,20 +559,29 @@ RESOLVE_ADDRESS_REMOTE_RID = 1387
 RESOLVE_ADDRESS_REMOTE_METHOD = 1387
 
 
-def invoke_method_name(target_object_id: int, target_method_id: int) -> str:
+def invoke_method_name(
+    target_object_id: int,
+    target_method_id: int,
+    remote_file_access_manager_rids: frozenset[int] | set[int] | None = None,
+) -> str:
     """Return a readable name for an INVOKE (RID, method id) pair.
 
     The address resolver is identified by its well-known RID; service methods
-    by their fixed ids. RemoteFileAccessManager methods resolve by method id
-    alone because the object's RID is assigned per session. Unknown pairs
-    degrade to a ``"method 0x..."`` spelling rather than raising.
+    by their fixed ids. RemoteFileAccessManager methods resolve only when the
+    caller says the object is a file manager — its RID is assigned per session
+    by the PLC, so the caller passes the RID it received from CreateObject
+    (one or more, as ``remote_file_access_manager_rids``). Without that
+    knowledge a small method id is just a small method id, and the pair
+    degrades to a neutral ``"method 0x..."`` spelling rather than being
+    mislabelled as a file-access call.
     """
     if target_object_id == RESOLVE_ADDRESS_REMOTE_RID:
         return "ResolveAddressRemote"
     if target_method_id in HMI_METHODS:
         return HMI_METHODS[target_method_id]
-    if target_method_id in REMOTE_FILE_ACCESS_MANAGER_METHODS:
-        return f"RemoteFileAccessManager.{REMOTE_FILE_ACCESS_MANAGER_METHODS[target_method_id]}"
+    if remote_file_access_manager_rids and target_object_id in remote_file_access_manager_rids:
+        if target_method_id in REMOTE_FILE_ACCESS_MANAGER_METHODS:
+            return f"RemoteFileAccessManager.{REMOTE_FILE_ACCESS_MANAGER_METHODS[target_method_id]}"
     return f"method 0x{target_method_id:X}"
 
 

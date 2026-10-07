@@ -1311,3 +1311,16 @@ class TestLegitimationOutcomes:
 
         payload, raw = self._integrity_id_first(5, int(ServiceResult.SERVICE_LEGITIMATED_FOR_LEVEL1))
         _check_v1_legitimation_response(payload, raw)
+
+    @pytest.mark.parametrize("integrity_id", [0, 17, 22, 25, 26, 33, 1000])
+    def test_empty_payload_with_a_leading_integrity_id_is_accepted(self, integrity_id: int) -> None:
+        """An empty payload means no return-value reading exists.
+
+        The raw reading starts with an IntegrityId, which must not be
+        interpreted as a code: there is no payload reading to trust, so
+        nothing raises.
+        """
+        from s7commplus.connection import _check_v1_legitimation_response
+
+        _raw_payload, _ = self._integrity_id_first(integrity_id, 0)
+        _check_v1_legitimation_response(b"", _raw_payload)

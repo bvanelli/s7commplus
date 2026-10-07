@@ -852,8 +852,10 @@ def _check_v1_legitimation_response(payload: bytes, raw_payload: Optional[bytes]
        positive number that could masquerade as any code. In that position
        the delegitimated code means the wrong password, and the level
        outcomes (already legitimized, legitimated to a level) mean success.
+       When ``payload`` is empty or does not decode, there is no
+       return-value reading at all, so no positive code is interpreted.
     """
-    readings: list[tuple[int, int]] = []  # (signed_value, raw_value) per decodable reading
+    payload_reading: Optional[tuple[int, int]] = None  # (signed_value, raw_value) from payload
     for candidate in (raw_payload, payload):
         if not candidate:
             continue
@@ -862,7 +864,8 @@ def _check_v1_legitimation_response(payload: bytes, raw_payload: Optional[bytes]
         except ValueError:
             continue
         signed = return_value if return_value < (1 << 63) else return_value - (1 << 64)
-        readings.append((signed, return_value))
+        if candidate is payload:
+            payload_reading = (signed, return_value)
         if signed < 0:
             # Pass 1: a negative reading is always the return value, in either
             # reading position, and always a rejection.
@@ -872,12 +875,12 @@ def _check_v1_legitimation_response(payload: bytes, raw_payload: Optional[bytes]
                 )
             raise S7ConnectionError(f"Post-auth legitimation rejected by PLC: return_value=0x{return_value:X}")
 
-    if not readings:
+    if payload_reading is None:
         return
 
-    # Pass 2: positive codes, only from the return-value position. Find the
-    # reading of ``payload`` (its last element, appended after raw_payload).
-    signed, return_value = readings[-1]
+    # Pass 2: positive codes, only from the return-value reading of payload —
+    # never from raw_payload, whose first value may be an IntegrityId.
+    signed, return_value = payload_reading
     if signed in _LEGITIMATION_REJECTED:
         raise S7AuthenticationError(f"Post-auth legitimation rejected by PLC (wrong password): return_value=0x{return_value:X}")
     if signed in _LEGITIMATION_ACCEPTED:

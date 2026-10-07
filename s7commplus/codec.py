@@ -798,11 +798,7 @@ def parse_create_object_attributes(payload: bytes) -> CreateObjectAttributes:
                 else:
                     offset = skip_typed_value(payload, offset, datatype, flags)
 
-            elif (
-                attr_id in (SERVER_SESSION_ROLE_ID, SERVER_SESSION_ROLES_ID)
-                and datatype == DataType.UDINT
-                and not flags & 0x10
-            ):
+            elif attr_id in (SERVER_SESSION_ROLE_ID, SERVER_SESSION_ROLES_ID) and datatype == DataType.UDINT and not flags & 0x10:
                 offset += 2
                 try:
                     value, consumed = decode_uint32_vlq(payload, offset)

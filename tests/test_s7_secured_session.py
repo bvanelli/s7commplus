@@ -178,3 +178,16 @@ class TestServerSessionRoles:
         assert client.server_session_roles is None
         client._server_session_roles = 7
         assert client.server_session_roles == 7
+
+
+def test_sync_client_exposes_roles_next_to_secured_session() -> None:
+    # Client parity with the connection and async client (#85 review).
+    from s7commplus.client import S7CommPlusClient
+    from s7commplus.connection import S7CommPlusConnection
+
+    client = S7CommPlusClient()
+    assert client.server_session_roles is None
+    connection = S7CommPlusConnection("127.0.0.1")
+    connection._server_session_roles = 0x1F
+    client._connection = connection
+    assert client.server_session_roles == 0x1F

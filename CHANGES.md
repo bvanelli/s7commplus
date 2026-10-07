@@ -52,6 +52,13 @@ Other behaviour changes:
   overflow diagnostics; finite-credit replenishment; data and alarm routing;
   early-notification buffering and stale-ID protection. Subscriptions are
   released on disconnect (#36, #7).
+* `Client.resubscribe()` and `AsyncClient.resubscribe()` recreate the data
+  subscriptions the PLC released after a reconnect. The returned
+  `SubscriptionRestoreResult` maps each old ID to its new one, reports
+  subscriptions the PLC rejected in `failed` without stopping the others, and
+  `forget_lost_subscriptions()` drops what is still pending. It is opt-in:
+  nothing is recreated implicitly, notifications from the gap are not replayed
+  and alarm subscriptions are not restored (#69, #67).
 * PLCSIM / PLCSIM Advanced (key family 03) V1 SessionKey authentication, with an
   ECIES-over-P-256 seed (#65, #56). Emulator-tested only; see the known
   limitations.
@@ -81,9 +88,10 @@ Other behaviour changes:
 ### Bug fixes and hardening
 
 * Stop logging the SessionKey session challenge bytes (#44).
-* V1 SessionKey connects without a password no longer send the post-auth
-  legitimation, which S7-1200 PLCs with key family 01 reject while still serving
-  reads. A wrong password still raises `S7ConnectionError` (#70).
+* A V1 SessionKey connect without a password no longer sends the post-auth
+  legitimation. S7-1200 PLCs with key family 01 reject it but still serve reads,
+  so the connect used to fail. A wrong password still raises
+  `S7ConnectionError` (#70, #71).
 * SetupSession replies now go through the response dispatcher: a fatal
   SystemEvent is reported instead of being mistaken for a successful setup, and
   the reply function and sequence number are validated (#39, #34).
@@ -121,7 +129,6 @@ Other behaviour changes:
 * PLCSIM's legacy authentication (key family 03) is implemented (#56) but only
   tested against the emulator. It skips the post-auth legitimation and rejects a
   `password` until a real PLCSIM capture shows what PLCSIM expects (#66).
-* Subscriptions are not restored after a reconnect (#67).
 
 ### Thanks
 

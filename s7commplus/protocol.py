@@ -278,6 +278,12 @@ class Ids(IntEnum):
     AS_OBJECT_ES_COMMENT = 4288
     CPU_EXEC_UNIT_EXECUTING = 8064  # 0x1F80; observed as 1 in RUN and 0 in STOP
     CPU_EXEC_UNIT_OPERATING_MODE = 8065  # 0x1F81; observed as 7 in RUN and 0 in STOP
+    # CPUexecUnit attributes: OperatingState (0xD9E, read-only) and its
+    # writable counterpart OperatingStateREQ (0x877), which takes the
+    # OperatingStateRequest values. Reference:
+    # thomas-v2/S7CommPlusDriver/Core/Ids.cs (CPUexecUnit.*)
+    CPU_EXEC_UNIT_OPERATING_STATE = 0xD9E
+    CPU_EXEC_UNIT_OPERATING_STATE_REQ = 0x877
 
     # Block object attributes (ClassId Block = 0x9EA). Reported by EXPLORE for
     # program blocks; the know-how flag explains a block whose tag tree cannot
@@ -727,6 +733,26 @@ def service_result_code(return_value: int) -> int:
         return return_value  # a plain legacy code, not a composite
     low = return_value & 0xFFFF
     return low - 0x10000 if low & 0x8000 else low
+
+
+class OperatingStateRequest(IntEnum):
+    """Values written to CPUexecUnit.OperatingStateREQ (attribute 0x877).
+
+    Reference: Wireshark S7CommPlus dissector operating-state table and
+    thomas-v2/S7CommPlusDriver (PLC state change).
+    """
+
+    STOP = 1
+    RESET_RETENTIVE = 2
+    RUN = 3
+    RUN_REDUNDANT = 4
+
+
+# Observed values of the read-only OperatingState attribute (0xD9E): 4 while
+# stopped, 8 while running. The states between are STARTUP/HOLD-family values
+# whose exact mapping varies by firmware and is not pinned here.
+OPERATING_STATE_STOP_OBSERVED = 4
+OPERATING_STATE_RUN_OBSERVED = 8
 
 
 class SoftDataType(IntEnum):

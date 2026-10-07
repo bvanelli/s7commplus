@@ -738,8 +738,9 @@ def service_result_code(return_value: int) -> int:
 class OperatingStateRequest(IntEnum):
     """Values written to CPUexecUnit.OperatingStateREQ (attribute 0x877).
 
-    Reference: Wireshark S7CommPlus dissector operating-state table and
-    thomas-v2/S7CommPlusDriver (PLC state change).
+    Source: TIA Portal captures of operating-state requests. Unverified
+    against a real PLC — see #8. Any future write path must be opt-in and
+    clearly named, per that issue.
     """
 
     STOP = 1
@@ -748,9 +749,10 @@ class OperatingStateRequest(IntEnum):
     RUN_REDUNDANT = 4
 
 
-# Observed values of the read-only OperatingState attribute (0xD9E): 4 while
-# stopped, 8 while running. The states between are STARTUP/HOLD-family values
-# whose exact mapping varies by firmware and is not pinned here.
+# Values of the read-only OperatingState attribute (0xD9E) seen in TIA
+# Portal captures: 4 while stopped, 8 while running. "Observed" means seen in
+# those captures only — no live PLC was available to confirm, and the
+# STARTUP/HOLD-family values in between are not pinned.
 OPERATING_STATE_STOP_OBSERVED = 4
 OPERATING_STATE_RUN_OBSERVED = 8
 

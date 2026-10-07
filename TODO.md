@@ -4,7 +4,21 @@ Remaining protocol work identified while extending the constant tables.
 Items are roughly ordered by value; each should land as its own PR with
 tests, per the contribution rules in CLAUDE.md.
 
-## Block metadata in EXPLORE results (in progress, `feat/block-metadata`)
+## DONE — shipped as PRs
+
+- Block metadata in EXPLORE results (#77): know-how/language/unlinked in
+  `list_datablocks()`.
+- INVOKE method tables (#78): RemoteFileAccessManager, HMI/download
+  services, ResolveAddressRemote (RID 1387).
+- Attribute flags (#79): `AttributeFlags` + decoder (slice 1 of the class
+  table).
+- OMS session version (#80): SystemOMS/ProjectOMS surfaced, project-less
+  PLC detected.
+- Operating-state constants (#81): groundwork for #8.
+- Wire constants (#72), service return codes (#73), connection type
+  (#74), device names (#75), secured-session detection (#76).
+
+## Remaining work
 
 `list_datablocks()` currently returns only name/number/rid. The EXPLORE
 response of a block object carries more, all already known:
@@ -35,8 +49,7 @@ the tag catalog human-readable attribute names.
 
 Break this into digestible slices rather than one 1000-entry dump:
 
-1. An `AttributeFlags` IntFlag + decoder, with tests over the flags
-   observed in existing fixtures. Small, self-contained.
+1. ~~An `AttributeFlags` IntFlag + decoder~~ — done (#79).
 2. Class/attribute tables for the classes the library already touches
    (ServerSession, DataBlock, Block, CPUexecUnit, ControllerArea,
    Subscription, AlarmSubsystem) — names and IDs only.
@@ -75,7 +88,7 @@ of the state attribute the library reads, with request values
 (`OperatingState` 0xD9E: 8=run, 4=stop) cross-checks the existing
 `get_cpu_state()`.
 
-Do not ship a `set_operating_state()` write without hardware validation
+Constants shipped (#81). Do not ship a `set_operating_state()` write without hardware validation
 of both transitions — the issue explicitly gates closure on real-PLC
 RUN<->STOP traces, and a wrong write is a disruptive administrative
 action. Instead: add the constants, and post the attribute/value facts
@@ -83,14 +96,10 @@ on #8 so a tester with a bench PLC can capture the trace.
 
 ## Smaller items
 
-- `Block.BlockLanguage` code table (STL/LAD/FBD/SCL/GRAPH/...) for
-  block-metadata reporting.
+- ~~`Block.BlockLanguage` code table~~ — done (#77).
 - `ServerSession.Roles` (305) plural — the full role mask, next to the
   single `Role` the secured-session detection reads.
-- Surface `ProjectOMS == 0` ("no project on the controller") from the
-  ServerSessionVersion struct as a distinct connect error; it currently
-  masquerades as a generic session-setup failure.
-- OMSSessionVersion negotiation (V1..V7, 64..448): the negotiated
-  `SystemOMS` gates which optional request fields exist (`CheckInput`
-  >=V5, `ExclTrimmers` >=V7, `IDSpace` >=V3). Worth exposing the
-  negotiated value on the connection first, before any field-gating.
+- ~~Surface `ProjectOMS == 0`~~ — done (#80), as a warning + property.
+- OMSSessionVersion negotiation: exposing the negotiated value is done
+  (#80). Field-gating (`CheckInput` >=V5, `ExclTrimmers` >=V7, `IDSpace`
+  >=V3) remains — needs per-version wire layouts confirmed first.

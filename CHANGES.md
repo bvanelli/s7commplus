@@ -34,6 +34,11 @@ Other behaviour changes:
 * The wheel no longer ships the analyses of retired HarpoS7 code or the artifact
   manifest (`artifacts.json`). They moved to `old/family0/` in the repository.
   `fingerprint_gates.bin` is gone.
+* A legitimation the PLC refuses because of the password now raises
+  `S7AuthenticationError`, not `S7ConnectionError`. Other rejections still raise
+  `S7ConnectionError` (#73).
+* The dictionaries returned by `list_datablocks()` gain the keys `language`,
+  `knowhow_protected` and `unlinked` (#77). Existing keys are unchanged.
 
 ### New features
 
@@ -59,6 +64,30 @@ Other behaviour changes:
   `forget_lost_subscriptions()` drops what is still pending. It is opt-in:
   nothing is recreated implicitly, notifications from the gap are not replayed
   and alarm subscriptions are not restored (#69, #67).
+* `connect(..., connection_type="hmi" | "es" | "pg")` on both clients selects the
+  COTP identity the client presents. The default `"hmi"` is what the library has
+  always used; whether firmware treats `"es"` or `"pg"` differently is not
+  verified against a PLC (#74).
+* Session introspection on both clients: `secured_session` (the secured-session
+  bit of `ServerSession.Role`), `server_session_roles` (the raw `Roles` mask) and
+  `session_oms_version` (negotiated SystemOMS and ProjectOMS, logged as `V1` to
+  `V7` at connect, with a warning when a controller reports ProjectOMS 0). The bit
+  meanings are inferred from TIA Portal captures, not verified against a PLC
+  (#76, #85, #80, #86).
+* `device_name()`, `device_family()` and `DEVICE_NAMES` map a controller's order
+  number to its module name and family for S7-1200/1500 CPUs, SIPLUS variants,
+  software controllers and PLCSIM (#75).
+* `attribute_name()` and `describe_attribute()` name attribute ids for the
+  ServerSession, Block, CPUexecUnit, Subscription and AlarmSubsystem classes.
+  Unknown ids degrade to a numeric description (#84).
+* Protocol tables in `protocol.py`: `AttributeFlags` with
+  `attribute_flags_description()` (#79), `BlockLanguage` with
+  `block_language_name()` (#77), `ServiceResult` with `service_result_code()`
+  (#73), `invoke_method_name()` for INVOKE calls (#78), the operating-state
+  attribute ids and `OperatingStateRequest` values (#81), and further wire
+  constants (#72). The sources of the values are TIA Portal captures unless stated,
+  and the constants are not verified against a live PLC. No operating-state write
+  path ships (#8).
 * PLCSIM / PLCSIM Advanced (key family 03) V1 SessionKey authentication, with an
   ECIES-over-P-256 seed (#65, #56). Emulator-tested only; see the known
   limitations.

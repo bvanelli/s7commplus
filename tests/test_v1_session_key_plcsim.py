@@ -256,7 +256,16 @@ def test_sync_client_authenticates_against_family_03(plcsim_server: tuple[S7Comm
         assert abs(struct.unpack(">f", client.db_read(1, 0, 4))[0] - 23.5) < 0.001
         client.db_write(1, 0, struct.pack(">f", 42.0))
         assert abs(struct.unpack(">f", client.db_read(1, 0, 4))[0] - 42.0) < 0.001
-        assert client.list_datablocks() == [{"name": "DB1", "number": 1, "rid": 0x8A0E0001}]
+        assert client.list_datablocks() == [
+            {
+                "name": "DB1",
+                "number": 1,
+                "rid": 0x8A0E0001,
+                "language": None,
+                "knowhow_protected": False,
+                "unlinked": False,
+            }
+        ]
     finally:
         client.disconnect()
 
@@ -277,7 +286,16 @@ async def test_async_client_authenticates_against_family_03(
         assert abs(struct.unpack(">f", await client.db_read(1, 0, 4))[0] - 23.5) < 0.001
         await client.db_write(1, 0, struct.pack(">f", 42.0))
         assert abs(struct.unpack(">f", await client.db_read(1, 0, 4))[0] - 42.0) < 0.001
-        assert await client.list_datablocks() == [{"name": "DB1", "number": 1, "rid": 0x8A0E0001}]
+        assert await client.list_datablocks() == [
+            {
+                "name": "DB1",
+                "number": 1,
+                "rid": 0x8A0E0001,
+                "language": None,
+                "knowhow_protected": False,
+                "unlinked": False,
+            }
+        ]
     finally:
         await client.disconnect()
 

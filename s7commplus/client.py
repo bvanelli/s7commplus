@@ -33,7 +33,16 @@ from .codec import (
 )
 from .catalog import SymbolCatalog, SymbolicTag, TagResult
 from .connection import FamilyOnlyFingerprintError, S7CommPlusConnection, SessionKeyCandidateRejectedError
-from .protocol import DataType, ElementID, FunctionCode, Ids, ObjectId, ProtocolVersion, remote_tsap_for_connection_type
+from .protocol import (
+    DataType,
+    ElementID,
+    FunctionCode,
+    Ids,
+    ObjectId,
+    ProtocolVersion,
+    block_language_name,
+    remote_tsap_for_connection_type,
+)
 from .subscription import (
     SubscriptionDiagnostics,
     SubscriptionItem,
@@ -1737,7 +1746,8 @@ def _parse_explore_datablocks(response: bytes) -> list[dict[str, Any]]:
         _, consumed = decode_uint64_vlq(response, offset)
         offset += consumed
 
-    stack: list[list[Any]] = []  # each entry: [relation_id, class_id, name]
+    # Each stack entry: [relation_id, class_id, name, language, knowhow, unlinked]
+    stack: list[list[Any]] = []
     while offset < len(response):
         tag = response[offset]
 
@@ -1753,14 +1763,23 @@ def _parse_explore_datablocks(response: bytes) -> list[dict[str, Any]]:
             offset += consumed
             _attr_id, consumed = decode_uint32_vlq(response, offset)  # AttributeId
             offset += consumed
-            stack.append([relid, class_id, ""])
+            stack.append([relid, class_id, "", None, False, False])
 
         elif tag == ElementID.TERMINATING_OBJECT:
             offset += 1
             if stack:
-                relid, class_id, name = stack.pop()
+                relid, class_id, name, language, knowhow, unlinked = stack.pop()
                 if class_id == Ids.DB_CLASS_RID and (relid >> 16) == 0x8A0E:
-                    datablocks.append({"name": name, "number": relid & 0xFFFF, "rid": relid})
+                    datablocks.append(
+                        {
+                            "name": name,
+                            "number": relid & 0xFFFF,
+                            "rid": relid,
+                            "language": language,
+                            "knowhow_protected": knowhow,
+                            "unlinked": unlinked,
+                        }
+                    )
 
         elif tag == ElementID.ATTRIBUTE:
             offset += 1
@@ -1789,6 +1808,25 @@ def _parse_explore_datablocks(response: bytes) -> list[dict[str, Any]]:
                     stack[-1][2] = name.rstrip("\x00")
                 except Exception:
                     pass
+
+            elif attr_id == Ids.BLOCK_BLOCK_LANGUAGE and stack:
+                # Language arrives as a USINT/UINT code; decode leniently so an
+                # unknown value from newer firmware does not break the browse.
+                if value:
+                    try:
+                        language_value, _ = decode_uint32_vlq(value, 0)
+                        stack[-1][3] = block_language_name(language_value)
+                    except (ValueError, IndexError):
+                        pass
+
+            elif attr_id == Ids.BLOCK_KNOWHOW_PROTECTED and stack:
+                # A present KnowhowProtected attribute means the block is protected;
+                # its value is struct 0xD77, whose presence alone is the signal.
+                stack[-1][4] = True
+
+            elif attr_id == Ids.BLOCK_UNLINKED and stack:
+                if value:
+                    stack[-1][5] = value[0] != 0
 
         else:
             # Response-preamble fields before the first object, or unhandled element

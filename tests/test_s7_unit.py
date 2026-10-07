@@ -26,7 +26,16 @@ from s7commplus.connection import S7CommPlusConnection, _strip_paom_string_in_se
 from s7commplus.codec import encode_header, encode_object_qualifier, encode_pvalue_blob
 from s7commplus.codec import _pvalue_element_size as _element_size
 from s7commplus.codec import skip_typed_value, parse_server_session_version
-from s7commplus.protocol import DataType, ElementID, FunctionCode, Ids, ObjectId, Opcode, ProtocolVersion
+from s7commplus.protocol import (
+    DataType,
+    ElementID,
+    FunctionCode,
+    Ids,
+    ObjectId,
+    Opcode,
+    ProtocolVersion,
+    block_language_name,
+)
 from s7commplus.vlq import (
     encode_uint32_vlq,
     encode_uint64_vlq,
@@ -855,7 +864,101 @@ class TestExploreDatablocks:
         assert len(dbs) == 1
         assert dbs[0]["number"] == 42
         assert dbs[0]["rid"] == Ids.DB_ACCESS_AREA_BASE | 42
-        assert dbs[0]["name"] == "DataBlock_1"
+
+    @staticmethod
+    def _db_object(db_number: int, name: bytes = b"DataBlock_1", extra_attributes: bytes = b"") -> bytes:
+        from s7commplus.protocol import Ids
+
+        r = bytearray()
+        r += bytes([ElementID.START_OF_OBJECT])
+        r += struct.pack(">I", Ids.DB_ACCESS_AREA_BASE | db_number)
+        r += encode_uint32_vlq(Ids.DB_CLASS_RID)
+        r += encode_uint32_vlq(0)  # ClassFlags
+        r += encode_uint32_vlq(0)  # AttributeId
+        r += bytes([ElementID.ATTRIBUTE])
+        r += encode_uint32_vlq(Ids.OBJECT_VARIABLE_TYPE_NAME)
+        r += bytes([0x00, DataType.WSTRING]) + encode_uint32_vlq(len(name)) + name
+        r += extra_attributes
+        r += bytes([ElementID.TERMINATING_OBJECT])
+        return bytes(r)
+
+    def test_parse_explore_datablocks_defaults_without_block_metadata(self) -> None:
+        r = encode_uint64_vlq(0) + self._db_object(7)
+        dbs = _parse_explore_datablocks(bytes(r))
+        assert dbs == [
+            {
+                "name": "DataBlock_1",
+                "number": 7,
+                "rid": Ids.DB_ACCESS_AREA_BASE | 7,
+                "language": None,
+                "knowhow_protected": False,
+                "unlinked": False,
+            }
+        ]
+
+    def test_parse_explore_datablocks_reports_knowhow_protection(self) -> None:
+        # KnowhowProtected (0x9DC) is struct 0xD77; its presence marks the block.
+        # Struct ids are fixed 4-byte values, member keys are VLQ.
+        knowhow = (
+            bytes([ElementID.ATTRIBUTE])
+            + encode_uint32_vlq(Ids.BLOCK_KNOWHOW_PROTECTED)
+            + bytes([0x00, DataType.STRUCT])
+            + struct.pack(">I", Ids.KNOWHOW_PROTECTION_STRUCT)
+            + encode_uint32_vlq(Ids.KNOWHOW_PROTECTION_MODE)
+            + bytes([0x00, DataType.WORD])
+            + struct.pack(">H", 1)
+            + encode_uint32_vlq(0)  # struct terminator key
+        )
+        r = encode_uint64_vlq(0) + self._db_object(8, extra_attributes=knowhow)
+        dbs = _parse_explore_datablocks(bytes(r))
+        assert dbs[0]["knowhow_protected"] is True
+        assert dbs[0]["language"] is None
+
+    def test_parse_explore_datablocks_reports_language(self) -> None:
+        from s7commplus.protocol import Ids
+
+        language = (
+            bytes([ElementID.ATTRIBUTE]) + encode_uint32_vlq(Ids.BLOCK_BLOCK_LANGUAGE) + bytes([0x00, DataType.USINT, 4])  # SCL
+        )
+        r = encode_uint64_vlq(0) + self._db_object(9, extra_attributes=language)
+        dbs = _parse_explore_datablocks(bytes(r))
+        assert dbs[0]["language"] == "SCL"
+        assert dbs[0]["knowhow_protected"] is False
+
+    def test_parse_explore_datablocks_reports_unknown_language(self) -> None:
+        language = (
+            bytes([ElementID.ATTRIBUTE]) + encode_uint32_vlq(Ids.BLOCK_BLOCK_LANGUAGE) + bytes([0x00, DataType.USINT, 0x7B])
+        )
+        r = encode_uint64_vlq(0) + self._db_object(10, extra_attributes=language)
+        dbs = _parse_explore_datablocks(bytes(r))
+        assert dbs[0]["language"] == "language 123"
+
+    def test_parse_explore_datablocks_reports_unlinked(self) -> None:
+        unlinked = bytes([ElementID.ATTRIBUTE]) + encode_uint32_vlq(Ids.BLOCK_UNLINKED) + bytes([0x00, DataType.BOOL, 1])
+        r = encode_uint64_vlq(0) + self._db_object(11, extra_attributes=unlinked)
+        dbs = _parse_explore_datablocks(bytes(r))
+        assert dbs[0]["unlinked"] is True
+
+
+class TestBlockLanguage:
+    def test_known_codes(self) -> None:
+        from s7commplus.protocol import BlockLanguage
+
+        assert BlockLanguage.STL == 1
+        assert BlockLanguage.LAD == 2
+        assert BlockLanguage.FBD == 3
+        assert BlockLanguage.SCL == 4
+        assert BlockLanguage.DB == 5
+        assert BlockLanguage.GRAPH == 6
+        assert BlockLanguage.CPU_DB == 8
+        assert BlockLanguage.C_FOR_S7 == 21
+        assert BlockLanguage.MC7PLUS == 400
+
+    def test_names(self) -> None:
+        assert block_language_name(0) == "UNDEF"
+        assert block_language_name(4) == "SCL"
+        assert block_language_name(201) == "MOTION_DB"
+        assert block_language_name(4242) == "language 4242"
 
 
 class TestReassembledPayload:

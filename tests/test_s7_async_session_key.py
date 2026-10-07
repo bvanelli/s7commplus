@@ -146,7 +146,16 @@ async def test_async_explore_after_session_setup(session_key_server: tuple[S7Com
     client = S7CommPlusAsyncClient()
     await client.connect("127.0.0.1", port=port)
     try:
-        assert await client.list_datablocks() == [{"name": "DB1", "number": 1, "rid": 0x8A0E0001}]
+        assert await client.list_datablocks() == [
+            {
+                "name": "DB1",
+                "number": 1,
+                "rid": 0x8A0E0001,
+                "language": None,
+                "knowhow_protected": False,
+                "unlinked": False,
+            }
+        ]
     finally:
         await client.disconnect()
 

@@ -279,6 +279,19 @@ class Ids(IntEnum):
     CPU_EXEC_UNIT_EXECUTING = 8064  # 0x1F80; observed as 1 in RUN and 0 in STOP
     CPU_EXEC_UNIT_OPERATING_MODE = 8065  # 0x1F81; observed as 7 in RUN and 0 in STOP
 
+    # Block object attributes (ClassId Block = 0x9EA). Reported by EXPLORE for
+    # program blocks; the know-how flag explains a block whose tag tree cannot
+    # be browsed. Reference: thomas-v2/S7CommPlusDriver/Core/Ids.cs (Block.*)
+    BLOCK_BLOCKNUMBER = 0x9D9
+    BLOCK_BLOCK_LANGUAGE = 0x9DA
+    BLOCK_KNOWHOW_PROTECTED = 0x9DC
+    BLOCK_UNLINKED = 0x9DF
+    BLOCK_CRC = 0x9E4
+    # Struct 0xD77 the KnowhowProtected attribute carries: Mode (BITSET16) and
+    # Password (byte array).
+    KNOWHOW_PROTECTION_STRUCT = 0xD77
+    KNOWHOW_PROTECTION_MODE = 0xD78
+
     # Type info classes
     CLASS_TYPE_INFO = 511
     CLASS_OMS_TYPE_INFO_CONTAINER = 534
@@ -446,6 +459,61 @@ class LegitimationId(IntEnum):
     # from LEGITIMATE (1846) which is the password-auth challenge response.
     SESSION_SETUP_LEGITIMATION = 1830
     LEGITIMATE = 1846
+
+
+class BlockLanguage(IntEnum):
+    """Programming language of a program block (attribute 0x9DA).
+
+    Reference: Wireshark S7CommPlus dissector block-language table.
+    """
+
+    UNDEF = 0
+    STL = 1
+    LAD = 2
+    FBD = 3
+    SCL = 4
+    DB = 5
+    GRAPH = 6
+    SDB = 7
+    CPU_DB = 8
+    CPU_SDB = 17
+    C_FOR_S7 = 21
+    HIGRAPH = 22
+    CFC = 23
+    SFC = 24
+    S7_PDIAG = 29
+    RSE = 31
+    F_STL = 32
+    F_LAD = 33
+    F_FBD = 34
+    F_DB = 35
+    F_CALL = 36
+    TECHNO_DB = 37
+    F_LAD_LIB = 38
+    F_FDB_LIB = 39
+    CLASSIC_ENCRYPTION = 41
+    FCP = 50
+    LAD_IEC = 100
+    FBD_IEC = 101
+    FLD = 102
+    MOTION_DB = 201
+    GRAPH_ACTIONS = 300
+    GRAPH_SEQUENCE = 301
+    GRAPH_ADDINFOS = 303
+    GRAPH_PLUS = 310
+    MC7PLUS = 400
+
+
+def block_language_name(code: int) -> str:
+    """Return the conventional name of a block language code, ``"Undef"`` for 0.
+
+    Unknown codes return a ``"language <n>"`` spelling rather than raising, so
+    an unrecognized value from newer firmware degrades to a readable string.
+    """
+    try:
+        return BlockLanguage(code).name
+    except ValueError:
+        return f"language {code}"
 
 
 class AttributeFlags(IntFlag):

@@ -281,7 +281,8 @@ class Ids(IntEnum):
 
     # Block object attributes (ClassId Block = 0x9EA). Reported by EXPLORE for
     # program blocks; the know-how flag explains a block whose tag tree cannot
-    # be browsed. Reference: thomas-v2/S7CommPlusDriver/Core/Ids.cs (Block.*)
+    # be browsed. Source: TIA Portal EXPLORE captures; Ids.cs defines only
+    # Block_BlockNumber (2521). Not verified against a live PLC.
     BLOCK_BLOCKNUMBER = 0x9D9
     BLOCK_BLOCK_LANGUAGE = 0x9DA
     BLOCK_KNOWHOW_PROTECTED = 0x9DC
@@ -464,7 +465,8 @@ class LegitimationId(IntEnum):
 class BlockLanguage(IntEnum):
     """Programming language of a program block (attribute 0x9DA).
 
-    Reference: Wireshark S7CommPlus dissector block-language table.
+    Source: TIA Portal block-property captures; the codes are the SIMATIC
+    block-language identifiers. Not verified against a live PLC.
     """
 
     UNDEF = 0

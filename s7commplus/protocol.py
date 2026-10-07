@@ -114,10 +114,10 @@ class ConnectionType(IntEnum):
     """COTP called-TSAP identities an S7CommPlus client can present.
 
     S7CommPlus replaces the classic numeric rack/slot TSAPs with ASCII names
-    for the client role. The PLC-side service a connection reaches can depend
-    on which identity is used, so clients performing engineering-style
-    operations (program browsing, block upload/download) may need ``ES``
-    instead of the default ``HMI`` role.
+    for the client role. The default ``HMI`` identity is what this library has
+    always used; ``ES``/``PG`` are offered so a caller can present a different
+    role, which may matter on firmware that treats roles differently (not
+    verified against a PLC).
 
     Reference: Wireshark S7CommPlus dissector (TSAP strings) and
     thomas-v2/S7CommPlusDriver.
@@ -153,6 +153,10 @@ def remote_tsap_for_connection_type(connection_type: int | str | None) -> bytes:
             connection_type = ConnectionType[connection_type.strip().upper()]
         except KeyError:
             raise ValueError(f"Unknown connection type {connection_type!r}; expected one of 'hmi', 'es', 'pg'") from None
+    elif isinstance(connection_type, bool) or not isinstance(connection_type, int):
+        # bool is an int subclass, so True/False would otherwise silently
+        # select ES/HMI.
+        raise ValueError(f"Unknown connection type {connection_type!r}; expected one of 'hmi', 'es', 'pg'")
     tsap = _CONNECTION_TYPE_REMOTE_TSAPS.get(int(connection_type))
     if tsap is None:
         raise ValueError(f"Unknown connection type {connection_type!r}; expected one of 'hmi', 'es', 'pg'")

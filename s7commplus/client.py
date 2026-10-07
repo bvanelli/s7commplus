@@ -169,9 +169,11 @@ class S7CommPlusClient:
                 ``True`` is only an explicit spelling of the automatic choice.
             connection_type: COTP identity to connect as: ``"hmi"`` (default,
                 the HMI/SCADA data-client role), ``"es"`` (engineering station,
-                TIA-Portal style) or ``"pg"`` (programming device). Some firmware
-                gates engineering-style operations (program browsing, block
-                upload/download) on the connection type.
+                TIA-Portal style) or ``"pg"`` (programming device). The TSAP
+                strings name the client role; whether a given firmware serves
+                engineering-style operations differently per role is not
+                verified against a PLC, so try ``"es"`` if the default is
+                refused.
         """
         if legacy_s7_1500 and use_tls:
             raise ValueError("legacy_s7_1500 requires use_tls=False")

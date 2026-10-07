@@ -56,6 +56,12 @@ class TestRemoteTsapForConnectionType:
         with pytest.raises(ValueError, match="Unknown connection type"):
             remote_tsap_for_connection_type(bad)  # type: ignore[arg-type]
 
+    @pytest.mark.parametrize("boolean", [True, False])
+    def test_booleans_are_rejected_not_treated_as_ints(self, boolean: bool) -> None:
+        # bool is an int subclass: True must not silently select ES.
+        with pytest.raises(ValueError, match="Unknown connection type"):
+            remote_tsap_for_connection_type(boolean)  # type: ignore[arg-type]
+
 
 class TestConnectionDefaults:
     """Without a connection type the historical HMI TSAP stays unchanged."""

@@ -34,6 +34,10 @@ Other behaviour changes:
 * The wheel no longer ships the analyses of retired HarpoS7 code or the artifact
   manifest (`artifacts.json`). They moved to `old/family0/` in the repository.
   `fingerprint_gates.bin` is gone.
+* `tags_from_explore()` and `block_interface_from_explore()` select their stream
+  by dictionary kind instead of a hard-coded Adler-32, so a new version of a
+  dictionary, once added to the package, is picked up without code changes.
+  The streams picked for the bundled dictionaries are unchanged.
 
 ### New features
 
@@ -63,6 +67,14 @@ Other behaviour changes:
   ECIES-over-P-256 seed (#65, #56). Emulator-tested only; see the known
   limitations.
 * `Ids` gains the data-interface and comment attribute ids (#60).
+* `iter_preset_streams()` yields each preset-dictionary zlib stream in an EXPLORE
+  payload as a `PresetStream`, in the order the streams appear, and skips streams
+  that are empty or fail to decompress (#64). `iter_preset_headers()` yields the
+  offset and `PresetIdentity` of each stream without decompressing it.
+* `PresetIdentity` names a preset dictionary by `adler`, `kind` and
+  `version`, parsed from its file name. `zlib_dicts.ZLIB_DICT_IDENTITIES`
+  maps each Adler-32 to one and supersedes `ZLIB_DICT_NAMES`, which is kept
+  for compatibility (#64).
 
 ### Performance
 

@@ -1,6 +1,7 @@
 """Tests for the S7CommPlus blob decompressor."""
 
 import zlib
+from importlib.resources import files
 from itertools import accumulate
 
 import pytest
@@ -25,6 +26,24 @@ def test_all_dictionaries_have_correct_adler32():
 def test_all_dictionaries_have_names():
     for adler in ZLIB_DICTIONARIES:
         assert adler in ZLIB_DICT_NAMES, f"Missing name for dictionary {adler:#x}"
+
+
+@pytest.mark.parametrize("adler", sorted(ZLIB_DICT_IDENTITIES), ids=lambda a: f"{a:08x}")
+def test_dictionary_identity_round_trips_to_its_file(adler: int):
+    preset = ZLIB_DICT_IDENTITIES[adler]
+
+    # Keyed by its own Adler-32, which also fits the 4-byte zlib DICTID.
+    assert preset.adler == adler
+    assert 0 <= preset.adler <= 0xFFFFFFFF
+    assert 0 <= preset.version <= 0xFFFFFFFF
+    # Underscores became spaces, and nothing was left at the edges by the split.
+    assert preset.kind and preset.kind == preset.kind.strip() and "_" not in preset.kind
+
+    # Rebuilding the name from the parsed fields must land on the shipped file.
+    name = f"{preset.adler:08x}_{preset.kind.replace(' ', '_')}_{preset.version:08x}.xml"
+    assert files("s7commplus.zlib_dicts").joinpath(name).is_file()
+    # The display name is the same identity in its older flat form.
+    assert ZLIB_DICT_NAMES[adler] == f"{preset.kind} {preset.version:08x}"
 
 
 def test_decompress_standard_blob():
@@ -78,6 +97,25 @@ def test_iter_preset_headers_and_streams():
     streams = list(iter_preset_streams(payload))
     assert streams == [PresetStream(line_comm, "<A/>"), PresetStream(ident, "<B/>")]
     assert [s.xml.tag for s in streams] == ["A", "B"]
+
+
+@pytest.mark.parametrize("adlers", [(0x79B2BDA3, 0x3C55436A), (0x3C55436A, 0x79B2BDA3)], ids=["old-first", "new-first"])
+def test_iter_preset_streams_keeps_payload_order_across_versions(adlers: tuple[int, int]):
+    # LineComm 0x90000001 and 0x98000001 in both orders: the output follows the payload,
+    # not the Adler-32 order of ZLIB_DICT_IDENTITIES.
+    first, second = (ZLIB_DICT_IDENTITIES[a] for a in adlers)
+    payload = _preset_stream(first, b"<First/>") + _preset_stream(second, b"<Second/>")
+
+    assert list(iter_preset_streams(payload)) == [PresetStream(first, "<First/>"), PresetStream(second, "<Second/>")]
+
+
+def test_iter_preset_streams_skips_header_inside_compressed_data():
+    # Level 0 stores the bytes verbatim, so a real preset header shows up inside a standard stream.
+    ident = ZLIB_DICT_IDENTITIES[0xCE9B821B]
+    payload = zlib.compress(b"<Outer>" + _preset_stream(ident, b"")[:6] + b"<B/></Outer>", 0)
+
+    assert [preset for _, preset in iter_preset_headers(payload)] == [ident]
+    assert list(iter_preset_streams(payload)) == []
 
 
 def test_find_and_decompress_standard():

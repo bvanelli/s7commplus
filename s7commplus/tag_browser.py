@@ -289,6 +289,10 @@ def _find_preset_stream(data: bytes, kinds: tuple[str, ...]) -> int | None:
     A block EXPLORE response contains several preset-dict streams; callers need
     the one for a specific dictionary kind, not merely the first. Only headers
     are read, so the other streams are never decompressed.
+
+    Matching by kind alone also accepts any future version of a dictionary, so
+    adding a second version of one of these kinds feeds its streams to the same
+    parser.
     """
     offsets: dict[str, int] = {}
     for offset, preset in iter_preset_headers(data):

@@ -40,7 +40,9 @@ def decompress_blob(data: bytes, offset: int = 0) -> str:
         ValueError: If the zlib stream requires an unknown dictionary.
         zlib.error: On other decompression failures.
     """
-    stream = data[offset:]
+    # A view, not a copy: iter_preset_streams calls this once per candidate header,
+    # and each slice used to copy the rest of a possibly multi-MB EXPLORE payload.
+    stream = memoryview(data)[offset:]
 
     # Check for preset-dictionary zlib header: CMF=0x78, FLG with FDICT bit set (bit 5)
     if len(stream) >= 6 and stream[0] == 0x78 and (stream[1] & 0x20):
@@ -71,8 +73,9 @@ def decompress_blob(data: bytes, offset: int = 0) -> str:
 class PresetStream:
     """A decompressed preset-dictionary zlib stream.
 
-    :param preset: The preset dictionary the stream was compressed against.
-    :param text: The decompressed XML document.
+    Attributes:
+        preset: The preset dictionary the stream was compressed against.
+        text: The decompressed XML document.
     """
 
     preset: PresetIdentity
@@ -80,7 +83,14 @@ class PresetStream:
 
     @property
     def xml(self) -> ET.Element:
-        """Parse `text` into an element tree; every access parses anew."""
+        """Parse `text` into an element tree; every access parses anew.
+
+        Returns:
+            The root element of the document.
+
+        Raises:
+            xml.etree.ElementTree.ParseError: If the PLC sent text that is not well-formed XML.
+        """
         return ET.fromstring(self.text)
 
 
@@ -91,8 +101,11 @@ def iter_preset_headers(data: bytes) -> Iterator[tuple[int, PresetIdentity]]:
     still be a coincidence inside compressed data, which only shows when decompressing from it
     fails.
 
-    :param data: Raw EXPLORE response payload (possibly multi-fragment).
-    :returns: An iterator of `(offset, preset)` in the order the headers appear.
+    Args:
+        data: Raw EXPLORE response payload (possibly multi-fragment).
+
+    Returns:
+        An iterator of `(offset, preset)` in the order the headers appear.
     """
     # CMF 0x78 is deflate with a 32K window, the only CMF the PLC emits.
     position = data.find(0x78)
@@ -110,8 +123,13 @@ def iter_preset_streams(data: bytes) -> Iterator[PresetStream]:
     """Yield every preset-dictionary zlib stream in `data`, in the order they appear.
 
     Decompresses each header from `iter_preset_headers`. A header that falls
-    inside compressed data fails to decode and is skipped, as is a stream that
+    inside compressed data usually fails to decode and is skipped, as is a stream that
     decompresses to an empty document.
+
+    The example matches on `preset.kind` alone, so it accepts either `LineComm`
+    version. Comments are keyed by `Path` in the `0x98000001` layout, the only
+    one observed on S7-1500 PLCs; the `0x90000001` dictionary suggests
+    `UId`/`LineId` instead.
 
     Example::
 
@@ -127,16 +145,22 @@ def iter_preset_streams(data: bytes) -> Iterator[PresetStream]:
                         for entry in comment.iter("DictEntry"):
                             print(comment.get("Path"), entry.get("Language"), entry.text)
 
-    :param data: Raw EXPLORE response payload (possibly multi-fragment).
-    :returns: An iterator of `PresetStream` for each decodable stream.
+    Args:
+        data: Raw EXPLORE response payload (possibly multi-fragment).
+
+    Returns:
+        An iterator of `PresetStream` for each decodable stream.
     """
     for offset, preset in iter_preset_headers(data):
         try:
             text = decompress_blob(data, offset=offset)
-        except (ValueError, zlib.error):
+        except (ValueError, zlib.error) as e:
+            logger.debug("Skipping %s 0x%08x stream at offset %d: %s", preset.kind, preset.version, offset, e)
             continue
-        if text:
-            yield PresetStream(preset, text)
+        if not text:
+            logger.debug("Skipping empty %s 0x%08x stream at offset %d", preset.kind, preset.version, offset)
+            continue
+        yield PresetStream(preset, text)
 
 
 def find_and_decompress(data: bytes) -> str | None:

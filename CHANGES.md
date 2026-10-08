@@ -1,7 +1,7 @@
 CHANGES
 =======
 
-0.2.0 (unreleased)
+0.2.0 (2026-10-08)
 ------------------
 
 The V1 SessionKey handshake (V1-initial S7-1200/S7-1500 without TLS) no longer

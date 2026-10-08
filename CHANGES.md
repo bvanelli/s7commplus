@@ -10,7 +10,7 @@ CHANGES
   payload as a `PresetStream`, in the order the streams appear, and skips streams
   that are empty or fail to decompress (#64). `iter_preset_headers()` yields the
   offset and `PresetIdentity` of each stream without decompressing it.
-* `PresetIdentity` names a preset dictionary by `adler`, `kind` and
+  `PresetIdentity` names a preset dictionary by `adler`, `kind` and
   `version`, parsed from its file name. `zlib_dicts.ZLIB_DICT_IDENTITIES`
   maps each Adler-32 to one and supersedes `ZLIB_DICT_NAMES`, which is kept
   for compatibility (#64).

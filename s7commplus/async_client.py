@@ -85,6 +85,7 @@ from .connection import (
     _parse_get_var_substreamed_response,
     _parse_protection_level_response,
     _patch_plcsim_server_session_version,
+    _request_frame_overhead,
     _resolve_session_key_fingerprint,
     _session_setup_accepted,
     _set_s7_groups,
@@ -186,6 +187,10 @@ class S7CommPlusAsyncClient:
             carries (default 100; ``0`` sends a batch in one request). A larger
             batch is split over several requests, in order. The default is not
             a measured PLC limit.
+        max_request_bytes: Largest request frame a multi-item read or write
+            sends (default 900; ``0`` disables the check), counted as for
+            :class:`S7CommPlusClient`. A larger batch is split; an item too
+            large for one request raises ``ValueError`` before anything is sent.
     """
 
     def __init__(self) -> None:
@@ -203,9 +208,10 @@ class S7CommPlusAsyncClient:
         self._notification_frame_overflows = 0
         self._connect_params: Optional[dict[str, Any]] = None
         self._symbol_catalog: Optional[SymbolCatalog] = None
-        # Most items one multi-item read or write request carries; see
-        # S7CommPlusClient.max_items_per_request.
+        # Most items per request and largest request frame of a multi-item read
+        # or write; see S7CommPlusClient for the defaults' evidence.
         self.max_items_per_request = 100
+        self.max_request_bytes = 900
         self._subscription_change_counter = 1
         self._subscription_relation_id = 0x7FFFC001
         self._subscriptions = SubscriptionRegistry()
@@ -350,9 +356,13 @@ class S7CommPlusAsyncClient:
         """
         return _write_delete_qualifier_version(self._v1_session_key_family, self._protocol_version, self.object_qualifier_version)
 
+    def _frame_overhead(self) -> int:
+        """Bytes this session's request frames add to a payload."""
+        return _request_frame_overhead(self._with_integrity_id, self._session_key is not None)
+
     def _plan_requests(self, items: Sequence[_T], build_payload: Callable[[list[_T]], bytes]) -> list[tuple[list[_T], bytes]]:
         """Split a batch into the requests it needs, in order, with their payloads."""
-        return _request_chunks(items, self.max_items_per_request, build_payload)
+        return _request_chunks(items, self.max_items_per_request, self.max_request_bytes, self._frame_overhead(), build_payload)
 
     async def connect(
         self,
@@ -964,10 +974,12 @@ class S7CommPlusAsyncClient:
     async def db_write_multi(self, items: list[DBWriteItem]) -> None:
         """Write (db_number, start_offset, data, datatype) tuples matching the PLC target types.
 
-        A batch over :attr:`max_items_per_request` items is split over several
-        requests and is not atomic; refused items and interrupted batches raise
+        A batch over :attr:`max_items_per_request` items or
+        :attr:`max_request_bytes` is split over several requests and is not
+        atomic; refused items and interrupted batches raise
         :class:`~s7commplus.error.S7WriteError` as described for
-        :meth:`S7CommPlusClient.db_write_multi`.
+        :meth:`S7CommPlusClient.db_write_multi`. An item too large for one
+        request raises ``ValueError`` before anything is sent.
         """
 
         def build_write(chunk: list[DBWriteItem]) -> bytes:
@@ -995,10 +1007,10 @@ class S7CommPlusAsyncClient:
     async def db_read_multi(self, items: list[tuple[int, int, int]]) -> list[bytes]:
         """Read multiple data block regions, one value per item in item order.
 
-        A batch over :attr:`max_items_per_request` items is split over several
-        requests. An item the PLC could not read, including every item of a
-        request it refused as a whole, is ``b""``; see
-        :meth:`S7CommPlusClient.db_read_multi`.
+        A batch over :attr:`max_items_per_request` items or
+        :attr:`max_request_bytes` is split over several requests. An item the
+        PLC could not read, including every item of a request it refused as a
+        whole, is ``b""``; see :meth:`S7CommPlusClient.db_read_multi`.
         """
 
         def build_read(chunk: list[tuple[int, int, int]]) -> bytes:
@@ -1403,8 +1415,9 @@ class S7CommPlusAsyncClient:
 
         .. warning:: This method is **experimental** and may change.
 
-        A batch over :attr:`max_items_per_request` items is split over several
-        requests, sent in order, and the values are merged.
+        A batch over :attr:`max_items_per_request` items or
+        :attr:`max_request_bytes` is split over several requests, sent in order,
+        and the values are merged.
 
         Args:
             items: `(access_area, lids)` tuples, or three-tuples adding a
@@ -1472,8 +1485,9 @@ class S7CommPlusAsyncClient:
     async def read_tags(self, names: Sequence[str]) -> list[TagResult]:
         """Read names and return a success/error for every item.
 
-        A batch over :attr:`max_items_per_request` names is split over several
-        requests, as in :meth:`read_symbolic_multi`.
+        A batch over :attr:`max_items_per_request` names or
+        :attr:`max_request_bytes` is split over several requests, as in
+        :meth:`read_symbolic_multi`.
         """
         if not names:
             return []
@@ -1496,9 +1510,11 @@ class S7CommPlusAsyncClient:
     async def write_tags(self, values: Mapping[str, bytes]) -> list[TagResult]:
         """Write names once and return per-item results without automatic retry.
 
-        A batch over :attr:`max_items_per_request` names is split over several
-        requests and is not atomic; an interrupted batch is reported as
-        described for :meth:`S7CommPlusClient.write_tags`.
+        A batch over :attr:`max_items_per_request` names or
+        :attr:`max_request_bytes` is split over several requests and is not
+        atomic; an interrupted batch is reported as described for
+        :meth:`S7CommPlusClient.write_tags`. A value too large for one request
+        raises ``ValueError`` before anything is sent.
         """
         if not self._connected:
             raise RuntimeError("Not connected")

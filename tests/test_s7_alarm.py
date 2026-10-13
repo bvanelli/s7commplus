@@ -232,6 +232,32 @@ async def test_async_alarm_client_apis() -> None:
     await client.delete_alarm_subscription(0x55667788)
 
 
+def test_sync_read_alarms_raises_on_plc_error() -> None:
+    client = S7CommPlusClient()
+    connection = MagicMock()
+    connection.protocol_version = ProtocolVersion.V2
+    connection.send_request.return_value = bytes.fromhex("c08895b080e6a5fff4000000000e00000000")
+    client._connection = connection
+
+    with pytest.raises(S7ReturnValueError, match="^Alarm browse failed") as excinfo:
+        client.read_alarms([1031])
+    assert excinfo.value.error_code == -12
+    assert excinfo.value.return_value == 0x8020AB001992FFF4
+
+
+@pytest.mark.asyncio
+async def test_async_read_alarms_raises_on_plc_error() -> None:
+    client = S7CommPlusAsyncClient()
+    client._connected = True
+    client._protocol_version = ProtocolVersion.V2
+    client._send_request = AsyncMock(return_value=bytes.fromhex("c08895b080e6a5fff4000000000e00000000"))
+
+    with pytest.raises(S7ReturnValueError, match="^Alarm browse failed") as excinfo:
+        await client.read_alarms([1031])
+    assert excinfo.value.error_code == -12
+    assert excinfo.value.return_value == 0x8020AB001992FFF4
+
+
 def test_sync_alarm_receive_routes_interleaved_data_notification() -> None:
     client = S7CommPlusClient()
     connection = MagicMock()

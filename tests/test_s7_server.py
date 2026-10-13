@@ -325,10 +325,11 @@ class TestClientServerIntegration:
 
     @pytest.mark.parametrize(
         "method, replies, operation",
-        # The -12 (object does not exist) reply a real S7-1500 sends; browse() first lists the data blocks (here: none)
         [
+            # The hex reply is what a real S7-1500 sends for a missing object (ReturnValue -12)
             ("get_cpu_state", [bytes.fromhex("c08895b080e6a5fff4000000000e00000000")], "CPU state read"),
             ("list_datablocks", [bytes.fromhex("c08895b080e6a5fff4000000000e00000000")], "Data block list"),
+            # browse() lists the data blocks first: b"\x00" is an empty list, so only the type-info explore fails
             ("browse", [b"\x00", bytes.fromhex("c08895b080e6a5fff4000000000e00000000")], "Type-info browse"),
         ],
     )
@@ -488,10 +489,11 @@ class TestAsyncClientServerIntegration:
 
     @pytest.mark.parametrize(
         "method, replies, operation",
-        # The -12 (object does not exist) reply a real S7-1500 sends; browse() first lists the data blocks (here: none)
         [
+            # The hex reply is what a real S7-1500 sends for a missing object (ReturnValue -12)
             ("get_cpu_state", [bytes.fromhex("c08895b080e6a5fff4000000000e00000000")], "CPU state read"),
             ("list_datablocks", [bytes.fromhex("c08895b080e6a5fff4000000000e00000000")], "Data block list"),
+            # browse() lists the data blocks first: b"\x00" is an empty list, so only the type-info explore fails
             ("browse", [b"\x00", bytes.fromhex("c08895b080e6a5fff4000000000e00000000")], "Type-info browse"),
         ],
     )

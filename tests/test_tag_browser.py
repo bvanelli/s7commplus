@@ -5,6 +5,8 @@ S7-1200 G2 (FW V4.1) M area (``IntfDescTag`` dict, Adler-32 ``0xce9b821b``).
 The block-interface fixture is a real EXPLORE blob for an optimized DB
 (``Data_block_1``) from the same PLC, exercising the ``DebugInfo_IntfDesc``
 dict (Adler-32 ``0x66052b13``) and the RID -> SoftDataType mapping.
+The instance-DB fixture is a real EXPLORE blob for ``LGF_SinusCI_DB`` from a
+live S7-1500 (FW V2.9), whose interface sits under a ``Values`` part.
 """
 
 import base64
@@ -97,6 +99,34 @@ _DB_UDT_INTERFACE_BLOB = base64.b64decode(
     "0qfj/YigNCPABb/XCt6MK/hRch9V8oJgzZhTR7/liETtiEPZjEEX3Lhqvtq/Xh0pp78z/fBy+S/w"
     "ygU7o5NyQBQBABCYAAACeH08VUNqAwAAAAABAKOhP0AVAKO7DEAUAKO9LUAUAKO9JUAUAKOTWgAB"
     "AKOTZUAUAKKiogAAAAA="
+)
+
+# Live S7-1500 (FW V2.9) EXPLORE response for instance DB "LGF_SinusCI_DB" (DB7),
+# filtered to attribute 2544, from the zlib header onward. Its first <Part> is
+# Kind="Values"; the members come from the embedded LGF_SinusCI FB.
+_SINUS_INSTANCE_DB_INTERFACE_BLOB = base64.b64decode(
+    "eH1mBSsTpVhbT+M4FP4rVefZ1PdLtVTiujvS7FYaqnngBTmJMyCxUAFF/Pw9ji91kgaWmQdEEud8"
+    "Oba/7zvH/dgZ9dgY+xuy6lWg2SLUoLh3oT6EPT+en379cbH89uflDRjN7vns68356cJSy4hsJWq0"
+    "ZYgTLlHVcIs4VqziuDKKGphE55vH85shxKIyurZWtMgJWiGuGUaVahWS1rmaNFRaSueZwT69bF9l"
+    "ot0Mw1dAmIFNEvRi30oqq/AoWw8X8PL3M1gIrrkwgiiR6Rrr3i/nnHD+gYUT0Th9k+feXujxPJAB"
+    "Y0Pj0PG8+MKBZg1yxMQgghEmG6yWVC05PlJCCKzF9YGeLwZgg6jcELJkeknxkZGcMEavC5f/vwHr"
+    "v6+2Xmvl+1QgLCGpDcGQzpKRI6WpYOR62At8BN6tQadq/GYYxlTRU9irziPO3T3k2Zz5feraqaAC"
+    "QiiwfQM9RbhnmEPEY+PugbcU32AcvCFaZlxxblTuRvzO47fTS3wptOJBVt/cw08vLi+MzRNUIlDS"
+    "rN6ByVGphHXcIVuZFnEBW6GbmqHWSGalxZVUBoL+unv20p45TzdJW8U4sqw1iLfUgjbqCtW4bh3V"
+    "QhMDOQKlF+lLq71n+yZiWH6JsVI3IDEnLUiMGowMYxYppSxvnHSNovOiqvtJRJ/1S0uTzXx92O5e"
+    "hsaOPYmadXex6MWxFLfevRwIJJOBfP/B9TiOTsaJFHflC0A9DGSTgTIFbty/22EYnwzTKQwE6tvl"
+    "UaqiHxo709nru1zMxOs4N2TbKlR///4ehwqYAdz1Q/e4lEfCxAxW3VniwfsMTMfTLp9qQ144vu/Z"
+    "BP8yuw6aaEeLVEgLF+1SZ5JK/yfovhwsy4ieRUqupNWGIasbh7h1QH1RSdS24JSs4ZXg+EsDXuEU"
+    "qQeCPKGUkxPDkqmdu21Q5EigeTphL/scylyAgwZ0ervGxb4hF2dd7GrXSxDYtdeOmAM+qoQVmq1J"
+    "IEYTkphAylSDg9Pd4ygnJhOU5AlKHoZSWV3bW+garm7v2unEjIxonEwkZhIa1Mb79ekA6SRrjlCd"
+    "ElOjlHAC8d3bKJtsFISnyXmwQlCZ9wRnxWQ6rP54nD2GNV7Ea79I6dpPMV2TiBtuTBExVtAikWev"
+    "jkV3DC+lEZxvqA0ek5QCiptSWBbS6EV8XhtU1oTZ2g60waS40Fhe/J42ZN6nV9/gTbKGyKwMvT98"
+    "QJnzFGIj8yUJ1T09PT5N777JKjEj1BExZa5a4Mwvu+chbHZ1ihMxPUMGsGIEm4va865KZ4SrD75A"
+    "M23JxHK8R+S8d4mXEpe8LBjbTSXfUP45xvZb+FBCh8ylMStCMNQuwb1eMnV7IZ+nLieWNND2HGi/"
+    "QMnD9oueE2XIOfskg3nJiu+2+dDbaUkKPcFgUaJ2S+WGPN47dDZ7yiagR32CT7tX3kmvvMuyawhr"
+    "NVylSIqCOdEPP02PPk3WT3c/7+CYlE58kSeEJKJgIzBjhJXlP7z8Kwzh3BFal5scf4r8zR/oAkrx"
+    "Ax184sdsCwYQ6p48opoRHewgDMCEbrsm9rXrl3AxxIqh8jkvntPiuSih5BfcR5Pl6FE5og98XJH3"
+    "wFTImqZRLXujrB8Lo6QYlSPMuG4HKLPYd4rTT/qbsPoPObOuu6IAAAAA"
 )
 
 
@@ -276,6 +306,24 @@ def test_block_interface_from_live_g2_db():
         ("temperatura_motore", "Int"),
         ("tensione_misurata", "Real"),
         ("corrente_misurata", "Real"),
+    ]
+
+
+def test_block_interface_from_live_s7_1500_instance_db():
+    members = block_interface_from_explore(_SINUS_INSTANCE_DB_INTERFACE_BLOB)
+    assert [(m.name, m.section, m.lid) for m in members] == [
+        ("amplitude", "Input", 14),
+        ("offset", "Input", 15),
+        ("periode", "Input", 16),
+        ("phaseShift", "Input", 41),
+        ("callOB", "Input", 17),
+        ("reset", "Input", 28),
+        ("value", "Output", 18),
+        ("error", "Output", 19),
+        ("status", "Output", 32),
+        ("subFunctionStatus", "Output", 21),
+        ("statRad", "Static", 22),
+        ("statCounter", "Static", 23),
     ]
 
 

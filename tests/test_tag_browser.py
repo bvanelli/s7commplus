@@ -5,8 +5,10 @@ S7-1200 G2 (FW V4.1) M area (``IntfDescTag`` dict, Adler-32 ``0xce9b821b``).
 The block-interface fixture is a real EXPLORE blob for an optimized DB
 (``Data_block_1``) from the same PLC, exercising the ``DebugInfo_IntfDesc``
 dict (Adler-32 ``0x66052b13``) and the RID -> SoftDataType mapping.
-The instance-DB fixture is a real EXPLORE blob for ``LGF_SinusCI_DB`` from a
-live S7-1500 (FW V2.9), whose interface sits under a ``Values`` part.
+The instance-DB fixtures are real EXPLORE blobs from a live S7-1500 (FW V2.9)
+whose interface sits under a ``Values`` part: ``LGF_SinusCI_DB`` (an FB instance),
+``SLI_plcDB_rcvData_BRCV`` (a DB of a UDT) and ``IEC_Timer_S1_DB`` (an instance
+of a library FB, which is referenced, not embedded).
 """
 
 import base64
@@ -127,6 +129,35 @@ _SINUS_INSTANCE_DB_INTERFACE_BLOB = base64.b64decode(
     "NVylSIqCOdEPP02PPk3WT3c/7+CYlE58kSeEJKJgIzBjhJXlP7z8Kwzh3BFal5scf4r8zR/oAkrx"
     "Ax184sdsCwYQ6p48opoRHewgDMCEbrsm9rXrl3AxxIqh8jkvntPiuSih5BfcR5Pl6FE5og98XJH3"
     "wFTImqZRLXujrB8Lo6QYlSPMuG4HKLPYd4rTT/qbsPoPObOuu6IAAAAA"
+)
+
+# Live S7-1500 (FW V2.9) EXPLORE response for DB "SLI_plcDB_rcvData_BRCV", declared
+# of the UDT "BRCV_User", filtered to attribute 2544, from the zlib header onward.
+# Its first <Part> is Kind="Values"; the members come from the embedded DataTypeSource.
+_UDT_DB_INTERFACE_BLOB = base64.b64decode(
+    "eH1mBSsTnVfbahsxEP0V43dldRndTOwHOy0JpASSkIe+LHvRloJbByctoV/fGWm19npzKQVjS0I6"
+    "Gs3MOTP+WBndVBjHAVmNKtCsSDWoj12qDynmy/n66uHT4u76qnzcNhfrct/8JvvL9e3moeg86FYI"
+    "x7RxLQOoA6t0i1+4zJ0S0FUdPibq53JeRig6WKLi7wtplHGhtUxLBwxakKySTWBKiVDZ1lRCwHzI"
+    "YzJyELFjc8kcSod0DTI0pZVH4lQvxzltXFwaNEjifHO7QQ9qbbUVoNyQt30B/E+jk2JSdxdenuVy"
+    "nrKAMoP6NCxzacnFtX43ejpf8krbhtZyKZng+LkXesHVQrkzLZX1Br6+0v19dGBQoX89cPPl7pHc"
+    "PNqvGTdxP18AX0g481qC9HH/qC34CD26IBKcv3gR/bLBaEW5uAhbNLTdbFJQd23YYpJKXpLvYlVN"
+    "+th7Gbwlf/S0kcCpYelrglRyaEso8njZZwP6AkTi13X4+Y1YRgy532NJQkrNml+odmCVbmQlGA/4"
+    "avBdxSrrLGuc4XVX18Abg4cuvz8Rx2d4FyABlFItE513DDqvmfONZl1Xt6q23CiNtxajM0YLMAEC"
+    "47WpGcjGsIqDYSpgzuHI152PZ4ps3eog+NSBnNZu3dayc6FhQemKgeXAXFtz1qHt0DbcG2PmRy0B"
+    "PbwXaQqGhixSkVVhX4pehwex09HZN3Q0aTPlfzFG0RMU/iYMdnU9jp7gmIxDzeT+FGKdISjICcJM"
+    "IGyGuEU93v04xXAZw0DGsBMMlzEuA8pQuQ7V8ymOyDh+eI6b4PiMgz1cKMXlnzetEWJ4kj+FMXwE"
+    "o9+DgfwqyScwYmwNfw/H5ldJMcGRY3Pew5E0TDgy4vTd/+xpRN/diL4D2yPRT2m8Ot/NduSmBBgn"
+    "8Zo84YehOt4j4TAxR2NvDmMhj4CESVBFbzSOiIH4MzCyiP/szotD3cor4+K8+g=="
+)
+
+# Live S7-1500 (FW V2.9) EXPLORE response for instance DB "IEC_Timer_S1_DB",
+# filtered to attribute 2544, from the zlib header onward. Its Values part holds
+# only a reference to the library FB IEC_TIMER, not its source.
+_LIBRARY_INSTANCE_DB_INTERFACE_BLOB = base64.b64decode(
+    "eH1mBSsTjZWxDoMgEIZfpWG/IoLnYcTB1sGhS5t0JQL6AH3/oShGYzu0K8PdR374v9/NSN/FeAyk"
+    "ORjoxJOD1uySH1LmhrX9s6v67mLnAn/Zh7DXlsthLFShFfhAOSgSCBGVYJwylDhpP+Qq3mIpTsPs"
+    "PqO/dXceic/EHVIQZUCQk/egFBKQoAGcxECq1Dpzjm3PeGbcOizRxn+zesqwf4btBNVCsBabYds5"
+    "m7fwfQ1fzFx/CKF5"
 )
 
 
@@ -325,6 +356,31 @@ def test_block_interface_from_live_s7_1500_instance_db():
         ("statRad", "Static", 22),
         ("statCounter", "Static", 23),
     ]
+
+
+def test_block_interface_from_live_s7_1500_udt_db():
+    members = block_interface_from_explore(_UDT_DB_INTERFACE_BLOB)
+    assert [(m.name, m.data_type, m.lid) for m in members] == [
+        ("Counter_1", "Int", 14),
+        ("Counter_10", "Int", 15),
+        ("Timer", "Time", 16),
+        ("Random", "Real", 17),
+        ("Heart_Beat", "Bool", 18),
+        ("Sine_1Hz", "Real", 19),
+        ("Sine_5Hz", "Real", 20),
+        ("Sine_10Hz", "Real", 21),
+        ("Sine_50Hz", "Real", 22),
+    ]
+
+
+def test_block_interface_from_live_s7_1500_library_instance_db_is_empty():
+    # The Values part only references the library FB, so there is no source to parse.
+    assert block_interface_from_explore(_LIBRARY_INSTANCE_DB_INTERFACE_BLOB) == []
+
+
+def test_parse_block_interface_values_part_without_source_is_empty():
+    assert parse_block_interface('<BlockInterface><Part Kind="Values"><Payload /></Part></BlockInterface>') == []
+    assert parse_block_interface('<BlockInterface><Part Kind="Values"><Payload /><SubParts /></Part></BlockInterface>') == []
 
 
 def test_datablocks_from_explore_standard_zlib():

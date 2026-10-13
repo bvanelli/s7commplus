@@ -49,6 +49,7 @@ from .codec import (
     encode_typed_value,
     parse_create_object_attributes,
     parse_create_object_session_id,
+    parse_or_raise_for_return_value,
 )
 from .connection import (
     _DEFAULT_LEGACY_SESSION_KEY_REFRESH_INTERVAL,
@@ -982,12 +983,19 @@ class S7CommPlusAsyncClient:
 
         Returns:
             Raw response payload. Read the compressed XML documents in it with `s7commplus.iter_preset_streams`.
+
+        Raises:
+            S7ReturnValueError: If the PLC answers with a non-zero ReturnValue, e.g. for an object that does not exist.
         """
         if self._session_key is not None:
-            payload = _build_explore_payload_v3(explore_id if explore_id else 0x38)
+            explore_id = explore_id or 0x38
+            payload = _build_explore_payload_v3(explore_id)
         else:
-            payload = _build_explore_request(explore_id or Ids.NATIVE_THE_PLC_PROGRAM_RID, list(attributes or []))
-        return await self._send_request(FunctionCode.EXPLORE, payload, integrity_tail=5, reassemble=True)
+            explore_id = explore_id or Ids.NATIVE_THE_PLC_PROGRAM_RID
+            payload = _build_explore_request(explore_id, list(attributes or []))
+        response = await self._send_request(FunctionCode.EXPLORE, payload, integrity_tail=5, reassemble=True)
+        parse_or_raise_for_return_value(response, f"EXPLORE of 0x{explore_id:08X}")
+        return response
 
     async def explore_xml(self, explore_id: int = 0, attributes: Sequence[int] | None = None) -> str | None:
         """EXPLORE a PLC object and decompress the XML metadata from the response.
@@ -1006,6 +1014,9 @@ class S7CommPlusAsyncClient:
         Returns:
             Decompressed XML as a UTF-8 string, or ``None`` if the response
             contains no recognisable zlib stream.
+
+        Raises:
+            S7ReturnValueError: If the PLC answers with a non-zero ReturnValue (see `explore`).
         """
         raw = await self.explore(explore_id, attributes)
         return find_and_decompress(raw)
@@ -1025,6 +1036,7 @@ class S7CommPlusAsyncClient:
         """
         payload = _build_explore_request(Ids.NATIVE_THE_CPU_EXEC_UNIT_RID, [])
         response = await self._send_request(FunctionCode.EXPLORE, payload, integrity_tail=5, reassemble=True)
+        parse_or_raise_for_return_value(response, "CPU state read")
         return _parse_cpu_state(response)
 
     async def upload_block(self, block_type: int, block_number: int) -> bytes:
@@ -1312,7 +1324,11 @@ class S7CommPlusAsyncClient:
             return parse_alarm_notification(frame, language_ids)
 
     async def read_alarms(self, language_ids: Optional[list[LanguageId | int]] = None) -> list[Alarm]:
-        """Return a snapshot of the PLC's active alarms without consuming notifications."""
+        """Return a snapshot of the PLC's active alarms without consuming notifications.
+
+        Raises:
+            S7ReturnValueError: If the PLC answers with a non-zero ReturnValue.
+        """
         response = await self._send_request(
             FunctionCode.EXPLORE, build_alarm_explore_request(), integrity_tail=5, reassemble=True
         )
@@ -1454,6 +1470,7 @@ class S7CommPlusAsyncClient:
                 Ids.NATIVE_THE_PLC_PROGRAM_RID, [Ids.OBJECT_VARIABLE_TYPE_NAME, Ids.BLOCK_BLOCK_NUMBER]
             )
         response = await self._send_request(FunctionCode.EXPLORE, payload, integrity_tail=5, reassemble=True)
+        parse_or_raise_for_return_value(response, "Data block list")
         return _parse_explore_datablocks(response)
 
     async def browse(self) -> list[dict[str, Any]]:
@@ -1540,6 +1557,7 @@ class S7CommPlusAsyncClient:
         """EXPLORE the OMS type-info container and return its per-type objects."""
         payload = _build_explore_request(Ids.OBJECT_OMS_TYPE_INFO_CONTAINER, [])
         response = await self._send_request(FunctionCode.EXPLORE, payload, integrity_tail=5, reassemble=True)
+        parse_or_raise_for_return_value(response, "Type-info browse")
         return typeinfo.extract_type_info_objects(response)
 
     # -- Internal methods --

@@ -23,7 +23,7 @@ from s7commplus.server import S7CommPlusServer
 from s7commplus.protocol import AccessLevel, LegitimationType, ProtocolVersion
 from tests.conftest import get_free_tcp_ports
 
-TEST_PORT_V2, TEST_PORT_V2_TLS, TEST_PORT_OMS = get_free_tcp_ports(3)
+TEST_PORT_V2, TEST_PORT_V2_TLS, TEST_PORT_OMS, TEST_PORT_V2_TLS_SYNC = get_free_tcp_ports(4)
 
 
 def _generate_self_signed_cert() -> tuple[str, str]:
@@ -785,9 +785,6 @@ class TestTLSGroupSelection:
             "supported_groups was narrowed to secp256r1 alone - this is the ClientHello an S7-1500 answers with a TCP RST"
         )
         assert self.X25519 in groups, f"ClientHello must still offer x25519; offered {[hex(g) for g in groups]}"
-
-
-TEST_PORT_V2_TLS_SYNC = 11132
 
 
 @pytest.fixture()

@@ -30,6 +30,7 @@ from .codec import (
     encode_pvalue_blob,
     encode_pvalue_typed,
     parse_create_object_session_id,
+    parse_or_raise_for_return_value,
 )
 from .catalog import SymbolCatalog, SymbolicTag, TagResult
 from .connection import FamilyOnlyFingerprintError, S7CommPlusConnection, SessionKeyCandidateRejectedError
@@ -723,15 +724,21 @@ class S7CommPlusClient:
 
         Returns:
             Raw response payload. Read the compressed XML documents in it with `s7commplus.iter_preset_streams`.
+
+        Raises:
+            S7ReturnValueError: If the PLC answers with a non-zero ReturnValue, e.g. for an object that does not exist.
         """
         if self._connection is None:
             raise RuntimeError("Not connected")
 
         if self._connection._session_key is not None:
-            payload = _build_explore_payload_v3(explore_id if explore_id else 0x38)
+            explore_id = explore_id or 0x38
+            payload = _build_explore_payload_v3(explore_id)
         else:
-            payload = _build_explore_request(explore_id or Ids.NATIVE_THE_PLC_PROGRAM_RID, list(attributes or []))
+            explore_id = explore_id or Ids.NATIVE_THE_PLC_PROGRAM_RID
+            payload = _build_explore_request(explore_id, list(attributes or []))
         response = self._connection.send_request(FunctionCode.EXPLORE, payload, integrity_tail=5, reassemble=True)
+        parse_or_raise_for_return_value(response, f"EXPLORE of 0x{explore_id:08X}")
         return response
 
     def explore_xml(self, explore_id: int = 0, attributes: Sequence[int] | None = None) -> str | None:
@@ -751,6 +758,9 @@ class S7CommPlusClient:
         Returns:
             Decompressed XML as a UTF-8 string, or ``None`` if the response
             contains no recognisable zlib stream.
+
+        Raises:
+            S7ReturnValueError: If the PLC answers with a non-zero ReturnValue (see `explore`).
         """
         raw = self.explore(explore_id, attributes)
         return find_and_decompress(raw)
@@ -784,6 +794,7 @@ class S7CommPlusClient:
         # Read the CPU exec unit object to get the running state
         payload = _build_explore_request(Ids.NATIVE_THE_CPU_EXEC_UNIT_RID, [])
         response = self._connection.send_request(FunctionCode.EXPLORE, payload, integrity_tail=5, reassemble=True)
+        parse_or_raise_for_return_value(response, "CPU state read")
         return _parse_cpu_state(response)
 
     def upload_block(self, block_type: int, block_number: int) -> bytes:
@@ -873,6 +884,7 @@ class S7CommPlusClient:
                 Ids.NATIVE_THE_PLC_PROGRAM_RID, [Ids.OBJECT_VARIABLE_TYPE_NAME, Ids.BLOCK_BLOCK_NUMBER]
             )
         response = self._connection.send_request(FunctionCode.EXPLORE, payload, integrity_tail=5, reassemble=True)
+        parse_or_raise_for_return_value(response, "Data block list")
         return _parse_explore_datablocks(response)
 
     def browse(self) -> list[dict[str, Any]]:
@@ -970,6 +982,7 @@ class S7CommPlusClient:
             raise RuntimeError("Not connected")
         payload = _build_explore_request(Ids.OBJECT_OMS_TYPE_INFO_CONTAINER, [])
         response = self._connection.send_request(FunctionCode.EXPLORE, payload, integrity_tail=5, reassemble=True)
+        parse_or_raise_for_return_value(response, "Type-info browse")
         return typeinfo.extract_type_info_objects(response)
 
     def create_subscription(
@@ -1249,6 +1262,9 @@ class S7CommPlusClient:
         Args:
             language_ids: Optional Windows LCIDs used to filter returned texts.
                 Omitting the filter retains every language sent by the PLC.
+
+        Raises:
+            S7ReturnValueError: If the PLC answers with a non-zero ReturnValue.
         """
         if self._connection is None:
             raise RuntimeError("Not connected")

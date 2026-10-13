@@ -15,6 +15,7 @@ from s7commplus.alarm import (
 )
 from s7commplus.async_client import S7CommPlusAsyncClient
 from s7commplus.client import S7CommPlusClient
+from s7commplus.error import S7ReturnValueError
 from s7commplus.protocol import DataType, ElementID, FunctionCode, Ids, Opcode, ProtocolVersion
 from s7commplus.subscription import SubscriptionItem
 from s7commplus.vlq import encode_uint32_vlq, encode_uint64_vlq
@@ -155,6 +156,20 @@ def test_parse_alarm_explore_response_with_language_filter() -> None:
     assert alarm.associated_values[1] == b"\x00\x04"
     assert alarm.associated_values[5] == b"\xfe\x09=F6+S2-G1"
     assert alarm.texts == {1031: AlarmText(1031, "Info", "Alarm 4 =F6+S2-G1", ("",) * 9)}
+
+
+def test_parse_alarm_explore_response_error_return_value() -> None:
+    # Synthetic ReturnValue: error flag set, signed code -1 in the low 16 bits
+    response = encode_uint64_vlq(0x800000000000FFFF) + struct.pack(">I", 0)
+    with pytest.raises(S7ReturnValueError, match="Alarm browse failed") as excinfo:
+        parse_alarm_explore_response(response)
+    assert excinfo.value.error_code == -1
+    assert excinfo.value.return_value == 0x800000000000FFFF
+
+
+def test_parse_alarm_explore_response_truncated_explore_id() -> None:
+    with pytest.raises(ValueError, match="truncated"):
+        parse_alarm_explore_response(b"\x00\x00")
 
 
 def test_parse_alarm_notification() -> None:

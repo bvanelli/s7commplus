@@ -10,7 +10,7 @@ from unittest.mock import patch
 
 import pytest
 
-from s7commplus.error import S7ConnectionError, S7IntegrityError
+from s7commplus.error import S7ConnectionError, S7IntegrityError, S7ReturnValueError
 from s7commplus.async_client import S7CommPlusAsyncClient
 from s7commplus.client import (
     S7CommPlusClient,
@@ -301,11 +301,47 @@ class TestClientServerIntegration:
         client = S7CommPlusClient()
         client.connect("127.0.0.1", port=TEST_PORT)
         try:
-            response = client.explore(0x12345678)
-            return_value, consumed = decode_uint64_vlq(response, 0)
-            # The ReturnValue a real S7-1500 sends for an object that does not exist: error code -12
-            assert return_value == 0x8020AB001992FFF4
-            assert response[consumed : consumed + 4] == b"\x00\x00\x00\x00"  # ExploreId echoed as 0
+            # The emulator replies with the ReturnValue a real S7-1500 sends for an object that does not exist
+            with pytest.raises(S7ReturnValueError, match="0x8020AB001992FFF4") as excinfo:
+                client.explore(0x12345678)
+            assert excinfo.value.error_code == -12
+            assert excinfo.value.return_value == 0x8020AB001992FFF4
+            _, consumed = decode_uint64_vlq(excinfo.value.response, 0)
+            assert excinfo.value.response[consumed : consumed + 4] == b"\x00\x00\x00\x00"  # ExploreId echoed as 0
+        finally:
+            client.disconnect()
+
+    def test_explore_truncated_return_value(self, server: S7CommPlusServer) -> None:
+        client = S7CommPlusClient()
+        client.connect("127.0.0.1", port=TEST_PORT)
+        try:
+            assert client._connection is not None
+            # The first 3 bytes of the -12 reply a real S7-1500 sends for a missing object
+            with patch.object(client._connection, "send_request", return_value=b"\xc0\x88\x95"):
+                with pytest.raises(ValueError, match="truncated ReturnValue"):
+                    client.explore(0x12345678)
+        finally:
+            client.disconnect()
+
+    @pytest.mark.parametrize(
+        "method, replies, operation",
+        # The -12 (object does not exist) reply a real S7-1500 sends; browse() first lists the data blocks (here: none)
+        [
+            ("get_cpu_state", [bytes.fromhex("c08895b080e6a5fff4000000000e00000000")], "CPU state read"),
+            ("list_datablocks", [bytes.fromhex("c08895b080e6a5fff4000000000e00000000")], "Data block list"),
+            ("browse", [b"\x00", bytes.fromhex("c08895b080e6a5fff4000000000e00000000")], "Type-info browse"),
+        ],
+    )
+    def test_explore_endpoints_raise_on_plc_error(
+        self, server: S7CommPlusServer, method: str, replies: list[bytes], operation: str
+    ) -> None:
+        client = S7CommPlusClient()
+        client.connect("127.0.0.1", port=TEST_PORT)
+        try:
+            assert client._connection is not None
+            with patch.object(client._connection, "send_request", side_effect=replies):
+                with pytest.raises(S7ReturnValueError, match=f"^{operation} failed"):
+                    getattr(client, method)()
         finally:
             client.disconnect()
 
@@ -434,11 +470,39 @@ class TestAsyncClientServerIntegration:
     async def test_explore_missing_object(self, server: S7CommPlusServer) -> None:
         async with S7CommPlusAsyncClient() as client:
             await client.connect("127.0.0.1", port=TEST_PORT)
-            response = await client.explore(0x12345678)
-            return_value, consumed = decode_uint64_vlq(response, 0)
-            # The ReturnValue a real S7-1500 sends for an object that does not exist: error code -12
-            assert return_value == 0x8020AB001992FFF4
-            assert response[consumed : consumed + 4] == b"\x00\x00\x00\x00"  # ExploreId echoed as 0
+            # The emulator replies with the ReturnValue a real S7-1500 sends for an object that does not exist
+            with pytest.raises(S7ReturnValueError, match="0x8020AB001992FFF4") as excinfo:
+                await client.explore(0x12345678)
+            assert excinfo.value.error_code == -12
+            assert excinfo.value.return_value == 0x8020AB001992FFF4
+            _, consumed = decode_uint64_vlq(excinfo.value.response, 0)
+            assert excinfo.value.response[consumed : consumed + 4] == b"\x00\x00\x00\x00"  # ExploreId echoed as 0
+
+    async def test_explore_truncated_return_value(self, server: S7CommPlusServer) -> None:
+        async with S7CommPlusAsyncClient() as client:
+            await client.connect("127.0.0.1", port=TEST_PORT)
+            # The first 3 bytes of the -12 reply a real S7-1500 sends for a missing object
+            with patch.object(client, "_send_request", return_value=b"\xc0\x88\x95"):
+                with pytest.raises(ValueError, match="truncated ReturnValue"):
+                    await client.explore(0x12345678)
+
+    @pytest.mark.parametrize(
+        "method, replies, operation",
+        # The -12 (object does not exist) reply a real S7-1500 sends; browse() first lists the data blocks (here: none)
+        [
+            ("get_cpu_state", [bytes.fromhex("c08895b080e6a5fff4000000000e00000000")], "CPU state read"),
+            ("list_datablocks", [bytes.fromhex("c08895b080e6a5fff4000000000e00000000")], "Data block list"),
+            ("browse", [b"\x00", bytes.fromhex("c08895b080e6a5fff4000000000e00000000")], "Type-info browse"),
+        ],
+    )
+    async def test_explore_endpoints_raise_on_plc_error(
+        self, server: S7CommPlusServer, method: str, replies: list[bytes], operation: str
+    ) -> None:
+        async with S7CommPlusAsyncClient() as client:
+            await client.connect("127.0.0.1", port=TEST_PORT)
+            with patch.object(client, "_send_request", side_effect=replies):
+                with pytest.raises(S7ReturnValueError, match=f"^{operation} failed"):
+                    await getattr(client, method)()
 
     async def test_concurrent_reads(self, server: S7CommPlusServer) -> None:
         """Test that asyncio.Lock prevents interleaved requests."""

@@ -15,7 +15,8 @@ Reference: thomas-v2/S7CommPlusDriver/Core/S7p.cs
 import struct
 from typing import Any, Optional
 
-from .protocol import PROTOCOL_ID, DataType, ElementID, Ids, ObjectId, ProtocolVersion
+from .error import S7ReturnValueError
+from .protocol import PROTOCOL_ID, DataType, ElementID, Ids, ObjectId, ProtocolVersion, service_result_code
 from .vlq import (
     decode_uint32_vlq,
     decode_uint64_vlq,
@@ -147,6 +148,32 @@ def decode_response_header(data: bytes, offset: int = 0) -> dict[str, Any]:
         "transport_flags": transport_flags,
         "bytes_consumed": 14,
     }
+
+
+def parse_or_raise_for_return_value(response: bytes, operation: str) -> int:
+    """Raise if a response's leading ReturnValue is truncated or non-zero.
+
+    The low 16 bits of an error ReturnValue hold a signed error code (see `service_result_code`).
+
+    Args:
+        response: Raw response payload, starting with the ReturnValue.
+        operation: Operation named in the error message, e.g. "EXPLORE of 0x00000003".
+
+    Returns:
+        Offset of the first byte after the ReturnValue.
+
+    Raises:
+        ValueError: If the ReturnValue is truncated.
+        S7ReturnValueError: If the ReturnValue is non-zero.
+    """
+    try:
+        return_value, offset = decode_uint64_vlq(response, 0)
+    except ValueError as error:
+        raise ValueError(f"{operation}: truncated ReturnValue") from error
+    if return_value != 0:
+        code = service_result_code(return_value)
+        raise S7ReturnValueError(f"{operation} failed: PLC returned 0x{return_value:016X} (error {code})", return_value, response)
+    return offset
 
 
 # -- Fixed-width encoding (big-endian) --

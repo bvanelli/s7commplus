@@ -7,6 +7,8 @@ Maps S7 error codes to Python exceptions with meaningful messages.
 from typing import Optional, Callable, Any, Hashable
 from functools import cache
 
+from .protocol import service_result_code
+
 
 class S7Error(Exception):
     """Base exception for all S7 protocol errors."""
@@ -32,6 +34,20 @@ class S7IntegrityError(S7ProtocolError):
     """Raised when authenticated S7CommPlus traffic fails integrity checks."""
 
     pass
+
+
+class S7ReturnValueError(S7ProtocolError):
+    """Raised when the PLC answers a request with an error ReturnValue.
+
+    Attributes:
+        return_value: The full 64-bit ReturnValue; `error_code` holds the signed code from its low 16 bits.
+        response: The raw response payload, starting with the ReturnValue.
+    """
+
+    def __init__(self, message: str, return_value: int, response: bytes):
+        super().__init__(message, error_code=service_result_code(return_value))
+        self.return_value = return_value
+        self.response = response
 
 
 class S7TimeoutError(S7Error):

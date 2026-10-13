@@ -15,6 +15,7 @@ from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 from s7commplus.async_client import S7CommPlusAsyncClient
 from s7commplus.client import _LEGACY_KEY_CACHE, S7CommPlusClient
 from s7commplus.connection import _build_v1_get_var_substreamed_payload, _v1_integrity_tail
+from s7commplus.error import S7ReturnValueError
 from s7commplus.server import S7CommPlusServer
 from s7commplus.v1_session_key import handshake, legitimation
 from s7commplus.v1_session_key.blob_metadata import ENCRYPTED_BLOB_LENGTH_PLCSIM, write_metadata
@@ -383,6 +384,44 @@ def test_sync_client_without_the_v1_profile_cannot_read_an_after_body_emulator(
             client.db_read(1, 0, 4)
     finally:
         client.disconnect()
+
+
+# Each V1 profile against the emulator layout it expects: (server fixture, legacy_s7_1500).
+_V1_PROFILES = [("plcsim_server", None), ("leading_integrity_id_server", False)]
+_MISSING_DB = 0x8A0E0063  # DB99, not registered
+
+
+@pytest.mark.parametrize(("server_fixture", "legacy"), _V1_PROFILES, ids=["v1-profile", "without-v1-profile"])
+def test_sync_explore_checks_the_return_value_in_each_v1_profile(
+    request: pytest.FixtureRequest, server_fixture: str, legacy: bool | None
+) -> None:
+    _, port = request.getfixturevalue(server_fixture)
+    client = S7CommPlusClient()
+    client.connect("127.0.0.1", port=port, legacy_s7_1500=legacy)
+    try:
+        assert client.explore()[:1] == b"\x00"  # ReturnValue 0
+        with pytest.raises(S7ReturnValueError) as caught:
+            client.explore(_MISSING_DB)
+        assert caught.value.error_code == -12
+    finally:
+        client.disconnect()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(("server_fixture", "legacy"), _V1_PROFILES, ids=["v1-profile", "without-v1-profile"])
+async def test_async_explore_checks_the_return_value_in_each_v1_profile(
+    request: pytest.FixtureRequest, server_fixture: str, legacy: bool | None
+) -> None:
+    _, port = request.getfixturevalue(server_fixture)
+    client = S7CommPlusAsyncClient()
+    await client.connect("127.0.0.1", port=port, legacy_s7_1500=legacy)
+    try:
+        assert (await client.explore())[:1] == b"\x00"  # ReturnValue 0
+        with pytest.raises(S7ReturnValueError) as caught:
+            await client.explore(_MISSING_DB)
+        assert caught.value.error_code == -12
+    finally:
+        await client.disconnect()
 
 
 # A real PLCSIM Advanced ServerSessionVersion (captured CreateObject response):

@@ -28,7 +28,7 @@ classifiers = [
 dependencies = ["cryptography>=41"]
 
 [project.optional-dependencies]
-test = ["pytest", "pytest-asyncio", "pytest-bdd>=8.1,<9", "pytest-cov", "hypothesis", "mypy", "ruff"]
+test = ["pytest", "pytest-asyncio", "pytest-bdd>=9,<10", "pytest-cov", "hypothesis", "mypy", "ruff"]
 docs = ["sphinx>=7.2", "furo>=2024.8.6"]
 analysis = ["z3-solver>=4.13,<5"]
 

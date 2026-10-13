@@ -166,6 +166,39 @@ TLS records are carried inside COTP data frames by the library. Wrapping the
 TCP socket in a conventional TLS socket is not equivalent and will encrypt the
 wrong protocol layer.
 
+During every TLS handshake both clients, ``AsyncClient`` as well since 0.3.0,
+write the session's TLS secrets briefly to a private temporary file
+(``s7-tls-keylog-*``) to derive the OMS exporter secret that the new password
+legitimation needs, and delete the file when the handshake ends, also when it
+fails.
+
+Certificate pinning
+~~~~~~~~~~~~~~~~~~~
+
+PLC certificates are usually self-signed, so a CA file is often unavailable. Pin
+the exact certificate instead with ``tls_cert_fingerprint`` — the SHA-256
+fingerprint as hex (``:``, ``-`` and whitespace are ignored, and the whole
+``sha256 Fingerprint=...`` line ``openssl x509 -noout -fingerprint -sha256``
+prints is accepted):
+
+.. code-block:: python
+
+   client.connect(
+       "192.168.1.10",
+       use_tls=True,
+       tls_cert_fingerprint="AA:BB:CC:...",  # openssl x509 -fingerprint -sha256
+   )
+
+The connection is refused unless the certificate the PLC presents matches, with
+:class:`~s7commplus.error.S7CertificateError`. Read the presented fingerprint
+back with ``client.peer_certificate_fingerprint()`` (the raw 32-byte digest;
+``.hex()`` gives the hex form to pin). Supplying ``tls_ca`` *and*
+``tls_cert_fingerprint`` requires both the chain and the pin to match. A
+fingerprint without ``use_tls=True`` is refused with ``ValueError`` before
+anything is sent, so a pinned certificate is never used on a plaintext
+connection. The pin is checked right after the TLS handshake, before the session
+is created or a password is sent.
+
 Password authentication
 -----------------------
 
@@ -192,6 +225,17 @@ The asyncio client separates connection from authentication:
            tls_ca="certificates/plc-ca.pem",
        )
        await client.authenticate("secret")
+
+The exchange follows the device string in the PLC's ServerSessionVersion, as
+in the reference driver (thomas-v2/S7CommPlusDriver): S7-1500 firmware V2.9 to
+V3.0, S7-1200 V4.3 to V4.6 and software controllers use the legacy exchange
+(the password's SHA-1 XORed with a challenge); S7-1500 V3.1 and later, S7-1200
+V4.7 and later and the S7-1200 G2 use the new one (the credentials encrypted
+with AES-256-CBC under a key from the TLS session). S7-PLCSIM Advanced reports
+itself rather than the project's CPU (``1;6ES7 SIM-01500-APLC;S4.1`` on V8.0),
+so it takes the new exchange, and refuses the legacy one, even for a project
+whose CPU firmware would use the legacy one on hardware. This was seen on
+PLCSIM Advanced V8.0 only.
 
 Never log passwords, session keys, challenges, private keys, or decrypted
 authentication material.

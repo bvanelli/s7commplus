@@ -34,15 +34,19 @@ from .codec import (
     encode_pvalue_typed,
     parse_create_object_session_id,
     parse_or_raise_for_return_value,
+    skip_typed_value,
 )
 from .catalog import SymbolCatalog, SymbolicTag, TagResult, _write_type
 from .connection import (
     FamilyOnlyFingerprintError,
     S7CommPlusConnection,
     SessionKeyCandidateRejectedError,
+    _check_certificate_pin,
     _request_frame_overhead,
 )
 from .protocol import (
+    OPERATING_STATE_RUN_OBSERVED,
+    OPERATING_STATE_STOP_OBSERVED,
     DataType,
     ElementID,
     FunctionCode,
@@ -63,7 +67,7 @@ from .subscription import (
     notification_subscription_id,
     parse_subscription_notification,
 )
-from .vlq import decode_uint32_vlq, decode_uint64_vlq, encode_uint32_vlq
+from .vlq import decode_int32_vlq, decode_uint32_vlq, decode_uint64_vlq, encode_uint32_vlq
 
 logger = logging.getLogger(__name__)
 
@@ -440,6 +444,7 @@ class S7CommPlusClient:
         allow_legacy_key_fallback: bool = True,
         legacy_session_key_refresh_interval: Optional[float] = 25 * 60.0,
         *,
+        tls_cert_fingerprint: Optional[str] = None,
         legacy_s7_1500: bool | None = None,
         connection_type: int | str | None = None,
     ) -> None:
@@ -454,6 +459,11 @@ class S7CommPlusClient:
             tls_cert: Path to client TLS certificate (PEM)
             tls_key: Path to client private key (PEM)
             tls_ca: Path to CA certificate for PLC verification (PEM)
+            tls_cert_fingerprint: Expected SHA-256 fingerprint of the PLC's TLS
+                certificate, as hex (``:``/``-``/spaces allowed). Refuses the
+                connection unless the PLC presents that exact certificate; use it
+                instead of ``tls_ca`` for a self-signed PLC certificate. Requires
+                ``use_tls=True``: a pin is never used on a plaintext connection.
             password: PLC password for legitimation (V2+ with TLS)
             allow_legacy_key_fallback: Try known same-family public keys on
                 fresh sessions when a legacy PLC omits its key id.
@@ -475,6 +485,7 @@ class S7CommPlusClient:
         """
         if legacy_s7_1500 and use_tls:
             raise ValueError("legacy_s7_1500 requires use_tls=False")
+        _check_certificate_pin(tls_cert_fingerprint, use_tls)  # validate early
         remote_tsap_for_connection_type(connection_type)  # validate early
         self._symbol_catalog = None
         self._connect_params = {
@@ -484,6 +495,7 @@ class S7CommPlusClient:
             "tls_cert": tls_cert,
             "tls_key": tls_key,
             "tls_ca": tls_ca,
+            "tls_cert_fingerprint": tls_cert_fingerprint,
             "password": password,
             "allow_legacy_key_fallback": allow_legacy_key_fallback,
             "legacy_session_key_refresh_interval": legacy_session_key_refresh_interval,
@@ -536,6 +548,7 @@ class S7CommPlusClient:
             tls_cert=p["tls_cert"],
             tls_key=p["tls_key"],
             tls_ca=p["tls_ca"],
+            tls_cert_fingerprint=p["tls_cert_fingerprint"],
             password=p["password"] or "",
             legacy_session_key_refresh_interval=p["legacy_session_key_refresh_interval"],
             _session_key_fingerprint=fingerprint,
@@ -607,6 +620,16 @@ class S7CommPlusClient:
             self._connection = None
         self._connect_params = None
         self._symbol_catalog = None
+
+    def peer_certificate_fingerprint(self) -> Optional[bytes]:
+        """SHA-256 of the PLC's TLS certificate, or None without TLS.
+
+        The raw 32-byte digest; ``.hex()`` gives the hex string that
+        ``tls_cert_fingerprint`` takes.
+        """
+        if self._connection is None:
+            return None
+        return self._connection.peer_certificate_fingerprint()
 
     def db_read(self, db_number: int, start: int, size: int) -> bytes:
         """Read raw bytes from a data block.
@@ -1106,19 +1129,25 @@ class S7CommPlusClient:
         return find_and_decompress(raw)
 
     def set_plc_operating_state(self, state: int) -> None:
-        """Set the PLC operating state (start/stop).
+        """Change the PLC operating state (RUN/STOP). Not implemented yet.
 
-        Uses INVOKE to call the PLC's operating-state setter.
+        Earlier versions sent a guessed INVOKE request, never checked the PLC's
+        answer and numbered the states differently from the PLC's
+        ``OperatingStateREQ`` values (`OperatingStateRequest`), so they could
+        report success when nothing changed. Until the request is derived from
+        a real RUN/STOP capture and validated on hardware (issue #8), this
+        refuses without sending anything.
 
         Args:
             state: Target operating state.
-                1 = STOP, 2 = RUN, 3 = HOT_RESTART.
-        """
-        if self._connection is None:
-            raise RuntimeError("Not connected")
 
-        payload = _build_invoke_payload(state)
-        self._connection.send_request(FunctionCode.INVOKE, payload)
+        Raises:
+            NotImplementedError: Always.
+        """
+        raise NotImplementedError(
+            "Changing the PLC operating state is not implemented yet: the request has not been validated "
+            "on a real PLC (https://github.com/gijzelaerr/s7commplus/issues/8)"
+        )
 
     def get_cpu_state(self) -> str:
         """Get PLC CPU operating state via S7CommPlus.
@@ -2097,30 +2126,24 @@ def _build_explore_payload_v3(explore_id: int, sequence: int = 10) -> bytes:
     return payload
 
 
-def _build_invoke_payload(state: int) -> bytes:
-    """Build an INVOKE request payload for SetPlcOperatingState.
-
-    The INVOKE function triggers a method on a PLC object.
-    For operating state changes, this calls the CPU's state setter.
-    """
-    payload = bytearray()
-    payload += struct.pack(">I", 0)  # reserved
-    payload += encode_uint32_vlq(state)
-    return bytes(payload)
-
-
 # ---------------------------------------------------------------------------
 # EXPLORE helpers (experimental)
 # ---------------------------------------------------------------------------
 
 
 def _parse_cpu_state(response: bytes) -> str:
-    """Parse corroborating execution-state attributes from a CPU EXPLORE reply.
+    """Parse the CPU operating state from an EXPLORE(theCPUexecUnit) reply.
 
-    Real S7-1200/1500 captures show attributes 0x1F80 and 0x1F81 changing
-    together across RUN/STOP transitions. Requiring both protects against
-    confusing an absent or default-initialized attribute with STOP.
+    The state code is the DINT member OperatingState (0xD9E) of the Struct
+    attribute 0x8BD (struct id 0xD99): 8 in RUN and 4 in STOP on PLCSIM
+    Advanced (CPU 1511, FW V2.9). It decides whenever present; other codes
+    (startup, hold) and conflicting duplicates give ``"UNKNOWN"``.
+
+    Without it, fall back to the cycle-load attributes 0x1F80 and 0x1F81, which
+    a hardware capture showed as 1/7 in RUN and 0/0 in STOP. Both must agree so
+    that an absent or default-initialized attribute is not mistaken for STOP.
     """
+    state_codes: set[int] = set()
     values: dict[int, set[int]] = {
         Ids.CPU_EXEC_UNIT_EXECUTING: set(),
         Ids.CPU_EXEC_UNIT_OPERATING_MODE: set(),
@@ -2137,6 +2160,11 @@ def _parse_cpu_state(response: bytes) -> str:
         except (ValueError, IndexError):
             continue
         value_offset = offset + consumed
+        if attribute_id == Ids.CPU_EXEC_UNIT_OPERATING_STATE_STRUCT:
+            code = _parse_operating_state_struct(response, value_offset)
+            if code is not None:
+                state_codes.add(code)
+            continue
         if attribute_id not in values:
             continue
         # Both observed state attributes are scalar UINT values. Checking the
@@ -2145,6 +2173,13 @@ def _parse_cpu_state(response: bytes) -> str:
             continue
         values[attribute_id].add(struct.unpack_from(">H", response, value_offset + 2)[0])
 
+    if state_codes:
+        if state_codes == {OPERATING_STATE_RUN_OBSERVED}:
+            return "RUN"
+        if state_codes == {OPERATING_STATE_STOP_OBSERVED}:
+            return "STOP"
+        return "UNKNOWN"
+
     executing = values[Ids.CPU_EXEC_UNIT_EXECUTING]
     operating_mode = values[Ids.CPU_EXEC_UNIT_OPERATING_MODE]
     if executing == {1} and operating_mode == {7}:
@@ -2152,6 +2187,40 @@ def _parse_cpu_state(response: bytes) -> str:
     if executing == {0} and operating_mode == {0}:
         return "STOP"
     return "UNKNOWN"
+
+
+def _parse_operating_state_struct(response: bytes, offset: int) -> Optional[int]:
+    """Return the OperatingState code from the Struct value at ``offset``, or None.
+
+    The value is a scalar Struct PValue: flags 0x00, type 0x17, a UInt32 struct
+    id, then ``[VLQ member id][flags][type][value]`` members up to a 0x00 byte.
+    A struct with another id than the captured 0xD99 is not read.
+    """
+    if response[offset : offset + 2] != bytes([0, DataType.STRUCT]) or offset + 6 > len(response):
+        return None
+    if struct.unpack_from(">I", response, offset + 2)[0] != Ids.CPU_EXEC_UNIT_OPERATING_STATE_STRUCT_ID:
+        return None
+    offset += 6
+    try:
+        while offset < len(response) and response[offset] != 0x00:
+            member_id, consumed = decode_uint32_vlq(response, offset)
+            offset += consumed
+            if offset + 2 > len(response):
+                return None
+            flags, datatype = response[offset], response[offset + 1]
+            offset += 2
+            if member_id == Ids.CPU_EXEC_UNIT_OPERATING_STATE:
+                if flags != 0 or datatype != DataType.DINT or offset >= len(response):
+                    return None
+                code, _ = decode_int32_vlq(response, offset)
+                return code
+            next_offset = skip_typed_value(response, offset, datatype, flags)
+            if next_offset <= offset and datatype != DataType.NULL:
+                return None  # a member type skip_typed_value cannot walk
+            offset = next_offset
+    except (ValueError, IndexError):
+        return None
+    return None
 
 
 def _build_explore_request(explore_id: int, attribute_ids: list[int]) -> bytes:

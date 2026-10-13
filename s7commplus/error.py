@@ -68,6 +68,12 @@ class S7AuthenticationError(S7Error):
     pass
 
 
+class S7CertificateError(S7ConnectionError):
+    """Raised when a PLC's TLS certificate fails verification or pinning."""
+
+    pass
+
+
 class S7RateLimitError(S7Error):
     """Raised when a non-blocking request rate limit is reached."""
 

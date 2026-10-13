@@ -155,6 +155,21 @@ class TestClientServerIntegration:
         client.disconnect()
         assert not client.connected
 
+    def test_set_plc_operating_state_refuses_without_sending(self, server: S7CommPlusServer) -> None:
+        """The unvalidated state change (issue #8) raises and sends nothing."""
+        with S7CommPlusClient() as client:
+            client.connect("127.0.0.1", port=TEST_PORT)
+            assert client._connection is not None
+            sent = client._connection._sequence_number
+            with pytest.raises(NotImplementedError, match="issues/8"):
+                client.set_plc_operating_state(1)
+            assert client._connection._sequence_number == sent
+            assert client.get_cpu_state() in ("RUN", "STOP", "UNKNOWN")
+
+    def test_set_plc_operating_state_refuses_when_not_connected(self) -> None:
+        with pytest.raises(NotImplementedError):
+            S7CommPlusClient().set_plc_operating_state(3)
+
     def test_context_manager(self, server: S7CommPlusServer) -> None:
         with S7CommPlusClient() as client:
             client.connect("127.0.0.1", port=TEST_PORT)
@@ -554,12 +569,15 @@ class TestAsyncClientServerIntegration:
             await client.connect("127.0.0.1", port=TEST_PORT)
             assert await client.get_cpu_state() == expected
 
-    async def test_set_plc_operating_state(self, server: S7CommPlusServer) -> None:
-        """Test set_plc_operating_state sends an INVOKE request."""
+    async def test_set_plc_operating_state_refuses_without_sending(self, server: S7CommPlusServer) -> None:
+        """The unvalidated state change (issue #8) raises and sends nothing."""
         async with S7CommPlusAsyncClient() as client:
             await client.connect("127.0.0.1", port=TEST_PORT)
-            # state 1 = STOP — the emulated server accepts INVOKE requests
-            await client.set_plc_operating_state(1)
+            sent = client._sequence_number
+            with pytest.raises(NotImplementedError, match="issues/8"):
+                await client.set_plc_operating_state(1)
+            assert client._sequence_number == sent
+            assert await client.get_cpu_state() in ("RUN", "STOP", "UNKNOWN")
 
     async def test_explore_xml(self, server: S7CommPlusServer) -> None:
         """Test explore_xml returns None on emulated server (no zlib blobs)."""

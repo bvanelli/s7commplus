@@ -26,7 +26,6 @@ from .client import (
     _build_area_write_payload,
     _build_explore_payload_v3,
     _build_explore_request,
-    _build_invoke_payload,
     _build_multi_symbolic_write_payload,
     _build_multi_symbolic_read_payload,
     _build_read_payload,
@@ -1023,9 +1022,25 @@ class S7CommPlusAsyncClient:
         return find_and_decompress(raw)
 
     async def set_plc_operating_state(self, state: int) -> None:
-        """Set the PLC operating state (start/stop)."""
-        payload = _build_invoke_payload(state)
-        await self._send_request(FunctionCode.INVOKE, payload)
+        """Change the PLC operating state (RUN/STOP). Not implemented yet.
+
+        Earlier versions sent a guessed INVOKE request, never checked the PLC's
+        answer and numbered the states differently from the PLC's
+        ``OperatingStateREQ`` values (`OperatingStateRequest`), so they could
+        report success when nothing changed. Until the request is derived from
+        a real RUN/STOP capture and validated on hardware (issue #8), this
+        refuses without sending anything.
+
+        Args:
+            state: Target operating state.
+
+        Raises:
+            NotImplementedError: Always.
+        """
+        raise NotImplementedError(
+            "Changing the PLC operating state is not implemented yet: the request has not been validated "
+            "on a real PLC (https://github.com/gijzelaerr/s7commplus/issues/8)"
+        )
 
     async def get_cpu_state(self) -> str:
         """Get PLC CPU operating state via S7CommPlus.

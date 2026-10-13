@@ -24,6 +24,7 @@ from s7commplus.error import (
     S7PacketLostError,
     S7ProtocolError,
     S7RateLimitError,
+    S7ReturnValueError,
     S7StalePacketError,
     S7TimeoutError,
 )
@@ -43,6 +44,7 @@ ERRORS: list[BaseException] = [
     S7TimeoutError("timeout"),
     S7AuthenticationError("authentication"),
     S7RateLimitError("rate limit"),
+    S7ReturnValueError("EXPLORE failed", 0x8020AB001992FFF4, b"\x00\x01"),
     S7StalePacketError("stale"),
     S7PacketLostError("lost"),
     SessionKeyCandidateRejectedError("rejected"),

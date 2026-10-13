@@ -28,12 +28,11 @@ from s7commplus.server import (
     _server_parse_write_request,
 )
 from s7commplus.vlq import decode_uint64_vlq, encode_uint32_vlq
+from tests.conftest import get_free_tcp_ports
 
-# Use a high port to avoid conflicts
-TEST_PORT = 11120
-
-# SessionKey handshake tests use a separate port
-SESSION_KEY_PORT = 11121
+# Ports the OS reports free, so parallel test runs never share an emulator.
+# SessionKey handshake and RST tests use ports of their own.
+TEST_PORT, SESSION_KEY_PORT, RST_PORT = get_free_tcp_ports(3)
 
 # A known S7-1200 public key fingerprint from the bundled key store
 TEST_FINGERPRINT = "01:BD426B091F08731A"
@@ -88,6 +87,27 @@ class TestServer:
         assert db.number == 1
         assert "temp" in db.variables
         assert db.variables["temp"].byte_offset == 0
+
+    def test_second_server_cannot_take_a_listening_port(self) -> None:
+        # On Windows SO_REUSEADDR let a second emulator bind the same port, so
+        # clients of parallel test runs could reach the wrong one.
+        (port,) = get_free_tcp_ports(1)
+        first = S7CommPlusServer()
+        first.register_raw_db(1, bytearray(b"\x11\x22\x33\x44"))
+        first.start(port=port)
+        try:
+            second = S7CommPlusServer()
+            with pytest.raises(OSError):
+                second.start(port=port)
+            assert second._server_socket is None
+            client = S7CommPlusClient()
+            client.connect("127.0.0.1", port=port)
+            try:
+                assert client.db_read(1, 0, 4) == b"\x11\x22\x33\x44"
+            finally:
+                client.disconnect()
+        finally:
+            first.stop()
 
     def test_register_raw_db(self) -> None:
         srv = S7CommPlusServer()
@@ -556,9 +576,6 @@ class TestAsyncClientServerIntegration:
             await client.connect("127.0.0.1", port=TEST_PORT)
             result = await client.explore_xml()
             assert result is None
-
-
-RST_PORT = 11122
 
 
 class TestRstAfterSymbolicRead:

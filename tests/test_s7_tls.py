@@ -15,9 +15,9 @@ from s7commplus.async_client import S7CommPlusAsyncClient
 from s7commplus.connection import S7CommPlusConnection
 from s7commplus.server import S7CommPlusServer
 from s7commplus.protocol import ProtocolVersion
+from tests.conftest import get_free_tcp_ports
 
-TEST_PORT_V2 = 11130
-TEST_PORT_V2_TLS = 11131
+TEST_PORT_V2, TEST_PORT_V2_TLS = get_free_tcp_ports(2)
 
 
 def _generate_self_signed_cert() -> tuple[str, str]:

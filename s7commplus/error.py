@@ -4,6 +4,7 @@ S7 error handling and exception classes.
 Maps S7 error codes to Python exceptions with meaningful messages.
 """
 
+import copyreg
 from typing import Optional, Callable, Any, Hashable
 from functools import cache
 
@@ -14,6 +15,11 @@ class S7Error(Exception):
     def __init__(self, message: str, error_code: Optional[int] = None):
         super().__init__(message)
         self.error_code = error_code
+
+    def __reduce__(self) -> tuple[Any, ...]:
+        # Rebuild without calling __init__, so subclasses whose constructor takes
+        # other arguments than the message still pickle and copy.
+        return copyreg.__newobj__, (type(self), *self.args), self.__dict__  # type: ignore[attr-defined]
 
 
 class S7ConnectionError(S7Error):

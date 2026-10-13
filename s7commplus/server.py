@@ -360,11 +360,24 @@ class S7CommPlusServer:
             else:
                 self._ssl_context.verify_mode = ssl.CERT_NONE
 
-        self._server_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-        self._server_socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-        self._server_socket.settimeout(1.0)
-        self._server_socket.bind((host, port))
-        self._server_socket.listen(5)
+        server_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        try:
+            exclusive: Optional[int] = getattr(socket, "SO_EXCLUSIVEADDRUSE", None)
+            if exclusive is not None:
+                # On Windows SO_REUSEADDR lets a second socket bind a port that
+                # is already listening, so two emulators would share one port and
+                # clients could reach the wrong one. Windows rebinds a port in
+                # TIME_WAIT without SO_REUSEADDR anyway.
+                server_socket.setsockopt(socket.SOL_SOCKET, exclusive, 1)
+            else:
+                server_socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+            server_socket.settimeout(1.0)
+            server_socket.bind((host, port))
+            server_socket.listen(5)
+        except OSError:
+            server_socket.close()
+            raise
+        self._server_socket = server_socket
 
         self._running = True
         self._server_thread = threading.Thread(target=self._server_loop, daemon=True, name="s7commplus-server")

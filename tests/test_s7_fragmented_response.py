@@ -24,7 +24,7 @@ from s7commplus.protocol import FunctionCode, Opcode, ProtocolVersion
 from s7commplus.server import S7CommPlusServer
 from tests.conftest import get_free_tcp_port
 
-FRAGMENT_PORT = 11191
+FRAGMENT_PORT = get_free_tcp_port()
 
 TEST_FINGERPRINT = "01:BD426B091F08731A"
 TEST_CHALLENGE = bytes(range(20))

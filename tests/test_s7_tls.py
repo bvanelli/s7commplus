@@ -21,10 +21,9 @@ from s7commplus.connection import S7CommPlusConnection
 from s7commplus.legitimation import build_new_response, derive_legitimation_key
 from s7commplus.server import S7CommPlusServer
 from s7commplus.protocol import AccessLevel, LegitimationType, ProtocolVersion
+from tests.conftest import get_free_tcp_ports
 
-TEST_PORT_V2 = 11130
-TEST_PORT_V2_TLS = 11131
-TEST_PORT_OMS = 11163
+TEST_PORT_V2, TEST_PORT_V2_TLS, TEST_PORT_OMS = get_free_tcp_ports(3)
 
 
 def _generate_self_signed_cert() -> tuple[str, str]:

@@ -41,6 +41,23 @@ def get_free_tcp_port() -> int:
         return port
 
 
+def get_free_tcp_ports(count: int) -> list[int]:
+    """Return ``count`` distinct ports, each free like `get_free_tcp_port`.
+
+    The probes stay bound until all ports are picked, so the OS cannot hand
+    out the same port twice.
+    """
+    probes = [socket.socket(socket.AF_INET, socket.SOCK_STREAM) for _ in range(count)]
+    try:
+        for probe in probes:
+            probe.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+            probe.bind(("0.0.0.0", 0))
+        return [probe.getsockname()[1] for probe in probes]
+    finally:
+        for probe in probes:
+            probe.close()
+
+
 def pytest_addoption(parser: pytest.Parser) -> None:
     """Add command line options for e2e, slow and analysis tests."""
     parser.addoption(

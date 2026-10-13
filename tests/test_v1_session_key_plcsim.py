@@ -226,10 +226,20 @@ def blobs(monkeypatch: pytest.MonkeyPatch) -> list[bytes]:
 
 @pytest.fixture()
 def plcsim_server(blobs: list[bytes]) -> Generator[tuple[S7CommPlusServer, int], None, None]:
+    yield from _serve_plcsim()
+
+
+@pytest.fixture()
+def leading_integrity_id_server(blobs: list[bytes]) -> Generator[tuple[S7CommPlusServer, int], None, None]:
+    yield from _serve_plcsim(v1_integrity_id_after_body=False)
+
+
+def _serve_plcsim(**options: Any) -> Generator[tuple[S7CommPlusServer, int], None, None]:
     srv = S7CommPlusServer(
         public_key_fingerprint=TEST_FINGERPRINT,
         session_challenge=TEST_CHALLENGE,
         session_key=TEST_SESSION_KEY,
+        **options,
     )
     srv.register_db(1, {"temperature": ("Real", 0)})
     db1 = srv.get_db(1)
@@ -320,6 +330,59 @@ async def test_async_client_legitimates_with_a_password_on_plcsim(plcsim_server:
         assert abs(struct.unpack(">f", await client.db_read(1, 0, 4))[0] - 23.5) < 0.001
     finally:
         await client.disconnect()
+
+
+# --- legacy_s7_1500=False: the IntegrityId leads every response ---
+
+_DB1 = [{"name": "DB1", "number": 1, "rid": 0x8A0E0001, "language": None, "knowhow_protected": False, "unlinked": False}]
+
+
+def test_sync_client_without_the_v1_profile_reads_from_a_leading_integrity_id_emulator(
+    leading_integrity_id_server: tuple[S7CommPlusServer, int],
+) -> None:
+    _, port = leading_integrity_id_server
+    client = S7CommPlusClient()
+    client.connect("127.0.0.1", port=port, legacy_s7_1500=False)
+    try:
+        assert client._connection is not None and not client._connection.legacy_s7_1500
+        assert abs(struct.unpack(">f", client.db_read(1, 0, 4))[0] - 23.5) < 0.001
+        client.db_write(1, 0, struct.pack(">f", 42.0))
+        assert abs(struct.unpack(">f", client.db_read(1, 0, 4))[0] - 42.0) < 0.001
+        assert client.list_datablocks() == _DB1
+    finally:
+        client.disconnect()
+
+
+@pytest.mark.asyncio
+async def test_async_client_without_the_v1_profile_reads_from_a_leading_integrity_id_emulator(
+    leading_integrity_id_server: tuple[S7CommPlusServer, int],
+) -> None:
+    _, port = leading_integrity_id_server
+    client = S7CommPlusAsyncClient()
+    await client.connect("127.0.0.1", port=port, legacy_s7_1500=False)
+    try:
+        assert not client.legacy_s7_1500
+        assert abs(struct.unpack(">f", await client.db_read(1, 0, 4))[0] - 23.5) < 0.001
+        await client.db_write(1, 0, struct.pack(">f", 42.0))
+        assert abs(struct.unpack(">f", await client.db_read(1, 0, 4))[0] - 42.0) < 0.001
+        assert await client.list_datablocks() == _DB1
+    finally:
+        await client.disconnect()
+
+
+def test_sync_client_without_the_v1_profile_cannot_read_an_after_body_emulator(
+    plcsim_server: tuple[S7CommPlusServer, int],
+) -> None:
+    # The emulator's default models the V1 SessionKey PLCs seen so far; the
+    # client without its V1 profile strips the wrong bytes from those replies.
+    _, port = plcsim_server
+    client = S7CommPlusClient()
+    client.connect("127.0.0.1", port=port, legacy_s7_1500=False)
+    try:
+        with pytest.raises(RuntimeError, match="no data"):
+            client.db_read(1, 0, 4)
+    finally:
+        client.disconnect()
 
 
 # A real PLCSIM Advanced ServerSessionVersion (captured CreateObject response):

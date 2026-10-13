@@ -214,6 +214,7 @@ class S7CommPlusServer:
         session_challenge: Optional[bytes] = None,
         session_key: Optional[bytes] = None,
         rst_after_symbolic_read: bool = False,
+        v1_integrity_id_after_body: bool = True,
     ) -> None:
         self._data_blocks: dict[int, DataBlock] = {}
         self._cpu_state = CPUState.RUN
@@ -249,6 +250,14 @@ class S7CommPlusServer:
         # to a GetMultiVariables request (emulating firmware like S7-1200
         # FW V4.1 that RSTs the session after a symbolic read).
         self._rst_after_symbolic_read = rst_after_symbolic_read
+
+        # V1 SessionKey PLCs seen so far (S7-1200 FW V4.2, S7-1500 FW 2.6,
+        # PLCSIM) put the response IntegrityId after the body of reads and
+        # around the legitimation write; the client's default V1 profile
+        # expects that. False leads every response with it instead, the layout
+        # that connect(legacy_s7_1500=False) expects. No V1 SessionKey PLC has
+        # been seen using it, so it exists to test that client profile.
+        self._v1_integrity_id_after_body = v1_integrity_id_after_body
 
     @property
     def cpu_state(self) -> CPUState:
@@ -477,7 +486,8 @@ class S7CommPlusServer:
                             session_id = struct.unpack_from(">I", response, 9)[0]
                         if request_version == ProtocolVersion.V3 and func_code is not None:
                             response_integrity_id = integrity_id_read if func_code in READ_FUNCTION_CODES else integrity_id_write
-                            if self._protocol_version == ProtocolVersion.V1 and func_code in (
+                            v1_after_body = self._protocol_version == ProtocolVersion.V1 and self._v1_integrity_id_after_body
+                            if v1_after_body and func_code in (
                                 FunctionCode.GET_MULTI_VARIABLES,
                                 FunctionCode.GET_VAR_SUBSTREAMED,
                             ):
@@ -485,7 +495,7 @@ class S7CommPlusServer:
                                 # PLCSIM) put the IntegrityId after the body, in place
                                 # of the legacy zero id.
                                 response = response[:-1] + encode_uint32_vlq(response_integrity_id)
-                            elif self._protocol_version == ProtocolVersion.V1 and func_code == FunctionCode.SET_VAR_SUBSTREAMED:
+                            elif v1_after_body and func_code == FunctionCode.SET_VAR_SUBSTREAMED:
                                 # The legitimation write ends with a four-byte fill; the
                                 # IntegrityId goes before it (as the real PLC and the
                                 # HarpoS7 capture do).

@@ -766,19 +766,25 @@ class S7CommPlusClient:
         return find_and_decompress(raw)
 
     def set_plc_operating_state(self, state: int) -> None:
-        """Set the PLC operating state (start/stop).
+        """Change the PLC operating state (RUN/STOP). Not implemented yet.
 
-        Uses INVOKE to call the PLC's operating-state setter.
+        Earlier versions sent a guessed INVOKE request, never checked the PLC's
+        answer and numbered the states differently from the PLC's
+        ``OperatingStateREQ`` values (`OperatingStateRequest`), so they could
+        report success when nothing changed. Until the request is derived from
+        a real RUN/STOP capture and validated on hardware (issue #8), this
+        refuses without sending anything.
 
         Args:
             state: Target operating state.
-                1 = STOP, 2 = RUN, 3 = HOT_RESTART.
-        """
-        if self._connection is None:
-            raise RuntimeError("Not connected")
 
-        payload = _build_invoke_payload(state)
-        self._connection.send_request(FunctionCode.INVOKE, payload)
+        Raises:
+            NotImplementedError: Always.
+        """
+        raise NotImplementedError(
+            "Changing the PLC operating state is not implemented yet: the request has not been validated "
+            "on a real PLC (https://github.com/gijzelaerr/s7commplus/issues/8)"
+        )
 
     def get_cpu_state(self) -> str:
         """Get PLC CPU operating state via S7CommPlus.
@@ -1685,18 +1691,6 @@ def _build_explore_payload_v3(explore_id: int, sequence: int = 10) -> bytes:
     payload += bytes([sequence & 0xFF])
     payload += bytes([0x00, 0x00, 0x00, 0x00, 0x00])
     return payload
-
-
-def _build_invoke_payload(state: int) -> bytes:
-    """Build an INVOKE request payload for SetPlcOperatingState.
-
-    The INVOKE function triggers a method on a PLC object.
-    For operating state changes, this calls the CPU's state setter.
-    """
-    payload = bytearray()
-    payload += struct.pack(">I", 0)  # reserved
-    payload += encode_uint32_vlq(state)
-    return bytes(payload)
 
 
 # ---------------------------------------------------------------------------

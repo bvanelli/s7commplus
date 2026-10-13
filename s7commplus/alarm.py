@@ -9,7 +9,7 @@ from dataclasses import dataclass, field
 from enum import IntEnum
 from typing import Any
 
-from .codec import encode_object_qualifier
+from .codec import encode_object_qualifier, parse_or_raise_for_return_value
 from .protocol import DataType, ElementID, Ids, Opcode
 from .vlq import decode_int32_vlq, decode_int64_vlq, decode_uint32_vlq, decode_uint64_vlq, encode_uint32_vlq
 
@@ -488,10 +488,12 @@ def _alarm_from_object(obj: _Object, language_ids: set[LanguageId | int] | None)
 
 
 def parse_alarm_explore_response(response: bytes, language_ids: Sequence[LanguageId | int] | None = None) -> list[Alarm]:
-    """Parse the payload returned by an alarm-subsystem EXPLORE request."""
-    return_value, offset = _read_vlq64(response, 0)
-    if return_value != 0:
-        raise RuntimeError(f"Alarm browse failed: PLC returned {return_value:#x}")
+    """Parse the payload returned by an alarm-subsystem EXPLORE request.
+
+    Raises:
+        S7ReturnValueError: If the ReturnValue is non-zero.
+    """
+    offset = parse_or_raise_for_return_value(response, "Alarm browse")
     if offset + 4 > len(response):
         raise ValueError("Alarm browse response is truncated")
     offset += 4  # ExploreId

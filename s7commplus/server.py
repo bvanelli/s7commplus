@@ -500,6 +500,11 @@ class S7CommPlusServer:
                                 # IntegrityId goes before it (as the real PLC and the
                                 # HarpoS7 capture do).
                                 response = response[:-4] + encode_uint32_vlq(response_integrity_id) + response[-4:]
+                            elif v1_after_body and func_code == FunctionCode.EXPLORE:
+                                # The client keeps legacy EXPLORE payloads whole because the
+                                # IntegrityId follows the body (v1_session_key/ARCHITECTURE.md).
+                                # Its exact position is unverified on real V1 firmware.
+                                response = response + encode_uint32_vlq(response_integrity_id)
                             else:
                                 response = response[:10] + encode_uint32_vlq(response_integrity_id) + response[10:]
                         send_app_frame(

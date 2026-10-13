@@ -26,7 +26,6 @@ from .client import (
     _build_area_write_payload,
     _build_explore_payload_v3,
     _build_explore_request,
-    _build_invoke_payload,
     _build_multi_symbolic_write_payload,
     _build_multi_symbolic_read_payload,
     _build_read_payload,
@@ -69,6 +68,7 @@ from .connection import (
     _check_set_variable_response,
     _check_system_event,
     _check_v1_legitimation_response,
+    _derive_oms_secret,
     _encode_security_key_struct,
     _frame_request,
     _generate_session_key_blob,
@@ -83,10 +83,12 @@ from .connection import (
     _session_setup_accepted,
     _set_s7_groups,
     _strip_response_integrity_id,
+    _tls_key_log,
     _v1_session_key_profile,
     _write_delete_qualifier_version,
     _v1_integrity_tail,
     _v1_legitimation_integrity_tail,
+    _response_continues,
     _validate_response_header,
     _verify_v3_hmac,
 )
@@ -689,23 +691,21 @@ class S7CommPlusAsyncClient:
         # wrap the whole TCP stream, encrypting TPKT/COTP too, which the PLC rejects.
         self._incoming_bio = ssl.MemoryBIO()
         self._outgoing_bio = ssl.MemoryBIO()
-        self._ssl_object = ctx.wrap_bio(
-            self._incoming_bio,
-            self._outgoing_bio,
-            server_side=False,
-            server_hostname=self._host if ctx.check_hostname else None,
-        )
 
-        await self._do_tls_handshake()
-        self._tls_active = True
+        # The OMS exporter secret, which new legitimation needs, is derived
+        # from the handshake's key log (see _tls_key_log).
+        with _tls_key_log(ctx) as keylog_path:
+            self._ssl_object = ctx.wrap_bio(
+                self._incoming_bio,
+                self._outgoing_bio,
+                server_side=False,
+                server_hostname=self._host if ctx.check_hostname else None,
+            )
 
-        try:
-            exporter = getattr(self._ssl_object, "export_keying_material")
-            self._oms_secret = bytes(exporter("EXPERIMENTAL_OMS", 32, None))
-            logger.debug("OMS exporter secret extracted from TLS session")
-        except (AttributeError, ssl.SSLError) as e:
-            logger.warning(f"Could not extract OMS exporter secret: {e}")
-            self._oms_secret = None
+            await self._do_tls_handshake()
+            self._tls_active = True
+
+            self._oms_secret = _derive_oms_secret(self._ssl_object, keylog_path)
 
         logger.info("TLS activated (tunneled inside COTP frames)")
 
@@ -1022,9 +1022,25 @@ class S7CommPlusAsyncClient:
         return find_and_decompress(raw)
 
     async def set_plc_operating_state(self, state: int) -> None:
-        """Set the PLC operating state (start/stop)."""
-        payload = _build_invoke_payload(state)
-        await self._send_request(FunctionCode.INVOKE, payload)
+        """Change the PLC operating state (RUN/STOP). Not implemented yet.
+
+        Earlier versions sent a guessed INVOKE request, never checked the PLC's
+        answer and numbered the states differently from the PLC's
+        ``OperatingStateREQ`` values (`OperatingStateRequest`), so they could
+        report success when nothing changed. Until the request is derived from
+        a real RUN/STOP capture and validated on hardware (issue #8), this
+        refuses without sending anything.
+
+        Args:
+            state: Target operating state.
+
+        Raises:
+            NotImplementedError: Always.
+        """
+        raise NotImplementedError(
+            "Changing the PLC operating state is not implemented yet: the request has not been validated "
+            "on a real PLC (https://github.com/gijzelaerr/s7commplus/issues/8)"
+        )
 
     async def get_cpu_state(self) -> str:
         """Get PLC CPU operating state via S7CommPlus.
@@ -1665,8 +1681,9 @@ class S7CommPlusAsyncClient:
 
         response_data = await self._recv_response_frame(seq_num)
 
-        # Large responses (e.g. Explore) are split across several S7CommPlus PDUs.
-        if reassemble:
+        # Large responses (e.g. Explore) are split across several S7CommPlus PDUs;
+        # any response whose first PDU has no trailer is reassembled the same way.
+        if reassemble or _response_continues(response_data):
             data = await self._recv_reassembled_payload(response_data)
             if len(data) < 10:
                 raise S7ConnectionError("Response too short")
@@ -1736,6 +1753,8 @@ class S7CommPlusAsyncClient:
                 return response_data
             opcode = _incoming_frame_opcode(response_data)
             if opcode == Opcode.NOTIFICATION:
+                # See S7CommPlusConnection._recv_response_frame: a notification split
+                # over several PDUs is not reassembled.
                 if len(self._notification_frames) == self._notification_frames.maxlen:
                     self._notification_frame_overflows += 1
                 self._notification_frames.append(response_data)
@@ -1755,6 +1774,10 @@ class S7CommPlusAsyncClient:
                         raise S7ProtocolError(
                             f"Too many stale S7CommPlus responses while waiting for sequence {expected_sequence}"
                         )
+                    if _response_continues(response_data):
+                        # Drain (and verify) the rest of a split stale response so its
+                        # fragments are not read as the next response.
+                        await self._recv_reassembled_payload(response_data)
                     continue
             return response_data
 
@@ -1843,7 +1866,7 @@ class S7CommPlusAsyncClient:
             # The next 4 bytes are either the trailer (0x72 ver 0x0000) or the next
             # fragment's header (0x72 ver len>0).
             await ensure(4)
-            if buf[0] == 0x72 and buf[2] == 0 and buf[3] == 0:
+            if buf[0] == 0x72 and buf[1] == expected_version and buf[2] == 0 and buf[3] == 0:
                 del buf[:4]  # consume trailer — last fragment
                 break
         return bytes(data)

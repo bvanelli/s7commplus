@@ -33,8 +33,12 @@ array elements and the members of struct-array elements included; values
 without a conversion, and bytes that are not a valid value of the type, remain
 bytes. Since 0.3.0 this also decodes STRING and WSTRING (by their length
 header), CHAR, WCHAR, the date and time types, and array elements, which 0.2.0
-left as bytes. Explicit ``SubscriptionItem`` values can set symbol CRCs,
-sub-areas, and stable reference IDs.
+left as bytes. Catalog tags and access sequences subscribe with SymbolCRC 0,
+as named reads and writes do (see :doc:`data-access`): the ``symbol_crc``
+reported by a browse is per-entry type metadata, and PLCSIM Advanced answered a
+subscription item that carried it with item error 0x13 and no values. Explicit
+``SubscriptionItem`` values can set symbol CRCs, sub-areas, and stable
+reference IDs.
 
 The synchronous client also provides ``iter_subscription_notifications`` and
 callbacks. The async client provides an async iterator and a queue-like view:

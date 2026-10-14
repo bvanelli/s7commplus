@@ -168,7 +168,7 @@ class Member:
     rid: int  # raw type RID
     section: str = ""  # Input/Output/InOut/Static/Temp/Constant (FB/OB); "" for a DB
     fields: list[Member] = field(default_factory=list)  # sub-members for a UDT/Struct type
-    id: int = 0  # interface ID, unique among its siblings; joining the ids down the fields tree gives the LineComm Comment Path
+    id: int = 0  # interface ID, unique among its siblings
 
 
 def _member_type(member: ET.Element, target: ET.Element | None) -> str:
@@ -222,10 +222,10 @@ def parse_block_interface(xml_text: str) -> list[Member]:
         primary = primary.find("SubParts/Part")
     if primary is None:
         return []
-    return _parse_source_part(primary, set())
+    return _parse_source_part(primary, "", set())
 
 
-def _parse_source_part(part: ET.Element, seen: set[int]) -> list[Member]:
+def _parse_source_part(part: ET.Element, section: str, seen: set[int]) -> list[Member]:
     """Parse one source ``<Part>`` (DBSource/BlockSource/DataTypeSource).
 
     ``seen`` carries the identities of the ``<Part>`` elements already being
@@ -236,21 +236,22 @@ def _parse_source_part(part: ET.Element, seen: set[int]) -> list[Member]:
     subparts = list(sub_el) if sub_el is not None else []  # index-addressable
 
     # Flat DB/UDT: variables are direct <Member> children of <Payload><Root>.
-    members = _build_members(part.find("./Payload/Root"), "", subparts, seen)
+    # A UDT's fields inherit the section of the member typed with it, like a Struct's fields do.
+    members = _build_members(part.findall("./Payload/Root"), section, subparts, seen)
     # FB/OB: variables live in the <Part Kind="*Section"> entries of <SubParts>.
     for sp in subparts:
         kind = sp.get("Kind", "")
         if not kind.endswith("Section"):
             continue
-        members += _build_members(sp.find("./Payload/Member"), kind[: -len("Section")], subparts, seen)
+        members += _build_members(sp.findall("./Payload/Member"), kind[: -len("Section")], subparts, seen)
     return members
 
 
-def _build_members(container: ET.Element | None, section: str, subparts: list[ET.Element], seen: set[int]) -> list[Member]:
-    """Build the RID-carrying ``<Member>`` children of `container`; section headers have no RID."""
-    if container is None:
-        return []
-    return [_build_member(m, section, subparts, seen) for m in container.findall("Member") if m.get("RID") is not None]
+def _build_members(containers: list[ET.Element], section: str, subparts: list[ET.Element], seen: set[int]) -> list[Member]:
+    """Build the RID-carrying ``<Member>`` children of `containers`; section headers have no RID."""
+    return [
+        _build_member(m, section, subparts, seen) for c in containers for m in c.findall("Member") if m.get("RID") is not None
+    ]
 
 
 def _build_member(m: ET.Element, section: str, subparts: list[ET.Element], seen: set[int]) -> Member:
@@ -285,9 +286,9 @@ def _member_fields(target: ET.Element | None, section: str, subparts: list[ET.El
     # Struct's nested Structure parts sit in the same list as its own part.
     # A *Section index or a library reference expands to nothing.
     if kind.endswith("Source"):
-        return _parse_source_part(target, seen | {id(target)})
+        return _parse_source_part(target, section, seen | {id(target)})
     if kind == "Structure":
-        return _build_members(target.find("./Payload/Member"), section, subparts, seen | {id(target)})
+        return _build_members(target.findall("./Payload/Member"), section, subparts, seen | {id(target)})
     return []
 
 

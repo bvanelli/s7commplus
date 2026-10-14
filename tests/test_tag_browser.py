@@ -491,6 +491,7 @@ def test_block_interface_from_live_s7_1500_nested_struct_db():
                     ],
                     id=51,
                 ),
+                # The PLC stores this name already mojibake'd (UTF-8 "¬ß" for "§" etc.); it is asserted as sent.
                 Member("Special_!¬ß$%&/()=?`¬¥\\+~*'#_-:.,<>|@^¬∞‚Ç¨¬µ{[]}", "SoftType#149", 18, 240, 0x02000095, id=52),
             ],
         ),

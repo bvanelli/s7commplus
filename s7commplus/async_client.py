@@ -4,6 +4,7 @@ Reference: thomas-v2/S7CommPlusDriver (C#, LGPL-3.0)
 """
 
 import asyncio
+import functools
 import hashlib
 import hmac
 import logging
@@ -11,14 +12,29 @@ import ssl
 import struct
 import time
 from collections import deque
-from collections.abc import AsyncIterator, Mapping, Sequence
-from typing import Any, Awaitable, Callable, Optional, TypeVar
+from collections.abc import AsyncIterator, Coroutine, Mapping, Sequence
+from typing import Any, Awaitable, Callable, Concatenate, Literal, Optional, ParamSpec, TypeVar
 
-from .error import S7ConnectionError, S7IntegrityError, S7ProtocolError, S7TimeoutError
+from .error import (
+    S7CertificateError,
+    S7ConnectionError,
+    S7Error,
+    S7IntegrityError,
+    S7ProtocolError,
+    S7TimeoutError,
+    S7TlsHandshakeError,
+)
 
 from . import typeinfo
 from .blob_decompressor import find_and_decompress
 from .client import (
+    _AUTO_REFRESH_MIN_INTERVAL,
+    _block_signature,
+    _type_info_times,
+    _AUTO_RECONNECT_ACTIVE,
+    _AUTO_RECONNECT_MARKER,
+    _AUTO_RECONNECT_MIN_INTERVAL,
+    _AUTO_RECONNECT_STAND_DOWN,
     _LEGACY_KEY_CACHE,
     DBWriteItem,
     SymbolicReadItem,
@@ -37,7 +53,17 @@ from .client import (
     _parse_cpu_state,
     _parse_read_response,
     _parse_write_response,
-    _parse_write_response_errors,
+    _db_read_values,
+    _interrupt_tag_writes,
+    _record_tag_writes,
+    _request_chunks,
+    _write_interrupted,
+    _write_item_errors,
+    _write_refused,
+    _check_subscription_size,
+    _normalize_subscription_items,
+    _subscription_groups,
+    _subscriptions_interrupted,
 )
 from .catalog import SymbolCatalog, SymbolicTag, TagResult
 from .codec import (
@@ -79,9 +105,13 @@ from .connection import (
     _incoming_response_sequence,
     _is_stale_response_sequence,
     _log_create_object_return_value,
+    _check_certificate_pin,
+    _check_plaintext_fallback,
     _parse_get_var_substreamed_response,
+    _resolve_use_tls,
     _parse_protection_level_response,
     _patch_plcsim_server_session_version,
+    _request_frame_overhead,
     _resolve_session_key_fingerprint,
     _session_setup_accepted,
     _set_s7_groups,
@@ -93,6 +123,7 @@ from .connection import (
     _v1_legitimation_integrity_tail,
     _response_continues,
     _validate_response_header,
+    _verify_pinned_certificate,
     _verify_v3_hmac,
 )
 from .subscription import (
@@ -148,6 +179,7 @@ from .vlq import decode_uint32_vlq, decode_uint64_vlq, encode_uint32_vlq
 logger = logging.getLogger(__name__)
 
 _T = TypeVar("_T")
+_P = ParamSpec("_P")
 
 # COTP constants
 _COTP_CR = 0xE0
@@ -175,10 +207,56 @@ class AsyncSubscriptionQueue:
         return self._client.subscription_diagnostics(self._subscription_id).queued_notifications
 
 
+def _retry_on_dropped_connection(
+    method: Callable[Concatenate["S7CommPlusAsyncClient", _P], Coroutine[Any, Any, _T]],
+) -> Callable[Concatenate["S7CommPlusAsyncClient", _P], Coroutine[Any, Any, _T]]:
+    """Retry a read coroutine once on a fresh session when auto-reconnect is on.
+
+    The asyncio counterpart of the sync client's decorator, with the same
+    policy (see ``s7commplus.client._retry_on_dropped_connection``): reads
+    only, never writes; only an ``S7ConnectionError``; once, by the outermost
+    decorated call of a task. The wrapper keeps the method's name, docstring
+    and signature, and sets ``_AUTO_RECONNECT_MARKER``.
+    """
+
+    @functools.wraps(method)
+    async def wrapper(self: "S7CommPlusAsyncClient", /, *args: _P.args, **kwargs: _P.kwargs) -> _T:
+        active = _AUTO_RECONNECT_ACTIVE.get()
+        if not self._auto_reconnect or id(self) in active:
+            return await method(self, *args, **kwargs)
+        token = _AUTO_RECONNECT_ACTIVE.set(active | {id(self)})
+        try:
+            generation = self._generation
+            try:
+                return await method(self, *args, **kwargs)
+            except S7ConnectionError as exc:
+                if not await self._recover_dropped_connection(generation, exc):
+                    raise
+            logger.info("Retrying %s() on the new session", method.__name__)
+            return await method(self, *args, **kwargs)
+        finally:
+            _AUTO_RECONNECT_ACTIVE.reset(token)
+
+    setattr(wrapper, _AUTO_RECONNECT_MARKER, True)
+    return wrapper
+
+
 class S7CommPlusAsyncClient:
     """Async S7CommPlus client for S7-1200/1500 PLCs.
 
     Use ``from s7commplus import AsyncClient`` to instantiate.
+
+    Attributes:
+        max_items_per_request: Most items one multi-item read or write request
+            carries (default 50; ``0`` sends a batch in one request). A larger
+            batch is split over several requests, in order. A CPU 1215C FW V4.2
+            refuses a read of more than 50 items; S7-1500 hardware has not been
+            measured.
+        max_request_bytes: Largest request frame a multi-item read or write,
+            or a subscription, sends (default 900; ``0`` disables the check),
+            counted as for :class:`S7CommPlusClient`. A larger batch is split;
+            an item too large for one request raises ``ValueError`` before
+            anything is sent.
     """
 
     def __init__(self) -> None:
@@ -203,6 +281,31 @@ class S7CommPlusAsyncClient:
         self._notification_frame_overflows = 0
         self._connect_params: Optional[dict[str, Any]] = None
         self._symbol_catalog: Optional[SymbolCatalog] = None
+        # Most items per request and largest request frame of a multi-item read
+        # or write; see S7CommPlusClient for the defaults' evidence.
+        self.max_items_per_request = 50
+        self.max_request_bytes = 900
+        # What the cached catalog was built from, for refresh_caches_if_program_changed:
+        # the data-block list, and type-info RID -> VariableTypeStructModificationTime
+        # of each data block whose time the PLC reported.
+        self._block_layout_signature: Optional[list[tuple[str, int, int]]] = None
+        self._type_info_times: dict[int, bytes] = {}
+        # Opt-in: an unknown tag name, or a failed item in read_tags(), runs that
+        # check (once per call, at most every _AUTO_REFRESH_MIN_INTERVAL seconds)
+        # and, if the program changed, resolves and reads again. Writes that reached
+        # the PLC are never resent.
+        self.auto_refresh_tags: bool = False
+        self._last_auto_refresh_check: Optional[float] = None
+        # Sessions rebuilt by a reconnect. Reconnects are serialized so that one
+        # never tears down the session another has just built, and while one
+        # runs only its task may use the stream (see _blocked_by_rebuild).
+        self._generation = 0
+        self._reconnect_lock = asyncio.Lock()
+        self._rebuild_task: Optional[asyncio.Task[Any]] = None
+        # Opt-in: a read that finds the connection dropped reconnects and retries once.
+        self._auto_reconnect = False
+        self._auto_reconnect_min_interval = _AUTO_RECONNECT_MIN_INTERVAL
+        self._last_auto_reconnect = float("-inf")
         self._subscription_change_counter = 1
         self._subscription_relation_id = 0x7FFFC001
         self._subscriptions = SubscriptionRegistry()
@@ -221,6 +324,10 @@ class S7CommPlusAsyncClient:
         self._incoming_bio: Optional[ssl.MemoryBIO] = None
         self._outgoing_bio: Optional[ssl.MemoryBIO] = None
         self._oms_secret: Optional[bytes] = None
+        # Pinned TLS certificate: expected SHA-256 (set by connect) and the one
+        # the PLC actually presented (captured during the handshake).
+        self._tls_cert_fingerprint: Optional[bytes] = None
+        self._peer_certificate_fingerprint: Optional[bytes] = None
         # ServerSessionVersion is captured as its raw typed value (flags+datatype+data)
         # so it can be echoed back verbatim — real S7-1500 PLCs send it as a Struct.
         self._server_session_version: Optional[bytes] = None
@@ -347,6 +454,14 @@ class S7CommPlusAsyncClient:
         """
         return _write_delete_qualifier_version(self._v1_session_key_family, self._protocol_version, self.object_qualifier_version)
 
+    def _frame_overhead(self) -> int:
+        """Bytes this session's request frames add to a payload."""
+        return _request_frame_overhead(self._with_integrity_id, self._session_key is not None)
+
+    def _plan_requests(self, items: Sequence[_T], build_payload: Callable[[list[_T]], bytes]) -> list[tuple[list[_T], bytes]]:
+        """Split a batch into the requests it needs, in order, with their payloads."""
+        return _request_chunks(items, self.max_items_per_request, self.max_request_bytes, self._frame_overhead(), build_payload)
+
     async def connect(
         self,
         host: str,
@@ -354,10 +469,11 @@ class S7CommPlusAsyncClient:
         rack: int = 0,
         slot: int = 1,
         *,
-        use_tls: bool = False,
+        use_tls: bool | Literal["auto"] = False,
         tls_cert: Optional[str] = None,
         tls_key: Optional[str] = None,
         tls_ca: Optional[str] = None,
+        tls_cert_fingerprint: Optional[str] = None,
         password: Optional[str] = None,
         allow_legacy_key_fallback: bool = True,
         legacy_session_key_refresh_interval: Optional[float] = _DEFAULT_LEGACY_SESSION_KEY_REFRESH_INTERVAL,
@@ -367,6 +483,7 @@ class S7CommPlusAsyncClient:
         notification_timeout: Optional[float] = None,
         legacy_s7_1500: bool | None = None,
         connection_type: int | str | None = None,
+        auto_reconnect: bool = False,
     ) -> None:
         """Connect to an S7-1200/1500 PLC using S7CommPlus.
 
@@ -379,6 +496,11 @@ class S7CommPlusAsyncClient:
             tls_cert: Path to client TLS certificate (PEM)
             tls_key: Path to client private key (PEM)
             tls_ca: Path to CA certificate for PLC verification (PEM)
+            tls_cert_fingerprint: Expected SHA-256 fingerprint of the PLC's TLS
+                certificate, as hex (``:``/``-``/spaces allowed). Refuses the
+                connection unless the PLC presents that exact certificate; use it
+                instead of ``tls_ca`` for a self-signed PLC certificate. Requires
+                ``use_tls=True``: a pin is never used on a plaintext connection.
             password: PLC password. V1 SessionKey sessions use it for the
                 post-handshake legitimation; TLS sessions pass it to
                 :meth:`authenticate` after connecting.
@@ -415,27 +537,36 @@ class S7CommPlusAsyncClient:
                 engineering-style operations differently per role is not
                 verified against a PLC, so try ``"es"`` if the default is
                 refused.
+            auto_reconnect: When a read finds the connection dropped, reconnect
+                and run it once more (see :attr:`auto_reconnect`). Writes are
+                never retried. Off by default.
         """
-        if legacy_s7_1500 and use_tls:
+        tls_first, auto_tls = _resolve_use_tls(use_tls)
+        if legacy_s7_1500 and tls_first:
             raise ValueError("legacy_s7_1500 requires use_tls=False")
         if legacy_session_key_refresh_interval is not None and legacy_session_key_refresh_interval <= 0:
             raise ValueError("legacy_session_key_refresh_interval must be positive or None")
+        _check_certificate_pin(tls_cert_fingerprint, tls_first)  # validate early
         remote_tsap_for_connection_type(connection_type)  # validate early
         _check_timeout("timeout", timeout, optional=False)
         _check_timeout("request_timeout", request_timeout)
         _check_timeout("explore_timeout", explore_timeout)
         _check_timeout("notification_timeout", notification_timeout)
-        self._symbol_catalog = None
+        self._forget_tag_catalog()
         self._connect_params = {
             "host": host,
             "port": port,
             "rack": rack,
             "slot": slot,
-            "use_tls": use_tls,
+            "use_tls": tls_first,
+            "auto_tls": auto_tls,
             "tls_cert": tls_cert,
             "tls_key": tls_key,
             "tls_ca": tls_ca,
+            "tls_cert_fingerprint": tls_cert_fingerprint,
             "password": password,
+            # A successful authenticate() replaces both, so a reconnect legitimates the same way.
+            "username": "",
             "allow_legacy_key_fallback": allow_legacy_key_fallback,
             "legacy_session_key_refresh_interval": legacy_session_key_refresh_interval,
             "timeout": timeout,
@@ -446,6 +577,7 @@ class S7CommPlusAsyncClient:
             "connection_type": connection_type,
         }
         self._host = host
+        self._auto_reconnect = auto_reconnect
         try:
             await self._open_connection()
         except Exception:
@@ -453,6 +585,25 @@ class S7CommPlusAsyncClient:
             raise
 
     async def _open_connection(self) -> None:
+        """(Re)open the connection using the stored ``connect()`` arguments.
+
+        With ``use_tls="auto"`` every (re)connect tries TLS first, so a
+        fallback to plaintext never outlives the connection it was made for.
+        """
+        assert self._connect_params is not None
+        p = self._connect_params
+        if not p["auto_tls"]:
+            await self._open_connection_with_key_fallback()
+            return
+        p["use_tls"] = True
+        try:
+            await self._open_connection_with_key_fallback()
+        except S7TlsHandshakeError as exc:
+            _check_plaintext_fallback(p, exc)
+            p["use_tls"] = False
+            await self._open_connection_with_key_fallback()
+
+    async def _open_connection_with_key_fallback(self) -> None:
         """Open the connection, trying bundled same-family keys when the PLC withholds its key id."""
         assert self._connect_params is not None
         p = self._connect_params
@@ -512,6 +663,8 @@ class S7CommPlusAsyncClient:
         self._session_key_refresh_interval = p["legacy_session_key_refresh_interval"]
         self._session_key_refresh_error = None
         self._session_key_fingerprint_override = fingerprint
+        self._tls_cert_fingerprint = _check_certificate_pin(p["tls_cert_fingerprint"], use_tls)
+        self._peer_certificate_fingerprint = None
         self._request_timeout = p["timeout"] if p["request_timeout"] is None else p["request_timeout"]
         self._explore_timeout = self._request_timeout if p["explore_timeout"] is None else p["explore_timeout"]
         self._notification_timeout = p["notification_timeout"]
@@ -628,7 +781,7 @@ class S7CommPlusAsyncClient:
 
         if p["password"] is not None and self._tls_active:
             logger.info("Performing PLC legitimation (password authentication)")
-            await self.authenticate(p["password"])
+            await self.authenticate(p["password"], p["username"])
 
     async def _handshake(self, p: dict[str, Any]) -> None:
         """COTP, InitSSL, optional TLS and CreateObject: everything before session setup."""
@@ -647,6 +800,10 @@ class S7CommPlusAsyncClient:
 
     async def authenticate(self, password: str, username: str = "") -> None:
         """Perform PLC password authentication (legitimation).
+
+        Once the PLC confirms the legitimation, the password and username
+        replace those of ``connect()``, so :meth:`reconnect` legitimates the new
+        session the same way. A refused attempt changes nothing.
 
         Args:
             password: PLC password
@@ -709,6 +866,9 @@ class S7CommPlusAsyncClient:
                 f"Legitimation failed, protection level unchanged at {self._protection_level}: the password was refused"
             )
         logger.info(f"PLC legitimation completed, protection level {level_before} -> {self._protection_level}")
+        if self._connect_params is not None:
+            self._connect_params["password"] = password
+            self._connect_params["username"] = username
 
     def _decide_legitimation_mode(self) -> Optional[LegitimationType]:
         """Return the legitimation exchange the PLC firmware expects, None if unsupported."""
@@ -729,8 +889,6 @@ class S7CommPlusAsyncClient:
     ) -> None:
         """Activate TLS over the COTP connection."""
         if self._writer is None:
-            from .error import S7ConnectionError
-
             raise S7ConnectionError("Cannot activate TLS: not connected")
 
         ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
@@ -767,8 +925,19 @@ class S7CommPlusAsyncClient:
                 server_hostname=self._host if ctx.check_hostname else None,
             )
 
-            await self._do_tls_handshake()
+            try:
+                await self._do_tls_handshake()
+            except ssl.SSLCertVerificationError as exc:
+                raise S7CertificateError(f"PLC TLS certificate failed verification: {exc.verify_message}") from exc
+            except (ssl.SSLError, OSError, EOFError, asyncio.TimeoutError, S7Error) as exc:
+                raise S7TlsHandshakeError(f"TLS handshake with the PLC did not complete: {exc}") from exc
             self._tls_active = True
+
+            # Pin the PLC certificate before any application data is trusted.
+            # Not an assert: the check must also hold under ``python -O``.
+            if self._ssl_object is None:
+                raise S7ConnectionError("TLS session was closed during the handshake")
+            self._peer_certificate_fingerprint = _verify_pinned_certificate(self._ssl_object, self._tls_cert_fingerprint)
 
             self._oms_secret = _derive_oms_secret(self._ssl_object, keylog_path)
 
@@ -845,11 +1014,59 @@ class S7CommPlusAsyncClient:
         resp_payload = await self._send_request(FunctionCode.SET_VARIABLE, payload, integrity_tail=4)
         _check_set_variable_response(resp_payload)
 
+    @property
+    def connection_generation(self) -> int:
+        """Count of reconnects the client has performed; a change means the session was rebuilt."""
+        return self._generation
+
+    @property
+    def auto_reconnect(self) -> bool:
+        """Whether a read that finds the connection dropped reconnects and runs once more.
+
+        Set by ``connect(auto_reconnect=...)``; a change made later outlasts
+        reconnects. Writes are never retried. Neither is a read that timed out:
+        ``S7TimeoutError`` is not an ``S7ConnectionError``. When the timeout
+        ended the session, the next call finds it dropped and reconnects.
+        """
+        return self._auto_reconnect
+
+    @auto_reconnect.setter
+    def auto_reconnect(self, enabled: bool) -> None:
+        self._auto_reconnect = enabled
+
+    async def reconnect(self) -> None:
+        """Re-establish the connection with the parameters from the last connect().
+
+        The new session is legitimated with the password given to ``connect()``,
+        or with the password and username of the last successful
+        :meth:`authenticate`. Data subscriptions that were live are remembered
+        so :meth:`resubscribe` can recreate them; alarm subscriptions must be
+        created again, and notifications from the gap are not replayed. A failed
+        attempt keeps the parameters, so ``reconnect()`` can be repeated once
+        the PLC is back. Concurrent reconnects run one after the other.
+
+        Raises:
+            RuntimeError: ``connect()`` was never called, or ``disconnect()``
+                cleared its parameters.
+        """
+        if self._connect_params is None:
+            raise RuntimeError("Not connected")
+        logger.info("Reconnecting to the PLC")
+        await self._reconnect()
+
     async def disconnect(self) -> None:
         """Disconnect from PLC."""
         await self._close()
         self._session_key_refresh_error = None
         self._connect_params = None
+
+    def peer_certificate_fingerprint(self) -> Optional[bytes]:
+        """SHA-256 of the PLC's TLS certificate, or None without TLS.
+
+        The raw 32-byte digest; ``.hex()`` gives the hex string that
+        ``tls_cert_fingerprint`` takes.
+        """
+        return self._peer_certificate_fingerprint
 
     async def _close(self) -> None:
         """Tear down the session and transport, keeping the connect parameters and any renewal failure."""
@@ -906,7 +1123,8 @@ class S7CommPlusAsyncClient:
         self._incoming_bio = None
         self._outgoing_bio = None
         self._oms_secret = None
-        self._symbol_catalog = None
+        self._peer_certificate_fingerprint = None
+        self._forget_tag_catalog()
         self._server_session_version = None
         self._session_oms_version = None
         self._session_oms_version_cache_key = None
@@ -1000,11 +1218,30 @@ class S7CommPlusAsyncClient:
 
     async def _reconnect(self) -> None:
         """Tear down and re-establish the connection with the same parameters."""
+        async with self._reconnect_lock:
+            await self._rebuild_session()
+
+    async def _rebuild_session(self) -> None:
+        """Replace the session using the stored parameters; the caller holds the reconnect lock.
+
+        A failed attempt keeps the parameters, so a later reconnect can still
+        succeed once the PLC is reachable again. Until this returns, the stream
+        belongs to this task: other tasks' requests fail with "Not connected"
+        instead of interleaving with the handshake.
+        """
         if self._connect_params is None:
             raise S7ConnectionError("Not connected")
-        params = self._connect_params.copy()
-        await self.disconnect()
-        await self.connect(**params)
+        self._rebuild_task = asyncio.current_task()
+        try:
+            await self._close()
+            await self._open_connection()
+        finally:
+            self._rebuild_task = None
+        self._generation += 1
+
+    def _blocked_by_rebuild(self) -> bool:
+        """Whether another task is rebuilding the session right now."""
+        return self._rebuild_task is not None and asyncio.current_task() is not self._rebuild_task
 
     async def _with_reconnect(self, op: Callable[[], Awaitable[_T]]) -> _T:
         """Run ``op``; if the PLC dropped the socket, reconnect once and retry."""
@@ -1012,9 +1249,40 @@ class S7CommPlusAsyncClient:
             return await op()
         except S7ConnectionError as exc:
             logger.info("Connection dropped by PLC (%s); reconnecting and retrying", exc)
-            await self._reconnect()
+            try:
+                await self._reconnect()
+            finally:
+                # Counts as an automatic attempt, so an auto-reconnecting browse()
+                # does not try again at once when this one failed.
+                self._last_auto_reconnect = time.monotonic()
             return await op()
 
+    async def _recover_dropped_connection(self, generation: int, exc: S7ConnectionError) -> bool:
+        """Prepare the retry of an auto-reconnecting read that found the connection dropped.
+
+        ``generation`` is the session the read started on. Returns ``False``
+        to hand the original error to the caller instead of retrying. Tasks
+        that see the same drop queue on the reconnect lock; the first rebuilds
+        the session and the others retry on it.
+        """
+        async with self._reconnect_lock:
+            if self._generation != generation:
+                return True  # another task already rebuilt the session; retry on it
+            if self._connect_params is None:
+                return False
+            if self._subscriptions.subscription_ids or self._subscriptions.pending_restore or self._alarm_subscription_ids:
+                raise S7ConnectionError(_AUTO_RECONNECT_STAND_DOWN) from exc
+            if time.monotonic() - self._last_auto_reconnect < self._auto_reconnect_min_interval:
+                logger.debug("Connection lost (%s); the last automatic reconnect ended too recently to try again", exc)
+                return False
+            logger.info("Connection lost (%s); reconnecting", exc)
+            try:
+                await self._rebuild_session()
+            finally:
+                self._last_auto_reconnect = time.monotonic()
+            return True
+
+    @_retry_on_dropped_connection
     async def db_read(self, db_number: int, start: int, size: int) -> bytes:
         """Read raw bytes from a data block."""
         payload = _build_read_payload([(db_number, start, size)], self.object_qualifier_version)
@@ -1032,22 +1300,67 @@ class S7CommPlusAsyncClient:
         await self.db_write_multi([(db_number, start, data, datatype)])
 
     async def db_write_multi(self, items: list[DBWriteItem]) -> None:
-        """Write (db_number, start_offset, data, datatype) tuples matching the PLC target types."""
-        payload = _build_write_payload(items, self.object_qualifier_version)
-        response = await self._send_request(FunctionCode.SET_MULTI_VARIABLES, payload)
-        _parse_write_response(response)
+        """Write (db_number, start_offset, data, datatype) tuples matching the PLC target types.
+
+        A batch over :attr:`max_items_per_request` items or
+        :attr:`max_request_bytes` is split over several requests, sent in order,
+        so it is not atomic. The PLC writes every item it does not refuse, and a
+        refused item does not stop the batch.
+
+        Raises:
+            S7WriteError: After the last request, if the PLC refused any item;
+                ``item_errors`` is keyed by position in ``items``. Also when a
+                connection, timeout or protocol failure interrupts a split batch
+                after its first request (the failure is the ``__cause__``):
+                ``unknown`` and ``not_sent`` then name the items that may or may
+                not have been written and the ones never sent. A failure of the
+                first request propagates unchanged, as for a single request.
+            ValueError: An item is too large for one request on its own;
+                nothing is sent.
+        """
+
+        def build_write(chunk: list[DBWriteItem]) -> bytes:
+            return _build_write_payload(chunk, self.object_qualifier_version)
+
+        item_errors: dict[int, int] = {}
+        answered = 0
+        for chunk, payload in self._plan_requests(items, build_write):
+            try:
+                response = await self._send_request(FunctionCode.SET_MULTI_VARIABLES, payload)
+                errors = _write_item_errors(response, len(chunk))
+            except Exception as error:
+                if answered == 0:
+                    raise
+                raise _write_interrupted(item_errors, answered, len(chunk), len(items), error) from error
+            item_errors.update((answered + number, code) for number, code in errors.items())
+            answered += len(chunk)
+        if item_errors:
+            raise _write_refused(item_errors)
 
     async def write_multi(self, items: list[DBWriteItem]) -> None:
         """Alias for :meth:`db_write_multi`."""
         await self.db_write_multi(items)
 
+    @_retry_on_dropped_connection
     async def db_read_multi(self, items: list[tuple[int, int, int]]) -> list[bytes]:
-        """Read multiple data block regions in a single request."""
-        payload = _build_read_payload(items, self.object_qualifier_version)
-        response = await self._send_request(FunctionCode.GET_MULTI_VARIABLES, payload)
-        parsed = _parse_read_response(response)
-        return [r if r is not None else b"" for r in parsed]
+        """Read multiple data block regions, one value per item in item order.
 
+        A batch over :attr:`max_items_per_request` items or
+        :attr:`max_request_bytes` is split over several requests. An item the
+        PLC could not read, including every item of a request it refused as a
+        whole, is ``b""``; see :meth:`S7CommPlusClient.db_read_multi`.
+        """
+
+        def build_read(chunk: list[tuple[int, int, int]]) -> bytes:
+            return _build_read_payload(chunk, self.object_qualifier_version)
+
+        results: list[bytes] = []
+        for chunk, payload in self._plan_requests(items, build_read):
+            response = await self._send_request(FunctionCode.GET_MULTI_VARIABLES, payload)
+            results.extend(_db_read_values(response, len(chunk)))
+        return results
+
+    @_retry_on_dropped_connection
     async def read_area(self, area_rid: int, start: int, size: int) -> bytes:
         """Read raw bytes from a controller memory area (M, I, Q, counters, timers)."""
         payload = _build_area_read_payload(area_rid, start, size, self.object_qualifier_version)
@@ -1132,6 +1445,7 @@ class S7CommPlusAsyncClient:
             "on a real PLC (https://github.com/gijzelaerr/s7commplus/issues/8)"
         )
 
+    @_retry_on_dropped_connection
     async def get_cpu_state(self) -> str:
         """Get PLC CPU operating state via S7CommPlus.
 
@@ -1213,19 +1527,16 @@ class S7CommPlusAsyncClient:
 
         Returns:
             Subscription object ID assigned by the PLC.
+
+        Raises:
+            ValueError: The request would exceed :attr:`max_request_bytes`; use
+                :meth:`create_subscriptions` for that many items.
         """
         if self._subscription_container_id == 0:
             raise RuntimeError("PLC did not provide a subscription container object")
         if not 0 <= credit_step <= 255:
             raise ValueError("credit_step must be between 0 and 255")
-        normalized = [
-            SubscriptionItem.from_access_sequence(item)
-            if isinstance(item, str)
-            else SubscriptionItem.from_tag(item)
-            if isinstance(item, SymbolicTag)
-            else item
-            for item in items
-        ]
+        normalized = _normalize_subscription_items(items)
         change_counter = self._subscription_change_counter
         payload, integrity_tail = build_subscription_request(
             self._subscription_container_id,
@@ -1235,6 +1546,7 @@ class S7CommPlusAsyncClient:
             change_counter=change_counter,
             relation_id=self._subscription_relation_id,
         )
+        _check_subscription_size(payload, self.max_request_bytes, self._frame_overhead())
         response = await self._send_request(FunctionCode.CREATE_OBJECT, payload, integrity_tail=integrity_tail)
         object_ids, _, return_value = parse_create_object_session_id(response)
         if return_value != 0 or not object_ids:
@@ -1253,6 +1565,52 @@ class S7CommPlusAsyncClient:
         self._subscription_relation_id = (self._subscription_relation_id + 1) & 0xFFFFFFFF
         logger.info(f"Subscription created, id={subscription_id:#x}")
         return subscription_id
+
+    async def create_subscriptions(
+        self,
+        items: Sequence[SubscriptionItem | SymbolicTag | str],
+        cycle_ms: int = 100,
+        credit_limit: int = 10,
+        credit_step: int = 5,
+        queue_size: int = 100,
+    ) -> list[int]:
+        """Create as many data change subscriptions as ``items`` needs.
+
+        .. warning:: This method is **experimental** and may change.
+
+        Splits ``items``, in order, into groups whose request fits
+        :attr:`max_request_bytes` and creates one subscription per group. The
+        reference ids, errors and :meth:`delete_subscription` caveat are those
+        of :meth:`S7CommPlusClient.create_subscriptions`.
+
+        Returns:
+            The subscription object IDs, one per group, in item order.
+        """
+        if not self._connected:
+            raise RuntimeError("Not connected")
+        if not items:
+            raise ValueError("a subscription requires at least one item")
+        container_id = self._subscription_container_id
+
+        def build(group: list[SubscriptionItem]) -> bytes:
+            # The default change counter and relation id encode at least as long
+            # as the ones create_subscription() sends.
+            return build_subscription_request(container_id, group, cycle_ms=cycle_ms, credit_limit=credit_limit)[0]
+
+        groups = _subscription_groups(_normalize_subscription_items(items), self.max_request_bytes, self._frame_overhead(), build)
+        created: list[int] = []
+        for group in groups:
+            try:
+                created.append(
+                    await self.create_subscription(
+                        group, cycle_ms=cycle_ms, credit_limit=credit_limit, credit_step=credit_step, queue_size=queue_size
+                    )
+                )
+            except Exception as error:
+                if not created:
+                    raise
+                raise _subscriptions_interrupted(created, len(groups), error) from error
+        return created
 
     async def receive_subscription_notification(
         self, subscription_id: int | None = None, timeout: Optional[float] = None
@@ -1273,7 +1631,7 @@ class S7CommPlusAsyncClient:
                 return queued
         while True:
             async with self._lock:
-                if not self._connected:
+                if not self._connected or self._blocked_by_rebuild():
                     raise RuntimeError("Not connected")
                 if self._notification_frames:
                     frame = self._notification_frames.popleft()
@@ -1359,12 +1717,17 @@ class S7CommPlusAsyncClient:
         self._subscriptions.forget_pending_restore()
 
     async def delete_subscription(self, subscription_id: int) -> None:
-        """Delete a data change subscription.
+        """Delete the session's data change subscriptions.
 
         .. warning:: This method is **experimental** and may change.
 
+        Like the reference driver, this deletes the session's subscription
+        container rather than the one subscription, so every data and alarm
+        subscription of the session goes, not only ``subscription_id``.
+
         Args:
-            subscription_id: ID returned by :meth:`create_subscription`.
+            subscription_id: ID returned by :meth:`create_subscription`, used
+                for logging.
         """
         if self._subscription_container_id == 0:
             raise RuntimeError("PLC did not provide a subscription container object")
@@ -1396,7 +1759,11 @@ class S7CommPlusAsyncClient:
         return subscription_id
 
     async def delete_alarm_subscription(self, subscription_id: int) -> None:
-        """Delete an alarm subscription created by this client."""
+        """Delete an alarm subscription created by this client.
+
+        Like :meth:`delete_subscription`, this deletes the session's whole
+        subscription container, data subscriptions included.
+        """
         if self._subscription_container_id == 0:
             raise RuntimeError("PLC did not provide a subscription container object")
         payload = build_delete_alarm_subscription_request(self._subscription_container_id, self._protocol_version)
@@ -1427,7 +1794,7 @@ class S7CommPlusAsyncClient:
                 frame = self._alarm_notification_frames.popleft()
             else:
                 async with self._lock:
-                    if not self._connected:
+                    if not self._connected or self._blocked_by_rebuild():
                         raise RuntimeError("Not connected")
                     if self._notification_frames:
                         frame = self._notification_frames.popleft()
@@ -1474,6 +1841,7 @@ class S7CommPlusAsyncClient:
         )
         return parse_alarm_explore_response(response, language_ids)
 
+    @_retry_on_dropped_connection
     async def read_symbolic(self, access_area: int, lids: list[int], symbol_crc: int = 0) -> bytes:
         """Read a variable using S7CommPlus symbolic (LID-based) access.
 
@@ -1486,10 +1854,15 @@ class S7CommPlusAsyncClient:
             raise RuntimeError("Symbolic read failed")
         return results[0]
 
+    @_retry_on_dropped_connection
     async def read_symbolic_multi(self, items: Sequence[SymbolicReadItem]) -> list[Optional[bytes]]:
         """Read multiple variables using S7CommPlus symbolic (LID-based) access.
 
         .. warning:: This method is **experimental** and may change.
+
+        A batch over :attr:`max_items_per_request` items or
+        :attr:`max_request_bytes` is split over several requests, sent in order,
+        and the values are merged.
 
         Args:
             items: `(access_area, lids)` tuples, or three-tuples adding a
@@ -1503,11 +1876,17 @@ class S7CommPlusAsyncClient:
         """
         if not items:
             return []
-        payload = _build_multi_symbolic_read_payload(items, self.object_qualifier_version)
-        response = await self._send_request(FunctionCode.GET_MULTI_VARIABLES, payload)
-        results = _parse_read_response(response, expected_count=len(items))
-        if len(results) != len(items):
-            raise RuntimeError(f"Symbolic multi-read failed: PLC returned {len(results)} of {len(items)} items")
+
+        def build_read(chunk: list[SymbolicReadItem]) -> bytes:
+            return _build_multi_symbolic_read_payload(chunk, self.object_qualifier_version)
+
+        results: list[Optional[bytes]] = []
+        for chunk, payload in self._plan_requests(items, build_read):
+            response = await self._send_request(FunctionCode.GET_MULTI_VARIABLES, payload)
+            parsed = _parse_read_response(response, expected_count=len(chunk))
+            if len(parsed) != len(chunk):
+                raise RuntimeError(f"Symbolic multi-read failed: PLC returned {len(parsed)} of {len(chunk)} items")
+            results.extend(parsed)
         return results
 
     async def write_symbolic(
@@ -1528,18 +1907,78 @@ class S7CommPlusAsyncClient:
 
     async def refresh_tag_catalog(self) -> SymbolCatalog:
         """Browse the PLC and replace the cached symbolic tag catalog."""
-        self._symbol_catalog = SymbolCatalog.from_browse(await self.browse())
+        variables, signature, times = await self._browse_layout()
+        self._symbol_catalog = SymbolCatalog.from_browse(variables)
+        self._block_layout_signature, self._type_info_times = signature, times
         return self._symbol_catalog
+
+    async def refresh_caches_if_program_changed(self) -> bool:
+        """Refresh the tag catalog when the PLC program changed.
+
+        Named reads and writes send SymbolCRC 0, so the PLC does not verify that a
+        cached address still names the same variable. After a download that changes
+        a block, the cached addresses can point at the wrong variable. This compares
+        the data-block list with the one the catalog was built from and, when that is
+        unchanged, the type-info modification time of every cached data block (one
+        small EXPLORE each), and rebuilds the catalog when either changed. A recorded
+        time that no longer answers counts as a change, since a download may have
+        replaced the type-info object. Without a cached catalog it browses one. It is
+        opt-in: nothing is refreshed implicitly.
+
+        This narrows the window in which a stale address is used; it does not close
+        it. A change confined to a nested UDT or the PLC tag table may not show in the
+        block's own modification time; an instance DB moved to another FB keeps its
+        name, number and RID, and only its old type-info object is checked; a block
+        whose time the PLC does not report is checked by block list only. Call
+        ``refresh_tag_catalog()`` after a known download, and this method before
+        writing after a possible one.
+
+        Returns:
+            ``True`` when the catalog was refreshed.
+
+        Raises:
+            S7ConnectionError: If not connected.
+        """
+        if not self._connected:
+            raise S7ConnectionError("Not connected")
+        if _block_signature(await self.list_datablocks()) != self._block_layout_signature:
+            logger.info("The PLC data-block list changed; refreshing the tag catalog")
+            await self.refresh_tag_catalog()
+            return True
+        for ti_rid, seen in list(self._type_info_times.items()):
+            current = await self._read_type_info_time(ti_rid)
+            if current != seen:
+                logger.info("Type info %#x changed or no longer answers; refreshing the tag catalog", ti_rid)
+                await self.refresh_tag_catalog()
+                if current is None and self._type_info_times.get(ti_rid) == seen:
+                    # Still there, unchanged: the PLC does not answer the filtered EXPLORE
+                    # for it. Check that block by its list entry only, not rebrowse every time.
+                    del self._type_info_times[ti_rid]
+                return True
+        return False
+
+    async def _read_type_info_time(self, ti_rid: int) -> Optional[bytes]:
+        """EXPLORE one type-info object for its modification time (``None`` if not reported)."""
+        payload = _build_explore_request(ti_rid, [Ids.VARIABLE_TYPE_STRUCT_MODIFICATION_TIME])
+        response = await self._send_request(FunctionCode.EXPLORE, payload, integrity_tail=5, reassemble=True)
+        return typeinfo.find_object_attribute(response, ti_rid, Ids.VARIABLE_TYPE_STRUCT_MODIFICATION_TIME)
 
     def invalidate_tag_catalog(self) -> None:
         """Discard cached browse metadata after a PLC layout change."""
+        self._forget_tag_catalog()
+
+    def _forget_tag_catalog(self) -> None:
+        """Drop the cached catalog together with the layout it was built from."""
         self._symbol_catalog = None
+        self._block_layout_signature = None
+        self._type_info_times = {}
 
     async def resolve_tag(self, name: str) -> SymbolicTag:
         """Resolve a browsed tag name to its typed symbolic descriptor."""
         catalog = self._symbol_catalog or await self.refresh_tag_catalog()
         return catalog.resolve(name)
 
+    @_retry_on_dropped_connection
     async def read_tag(self, name: str) -> bytes:
         """Read one symbolic tag by name."""
         result = (await self.read_tags([name]))[0]
@@ -1548,19 +1987,65 @@ class S7CommPlusAsyncClient:
         assert result.value is not None
         return result.value
 
+    @_retry_on_dropped_connection
     async def read_tags(self, names: Sequence[str]) -> list[TagResult]:
-        """Read names in one request and return a success/error for every item."""
+        """Read names and return a success/error for every item.
+
+        A batch over :attr:`max_items_per_request` names or
+        :attr:`max_request_bytes` is split over several requests, as in
+        :meth:`read_symbolic_multi`.
+
+        With ``auto_refresh_tags`` set, an unknown name or a failed item runs
+        :meth:`refresh_caches_if_program_changed` and, when the program did
+        change, resolves and reads the names again, once. The check runs at
+        most once per call, not when this call browsed the catalog itself, and
+        not within 10 seconds of the previous automatic check. A failed item
+        carries no PLC error code, so any failure triggers it; a name still
+        unknown afterwards raises ``KeyError``.
+        """
         if not names:
             return []
-        tags = [await self.resolve_tag(name) for name in names]
+        tags, may_check = await self._resolve_tags(names)
+        results = await self._read_resolved_tags(tags)
+        if may_check and any(result.error is not None for result in results) and await self._auto_refresh_check():
+            results = await self._read_resolved_tags([await self.resolve_tag(name) for name in names])
+        return results
+
+    async def _resolve_tags(self, names: Sequence[str]) -> tuple[list[SymbolicTag], bool]:
+        """Resolve names; with ``auto_refresh_tags``, an unknown name checks for a program change.
+
+        Also returns whether the caller may still run an automatic check: not
+        after one ran here, and not when resolving browsed the catalog, which is
+        then current.
+        """
+        may_check = bool(self._symbol_catalog)  # resolve_tag() browses a missing or empty catalog
+        try:
+            return [await self.resolve_tag(name) for name in names], may_check
+        except KeyError:
+            if not (may_check and await self._auto_refresh_check()):
+                raise
+        return [await self.resolve_tag(name) for name in names], False
+
+    async def _auto_refresh_check(self) -> bool:
+        """Run the automatic program-change check, unless one ran recently; ``True`` if it refreshed."""
+        if not self.auto_refresh_tags:
+            return False
+        now = time.monotonic()
+        last = self._last_auto_refresh_check
+        if last is not None and now - last < _AUTO_REFRESH_MIN_INTERVAL:
+            logger.debug("Skipping the automatic program-change check; the last one ran %.1f s ago", now - last)
+            return False
+        self._last_auto_refresh_check = now
+        return await self.refresh_caches_if_program_changed()
+
+    async def _read_resolved_tags(self, tags: Sequence[SymbolicTag]) -> list[TagResult]:
         values = await self.read_symbolic_multi([(tag.access_area, list(tag.lids), 0) for tag in tags])
-        results = [
+        return [
             TagResult(tag=tag, value=value)
             if value is not None
             else TagResult(tag=tag, error=RuntimeError(f"Symbolic read failed for {tag.name!r}"))
             for tag, value in zip(tags, values)
         ]
-        return results
 
     async def write_tag(self, name: str, data: bytes) -> None:
         """Write one symbolic tag by name using its resolved PValue datatype."""
@@ -1569,12 +2054,35 @@ class S7CommPlusAsyncClient:
             raise result.error
 
     async def write_tags(self, values: Mapping[str, bytes]) -> list[TagResult]:
-        """Write names once and return per-item results without automatic retry."""
+        """Write names once and return per-item results without automatic retry.
+
+        A batch over :attr:`max_items_per_request` names or
+        :attr:`max_request_bytes` is split over several requests, sent in order,
+        so it is not atomic; a tag the PLC refuses does not stop the batch. If a
+        connection, timeout or protocol failure interrupts the batch after its
+        first request, the tags written so far keep their results and every
+        later tag gets one :class:`~s7commplus.error.S7WriteError`, raised from
+        that failure, whose ``unknown`` positions may or may not have been
+        written and whose ``not_sent`` positions were never sent. A failure of
+        the first request propagates unchanged, as for a single request.
+
+        Writes are deliberately never retried: a transport failure can leave
+        the caller unable to know whether the PLC applied the request.
+
+        With ``auto_refresh_tags`` set, an unknown name, before anything is sent,
+        runs the program-change check as in :meth:`read_tags`; a write to a stale
+        address does not, so call :meth:`refresh_caches_if_program_changed` before
+        writing after a possible download.
+
+        Raises:
+            ValueError: A value is too large for one request on its own;
+                nothing is sent.
+        """
         if not self._connected:
             raise RuntimeError("Not connected")
         if not values:
             return []
-        tags = [await self.resolve_tag(name) for name in values]
+        tags, _ = await self._resolve_tags(list(values))
         unsupported = [tag.name for tag in tags if tag.datatype is None]
         if unsupported:
             raise ValueError(f"No S7CommPlus wire datatype mapping for: {', '.join(unsupported)}")
@@ -1583,18 +2091,23 @@ class S7CommPlusAsyncClient:
             for tag, data in zip(tags, values.values())
             if tag.datatype is not None
         ]
-        payload = _build_multi_symbolic_write_payload(items, self.object_qualifier_version)
-        response = await self._send_request(FunctionCode.SET_MULTI_VARIABLES, payload)
-        try:
-            errors = _parse_write_response_errors(response, expected_count=len(tags))
-        except RuntimeError as error:
-            return [TagResult(tag=tag, error=error) for tag in tags]
-        return [
-            TagResult(tag=tag, error=RuntimeError(f"Symbolic write failed for {tag.name!r}: PLC error {errors[index]}"))
-            if index in errors
-            else TagResult(tag=tag)
-            for index, tag in enumerate(tags, 1)
-        ]
+
+        def build_write(chunk: list[SymbolicWriteItem]) -> bytes:
+            return _build_multi_symbolic_write_payload(chunk, self.object_qualifier_version)
+
+        results: list[TagResult] = [TagResult(tag=tag) for tag in tags]
+        answered = 0
+        for chunk, payload in self._plan_requests(items, build_write):
+            try:
+                response = await self._send_request(FunctionCode.SET_MULTI_VARIABLES, payload)
+            except Exception as error:
+                if answered == 0:
+                    raise
+                _interrupt_tag_writes(results, answered, len(chunk), error)
+                break
+            _record_tag_writes(results, answered, len(chunk), response)
+            answered += len(chunk)
+        return results
 
     async def list_datablocks(self) -> list[dict[str, Any]]:
         """List all datablocks on the PLC via EXPLORE.
@@ -1613,6 +2126,7 @@ class S7CommPlusAsyncClient:
         parse_or_raise_for_return_value(response, "Data block list")
         return _parse_explore_datablocks(response)
 
+    @_retry_on_dropped_connection
     async def browse(self) -> list[dict[str, Any]]:
         """Browse the full per-tag symbol tree via EXPLORE + the type-info container.
 
@@ -1628,11 +2142,16 @@ class S7CommPlusAsyncClient:
         Returns:
             List of variable info dicts.
         """
+        return (await self._browse_layout())[0]
+
+    async def _browse_layout(self) -> tuple[list[dict[str, Any]], list[tuple[str, int, int]], dict[int, bytes]]:
+        """:meth:`browse`, also returning the block-list signature and type-info modification times."""
         # Phase A: enumerate data blocks. Phase B/C: resolve each DB's type-info RID
         # (a LID=1 read — needed for instance DBs whose TI is not their own RID) and seed
         # a root node per DB.
         root_nodes: list[typeinfo.Node] = []
-        for db_info in await self.list_datablocks():
+        blocks = await self.list_datablocks()
+        for db_info in blocks:
             if db_info.get("number", 0) <= 0 or db_info.get("rid", 0) == 0:
                 continue
             ti_rid = await self._with_reconnect(lambda: self._read_typeinfo_rid(db_info["rid"]))
@@ -1681,7 +2200,7 @@ class S7CommPlusAsyncClient:
                     "string_length": v.string_length,
                 }
             )
-        return variables
+        return variables, _block_signature(blocks), _type_info_times(root_nodes, type_objects)
 
     async def _read_typeinfo_rid(self, db_rid: int) -> int:
         """Read LID=1 of a DB to get its type-info RID (0 if the DB has no readable value)."""
@@ -1714,7 +2233,7 @@ class S7CommPlusAsyncClient:
         value = bytes([0x00, DataType.INT]) + struct.pack(">h", credit_limit)
         payload = _build_set_variable_payload(subscription_id, Ids.SUBSCRIPTION_CREDIT_LIMIT, value)
         async with self._lock:
-            if not self._connected or self._writer is None or self._reader is None:
+            if not self._connected or self._writer is None or self._reader is None or self._blocked_by_rebuild():
                 raise S7ConnectionError("Not connected")
             sequence = self._next_sequence_number()
             header = struct.pack(">BHHHHIB", Opcode.REQUEST, 0, FunctionCode.SET_VARIABLE, 0, sequence, self._session_id, 0x74)
@@ -1761,6 +2280,9 @@ class S7CommPlusAsyncClient:
         if self._session_key_refresh_error is not None:
             raise self._session_key_refresh_error
         if not (self._connected or self._transport_connected) or self._writer is None or self._reader is None:
+            raise S7ConnectionError("Not connected")
+        if self._blocked_by_rebuild():
+            # Another task's reconnect owns the stream until its handshake is done.
             raise S7ConnectionError("Not connected")
 
         seq_num = self._next_sequence_number()
@@ -2052,12 +2574,9 @@ class S7CommPlusAsyncClient:
         cr_pdu = struct.pack(">B", 6 + len(params)) + base_pdu[1:] + params
 
         tpkt = struct.pack(">BBH", 3, 0, 4 + len(cr_pdu)) + cr_pdu
-        self._writer.write(tpkt)
-        await self._writer.drain()
+        await self._write_tpkt(tpkt)
 
-        tpkt_header = await self._reader.readexactly(4)
-        _, _, length = struct.unpack(">BBH", tpkt_header)
-        payload = await self._reader.readexactly(length - 4)
+        payload = await self._read_tpkt()
 
         if len(payload) < 7:
             raise S7ConnectionError(f"COTP CC response too short: {len(payload)} bytes")
@@ -2362,31 +2881,13 @@ class S7CommPlusAsyncClient:
 
     async def _send_cotp_raw(self, data: bytes) -> None:
         """Send raw bytes wrapped in COTP DT + TPKT (no TLS)."""
-        if self._writer is None:
-            raise S7ConnectionError("Not connected")
-
         cotp_dt = struct.pack(">BBB", 2, _COTP_DT, 0x80) + data
         tpkt = struct.pack(">BBH", 3, 0, 4 + len(cotp_dt)) + cotp_dt
-        self._writer.write(tpkt)
-        try:
-            await asyncio.wait_for(self._writer.drain(), self._request_timeout)
-        except asyncio.TimeoutError as exc:
-            # The frame is still queued, so the session cannot be resumed.
-            message = f"The PLC accepted no data for {self._request_timeout}s"
-            self._connection_lost(message)
-            raise S7TimeoutError(message) from exc
+        await self._write_tpkt(tpkt)
 
     async def _recv_cotp_raw(self) -> bytes:
         """Receive one TPKT + COTP DT frame and return the payload (no TLS)."""
-        if self._reader is None:
-            raise S7ConnectionError("Not connected")
-
-        # readexactly() consumes nothing until all its bytes are buffered, so a
-        # cancelled header read loses nothing; after it, part of a frame is read.
-        tpkt_header = await self._reader.readexactly(4)
-        self._rx_partial = True
-        _, _, length = struct.unpack(">BBH", tpkt_header)
-        payload = await self._reader.readexactly(length - 4)
+        payload = await self._read_tpkt()
 
         if len(payload) < 3:
             raise S7ConnectionError(f"COTP DT response too short: {len(payload)} bytes")
@@ -2394,6 +2895,64 @@ class S7CommPlusAsyncClient:
             raise S7ConnectionError(f"Expected COTP DT, got {payload[1]:#04x}")
 
         return payload[3:]
+
+    async def _write_tpkt(self, tpkt: bytes) -> None:
+        """Write one TPKT frame; a peer that closed or reset the stream is a dropped connection."""
+        writer = self._writer
+        if writer is None:
+            raise S7ConnectionError("Not connected")
+        try:
+            writer.write(tpkt)
+            await asyncio.wait_for(writer.drain(), self._request_timeout)
+        except asyncio.TimeoutError as exc:
+            # The frame is still queued, so the session cannot be resumed.
+            message = f"The PLC accepted no data for {self._request_timeout}s"
+            self._connection_lost(message)
+            raise S7TimeoutError(message) from exc
+        except OSError as exc:
+            self._close_failed_stream(writer)
+            raise S7ConnectionError(f"Send failed: {exc}") from exc
+
+    async def _read_tpkt(self) -> bytes:
+        """Read one TPKT frame and return what follows its header.
+
+        A peer that closed (end of stream) or reset the connection raises
+        ``S7ConnectionError``, as the synchronous transport does, and closes
+        the session so the next request fails fast with "Not connected".
+        """
+        reader, writer = self._reader, self._writer
+        if reader is None:
+            raise S7ConnectionError("Not connected")
+        try:
+            # readexactly() consumes nothing until all its bytes are buffered, so a
+            # cancelled header read loses nothing; after it, part of a frame is read.
+            tpkt_header = await reader.readexactly(4)
+            self._rx_partial = True
+            _, _, length = struct.unpack(">BBH", tpkt_header)
+            return await reader.readexactly(length - 4)
+        except asyncio.IncompleteReadError as exc:
+            self._close_failed_stream(writer)
+            raise S7ConnectionError("Connection closed by peer") from exc
+        except OSError as exc:
+            self._close_failed_stream(writer)
+            raise S7ConnectionError(f"Receive failed: {exc}") from exc
+
+    def _close_failed_stream(self, writer: Optional[asyncio.StreamWriter]) -> None:
+        """Close the session whose stream failed, keeping the connect parameters.
+
+        Only the stream that failed is closed: a reconnect may already have
+        replaced it. No DeleteObject is sent over the dead stream, and the
+        subscription registries are left for ``disconnect()`` or a reconnect to
+        clear.
+        """
+        if writer is None or writer is not self._writer:
+            return
+        self._connected = False
+        self._session_ready = False
+        self._transport_connected = False
+        self._reader = None
+        self._writer = None
+        writer.close()
 
     def _next_sequence_number(self) -> int:
         seq = self._sequence_number

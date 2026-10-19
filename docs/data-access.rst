@@ -51,6 +51,37 @@ Batching reduces request overhead and preserves item order:
        ]
    )
 
+``db_read_multi``, ``db_write_multi``, ``read_symbolic_multi``, ``read_tags``
+and ``write_tags`` split a large batch over several requests of at most
+``client.max_items_per_request`` items (default 50; ``0`` sends a batch in one
+request). A CPU 1215C FW V4.2 refuses a read of more than 50 items, whatever its
+size. The requests go out in order and the results come back in item
+order. ``db_read_multi`` returns ``b""`` for an item the PLC could not read,
+including each item of a request the PLC refused as a whole.
+
+They also keep each request frame within ``client.max_request_bytes`` (default
+900; ``0`` disables the check). The frame is counted from the S7CommPlus frame
+header to its trailer: the 14-byte request header, the payload, the IntegrityId
+at its 5-byte maximum and, on a V1 SessionKey session, the 33-byte HMAC. The TLS
+record, COTP and TPKT around it are not counted. A larger request makes the PLC
+drop the connection: on PLCSIM Advanced V8 (CPU 1511, FW V2.9) a read with a
+1034-byte payload (a frame of about 1060 bytes) did, while one with an 834-byte
+payload (about 860 bytes) was answered. Real hardware has not been measured. An
+item too large for one request on its own, such as a long string or byte block,
+raises ``ValueError`` before anything is sent; write it in parts, or raise the
+limit for a PLC that accepts larger requests.
+
+A write split over several requests is not atomic. The PLC writes every item it
+does not refuse, and a refused item does not stop the batch: ``db_write_multi``
+raises :class:`~s7commplus.error.S7WriteError` after the last request, whose
+``item_errors`` maps the 1-based position of each refused item in the whole
+batch to its PLC error. A connection, timeout or protocol failure after the
+first request stops the batch: ``db_write_multi`` raises ``S7WriteError`` from
+that failure, and ``write_tags`` returns its results with that error on every
+tag it could not confirm. The error's ``unknown`` positions may or may not have
+been written; its ``not_sent`` positions were never sent. A failure of the first
+request propagates unchanged, as for a single request.
+
 Controller areas
 ----------------
 
@@ -123,9 +154,41 @@ browse immediately or ``invalidate_tag_catalog`` to force a browse on the next
 name lookup. Named reads and writes send SymbolCRC 0, which disables the PLC's
 layout check: the ``symbol_crc`` reported by a browse is per-entry type
 metadata, not the access-path CRC the PLC validates, and real CPUs reject it.
-Failed items are reported per tag and never retried automatically; after a
-download that changes the PLC layout, call ``refresh_tag_catalog``. Unknown
+Failed items are reported per tag and not retried automatically unless
+``auto_refresh_tags`` is set (see below); after a download that changes the PLC
+layout, call ``refresh_tag_catalog``. Unknown
 names and unsupported PLC datatypes raise before a request is sent.
+
+``refresh_caches_if_program_changed()`` checks before rebuilding: it compares the
+PLC's data-block list with the one the catalog was built from and, if that is
+unchanged, each cached data block's type-info modification time (one small
+EXPLORE per block), and rebuilds the catalog only when something changed. A
+recorded time that no longer answers counts as a change, since a download may
+have replaced the type-info object. The check narrows the window in which a
+stale address is used; it does not close it:
+
+- a change confined to a nested UDT or the PLC tag table may not show in the
+  block's own modification time;
+- an instance DB moved to another FB keeps its name, number and RID, and only
+  its old type-info object is checked;
+- a block whose time the PLC does not report is checked by block list only (the
+  time was seen on PLCSIM Advanced V8.0, CPU 1511, FW V2.9, and on a CPU 1215C,
+  FW V4.2, where 12 of 54 data blocks did not report it).
+
+So call ``refresh_tag_catalog()`` after a known download, and
+``refresh_caches_if_program_changed()`` before writing after a possible one: a
+write to a stale address can succeed on whatever variable is there now.
+
+Set ``client.auto_refresh_tags = True`` to run that check automatically when a
+tag read reports a failed item or a name is not in the catalog. If the program
+changed, the client rebuilds the catalog and resolves and reads the names again,
+once. The check runs at most once per call, not when the call has just browsed
+the catalog, and not within 10 seconds of the previous automatic check, so a tag
+that keeps failing or a misspelt name does not add 1 + N requests (N data
+blocks) to every poll. A failed read carries no PLC error code, so any failure
+triggers it. A write that reached the PLC is never resent, because a stale
+address may already have written another variable; only an unknown name, before
+anything is sent, is re-resolved.
 
 The async client provides the same methods as coroutines, except
 ``invalidate_tag_catalog``, which is immediate:
@@ -144,7 +207,10 @@ symbolic BOOL values can behave differently on some S7-1200 firmware.
 CPU state and blocks
 --------------------
 
-The clients also expose ``get_cpu_state``, ``set_plc_operating_state``,
-``upload_block``, and ``download_block``. State changes and block downloads are
-intrusive operations: verify the controller and authorization boundary before
-using them.
+The clients also expose ``get_cpu_state``, ``upload_block``, and
+``download_block``. Block downloads are intrusive operations: verify the
+controller and authorization boundary before using them.
+
+``set_plc_operating_state`` raises ``NotImplementedError`` and sends nothing.
+The RUN/STOP request has not been validated on a real PLC yet; see
+`issue #8 <https://github.com/gijzelaerr/s7commplus/issues/8>`_.

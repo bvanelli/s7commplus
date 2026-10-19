@@ -30,3 +30,18 @@ def test_sync_connect_positional_parameters_are_those_of_0_2_0() -> None:
 
 def test_async_connect_takes_every_option_by_keyword() -> None:
     assert _positional(AsyncClient.connect) == ["self", "host", "port", "rack", "slot"]
+
+
+def test_connection_connect_positional_parameters_are_those_of_0_2_0() -> None:
+    from s7commplus.connection import S7CommPlusConnection
+
+    assert _positional(S7CommPlusConnection.connect) == [
+        "self",
+        "timeout",
+        "use_tls",
+        "tls_cert",
+        "tls_key",
+        "tls_ca",
+        "password",
+        "legacy_session_key_refresh_interval",
+    ]

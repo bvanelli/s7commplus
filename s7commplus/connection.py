@@ -38,6 +38,7 @@ Version-specific authentication after step 6::
 Reference: thomas-v2/S7CommPlusDriver (C#, LGPL-3.0)
 """
 
+import contextlib
 import hashlib
 import hmac
 import logging
@@ -47,7 +48,7 @@ import struct
 import tempfile
 import threading
 from collections import deque
-from collections.abc import Callable
+from collections.abc import Callable, Iterator, Mapping
 from types import TracebackType
 from typing import Any, Optional, Type
 
@@ -61,7 +62,7 @@ from .codec import (
     encode_object_qualifier,
     parse_create_object_attributes,
 )
-from .error import S7AuthenticationError, S7ConnectionError
+from .error import S7AuthenticationError, S7CertificateError, S7ConnectionError, S7Error, S7TlsHandshakeError
 from .legitimation import (
     build_legacy_response,
     build_new_response,
@@ -154,6 +155,25 @@ def _is_stale_response_sequence(sequence: int, expected_sequence: int) -> bool:
     """Return whether a 16-bit response sequence precedes the expected one."""
     distance = (expected_sequence - sequence) & 0xFFFF
     return 0 < distance < 0x8000
+
+
+def _response_continues(frame: bytes) -> bool:
+    """Whether a response PDU is not followed by its closing trailer, so more fragments follow.
+
+    A PLC splits a response larger than its frame size (a GetMultiVariables of
+    long strings, an Explore) over several PDUs and sends the ``0x72 <ver> 0x0000``
+    trailer only after the last one. Reading just the first would truncate the
+    result and leave the rest in the stream for the next request. Only the four
+    bytes after the data that equal that trailer mark a complete response; anything
+    else (no bytes, a partial trailer, the next fragment's header) is left to the
+    reassembly path, which validates it.
+    """
+    try:
+        version, data_length, consumed = decode_header(frame)
+    except ValueError:
+        return False
+    end = consumed + data_length
+    return bytes(frame[end : end + 4]) != struct.pack(">BBH", 0x72, version, 0x0000)
 
 
 def _validate_response_header(response: bytes, expected_function: int, expected_sequence: int) -> None:
@@ -504,6 +524,73 @@ def _tls13_exporter(exporter_master_secret: bytes, label: bytes, length: int, ha
     empty_hash = hashmod(b"").digest()
     derived = _hkdf_expand_label(exporter_master_secret, label, empty_hash, hashmod().digest_size, hashmod)
     return _hkdf_expand_label(derived, b"exporter", empty_hash, length, hashmod)
+
+
+@contextlib.contextmanager
+def _tls_key_log(ctx: ssl.SSLContext) -> Iterator[str]:
+    """Log the secrets of handshakes made with ``ctx`` to a private temp file.
+
+    CPython's ssl cannot export RFC 5705 keying material, which OMS
+    legitimation needs, so the TLS 1.3 exporter_master_secret is captured from
+    the key log (written during the handshake) and the exporter is derived by
+    ``_derive_oms_secret``. Yields the file's path. On exit the context stops
+    logging, which closes the file it holds open (Windows cannot delete an
+    open file), and the file is removed, also when the handshake fails. A file
+    that cannot be removed is logged as a warning, by path only.
+    """
+    keylog_fd, keylog_path = tempfile.mkstemp(prefix="s7-tls-keylog-")
+    os.close(keylog_fd)
+    try:
+        ctx.keylog_filename = keylog_path
+        yield keylog_path
+    finally:
+        try:
+            ctx.keylog_filename = None  # type: ignore[assignment]  # None disables the key log
+        finally:
+            try:
+                os.unlink(keylog_path)
+            except OSError as e:
+                # Never the contents: the file holds the session's TLS secrets.
+                logger.warning("Could not remove the TLS key log %s: %s", keylog_path, e.strerror or type(e).__name__)
+
+
+def _derive_oms_secret(ssl_object: ssl.SSLObject, keylog_path: str) -> Optional[bytes]:
+    """Derive the OMS exporter secret (RFC 5705) for legitimation.
+
+    CPython's ssl module has no ``export_keying_material``, so we read the
+    TLS 1.3 ``exporter_master_secret`` from the session key log written by
+    ``_tls_key_log`` and run the RFC 8446 exporter derivation ourselves (stdlib
+    hmac/hashlib only). Returns None (legitimation unavailable, anonymous
+    reads still work) if the session isn't TLS 1.3 or the secret can't be
+    recovered.
+    """
+    cipher = ssl_object.cipher()
+    if not cipher or cipher[1] != "TLSv1.3":
+        logger.warning(
+            "OMS exporter derivation needs TLS 1.3 (session is %s)",
+            cipher[1] if cipher else "unknown",
+        )
+        return None
+    hashmod = hashlib.sha384 if cipher[0].endswith("SHA384") else hashlib.sha256
+
+    exporter_master_secret = None
+    try:
+        with open(keylog_path, "r") as fh:
+            for line in fh:
+                parts = line.split()
+                if len(parts) == 3 and parts[0] == "EXPORTER_SECRET":
+                    exporter_master_secret = bytes.fromhex(parts[2])
+    except OSError as e:
+        logger.warning("Could not read TLS key log: %s", e)
+        return None
+
+    if exporter_master_secret is None:
+        logger.warning("EXPORTER_SECRET not found in TLS key log")
+        return None
+
+    oms_secret = _tls13_exporter(exporter_master_secret, _OMS_EXPORTER_LABEL, _OMS_EXPORTER_LENGTH, hashmod)
+    logger.debug("OMS exporter secret derived (%d bytes)", len(oms_secret))
+    return oms_secret
 
 
 def _strip_paom_string_in_session_version(struct_bytes: bytes) -> bytes:
@@ -969,6 +1056,18 @@ def _write_delete_qualifier_version(family: Optional[KeyFamily], protocol_versio
     return object_qualifier_version if family == KeyFamily.PLCSIM else protocol_version
 
 
+def _request_frame_overhead(with_integrity_id: bool, session_key_active: bool) -> int:
+    """Bytes a request frame adds to its payload, for sizing requests.
+
+    The 4-byte frame header and 4-byte trailer, the 14-byte request header, the
+    IntegrityId at its longest (a 5-byte VLQ) when the session sends one, and
+    the V3 HMAC (a length byte and a 32-byte digest) after SessionKey
+    authentication. TLS records, COTP and TPKT wrap the frame and are not
+    counted.
+    """
+    return 4 + 14 + (5 if with_integrity_id else 0) + (1 + 32 if session_key_active else 0) + 4
+
+
 def _v1_session_key_profile(override: Optional[bool], session_key: Optional[bytes], protocol_version: int) -> bool:
     """Whether the non-TLS V1 SessionKey request profile applies.
 
@@ -994,6 +1093,107 @@ def _strip_response_integrity_id(function_code: int, payload: bytes, session_key
         logger.debug("  Response IntegrityId: %d (%d bytes)", resp_iid, consumed)
         return payload[consumed:]
     return payload
+
+
+def _parse_certificate_fingerprint(fingerprint: str) -> bytes:
+    """Parse a SHA-256 TLS certificate fingerprint into its 32 raw bytes.
+
+    Accepts hex with optional ``:``, ``-`` or whitespace separators (the format
+    TIA Portal shows), and the whole line ``openssl x509 -fingerprint -sha256``
+    prints (``sha256 Fingerprint=AA:BB:...``), so it is the value to pass as
+    ``tls_cert_fingerprint`` on ``connect()``.
+
+    Raises:
+        ValueError: If the fingerprint is not exactly 32 bytes of hex.
+    """
+    value = fingerprint.rsplit("=", 1)[-1]
+    cleaned = "".join(value.split()).replace(":", "").replace("-", "")
+    if len(cleaned) != 64:
+        raise ValueError("certificate fingerprint must be 64 hex characters (a SHA-256 digest)")
+    try:
+        return bytes.fromhex(cleaned)
+    except ValueError as exc:
+        raise ValueError("certificate fingerprint is not valid hex") from exc
+
+
+def _check_certificate_pin(tls_cert_fingerprint: Optional[str], use_tls: bool) -> Optional[bytes]:
+    """Parse a ``connect()`` pin and refuse it on a plaintext connection.
+
+    Both clients call this before any network I/O, so a malformed pin, or a pin
+    without TLS, fails the same way and before anything is sent.
+
+    Raises:
+        ValueError: If the pin is malformed, or given without ``use_tls``.
+    """
+    if tls_cert_fingerprint is None:
+        return None
+    expected = _parse_certificate_fingerprint(tls_cert_fingerprint)
+    if not use_tls:
+        raise ValueError("tls_cert_fingerprint requires use_tls=True: a pinned certificate must never be used in the clear")
+    return expected
+
+
+def _resolve_use_tls(use_tls: "bool | str") -> tuple[bool, bool]:
+    """Split ``connect(use_tls=...)`` into (try TLS first, automatic mode).
+
+    Accepts ``True``, ``False`` or ``"auto"``. Any other string is refused: a
+    truthy ``"false"`` or ``"off"`` must not quietly turn TLS on.
+    """
+    if isinstance(use_tls, str):
+        if use_tls != "auto":
+            raise ValueError(f"use_tls must be True, False or 'auto', not {use_tls!r}")
+        return True, True
+    return bool(use_tls), False
+
+
+def _plaintext_fallback_refusal(params: Mapping[str, Any]) -> Optional[str]:
+    """Why ``use_tls="auto"`` must not continue without TLS, or None when it may.
+
+    Any TLS setting the caller supplied, or a password, means the caller
+    expects TLS, so a failed handshake is an error rather than a reason to
+    talk to the PLC in the clear.
+    """
+    if params.get("tls_cert_fingerprint") is not None:
+        return "a certificate is pinned (tls_cert_fingerprint)"
+    if params.get("tls_ca") is not None:
+        return "a CA certificate is configured (tls_ca)"
+    if params.get("tls_cert") is not None or params.get("tls_key") is not None:
+        return "a client certificate is configured (tls_cert/tls_key)"
+    if params.get("password") is not None:
+        return "a password is given"
+    return None
+
+
+def _check_plaintext_fallback(params: Mapping[str, Any], exc: S7TlsHandshakeError) -> None:
+    """Allow ``use_tls="auto"`` to retry without TLS after ``exc``, or raise why not."""
+    reason = _plaintext_fallback_refusal(params)
+    if reason is not None:
+        raise S7TlsHandshakeError(f"{exc}; use_tls='auto' does not fall back to plaintext because {reason}") from exc
+    logger.warning(
+        "TLS handshake with %s:%s did not complete (%s); continuing without TLS (use_tls='auto')",
+        params.get("host"),
+        params.get("port"),
+        exc,
+    )
+
+
+def _verify_pinned_certificate(ssl_object: ssl.SSLObject, expected: Optional[bytes]) -> Optional[bytes]:
+    """Return the peer certificate's SHA-256 digest and enforce a pin if given.
+
+    The digest is computed over the DER certificate the PLC presented in the
+    handshake. When ``expected`` is set, a mismatch (or a missing certificate)
+    raises ``S7CertificateError``; callers tear the connection down.
+    """
+    der = ssl_object.getpeercert(binary_form=True)
+    observed = hashlib.sha256(der).digest() if der else None
+    if expected is not None:
+        if observed is None:
+            raise S7CertificateError("PLC did not present a TLS certificate to pin")
+        if not hmac.compare_digest(observed, expected):
+            raise S7CertificateError(
+                f"PLC TLS certificate does not match the pinned fingerprint (expected {expected.hex()}, got {observed.hex()})"
+            )
+    return observed
 
 
 class S7CommPlusConnection:
@@ -1079,6 +1279,11 @@ class S7CommPlusConnection:
 
         # TLS OMS exporter secret (for legitimation key derivation)
         self._oms_secret: Optional[bytes] = None
+
+        # Pinned TLS certificate: the expected SHA-256 (set by connect) and the
+        # one the PLC actually presented (captured during the handshake).
+        self._tls_cert_fingerprint: Optional[bytes] = None
+        self._peer_certificate_fingerprint: Optional[bytes] = None
 
         # Password for post-auth legitimation (V1-initial PLCs)
         self._connect_password: str = ""
@@ -1227,6 +1432,7 @@ class S7CommPlusConnection:
         password: str = "",
         legacy_session_key_refresh_interval: Optional[float] = _DEFAULT_LEGACY_SESSION_KEY_REFRESH_INTERVAL,
         *,
+        tls_cert_fingerprint: Optional[str] = None,
         _session_key_fingerprint: Optional[str] = None,
     ) -> None:
         """Establish S7CommPlus connection.
@@ -1245,6 +1451,12 @@ class S7CommPlusConnection:
             tls_cert: Path to client TLS certificate (PEM)
             tls_key: Path to client private key (PEM)
             tls_ca: Path to CA certificate for PLC verification (PEM)
+            tls_cert_fingerprint: Expected SHA-256 fingerprint of the PLC's TLS
+                certificate, as hex (``:``/``-``/spaces allowed). The connection
+                is refused unless the certificate the PLC presents matches it.
+                Unlike ``tls_ca`` this pins the exact certificate, which is what
+                a self-signed PLC certificate offers. Keyword-only; requires
+                ``use_tls=True``.
             legacy_session_key_refresh_interval: Seconds between legacy
                 SessionKey renewals. Defaults to 25 minutes; pass ``None`` to
                 disable automatic renewal.
@@ -1257,6 +1469,8 @@ class S7CommPlusConnection:
         self._session_key_refresh_error = None
         self._connect_password = password
         self._session_key_fingerprint_override = _session_key_fingerprint
+        self._tls_cert_fingerprint = _check_certificate_pin(tls_cert_fingerprint, use_tls)
+        self._peer_certificate_fingerprint = None
         try:
             # Step 1: COTP connection (same TSAP for all S7CommPlus versions)
             self._iso_conn.connect(timeout)
@@ -1791,8 +2005,9 @@ class S7CommPlusConnection:
 
         response_frame = self._recv_response_frame(seq_num)
 
-        # Large responses (e.g. Explore) are split across several S7CommPlus PDUs.
-        if reassemble:
+        # Large responses (e.g. Explore) are split across several S7CommPlus PDUs;
+        # any response whose first PDU has no trailer is reassembled the same way.
+        if reassemble or _response_continues(response_frame):
             data = self._recv_reassembled_payload(response_frame)
             if len(data) < 10:
                 from .error import S7ConnectionError
@@ -1906,6 +2121,9 @@ class S7CommPlusConnection:
                 return response_frame
             opcode = data[0]
             if opcode == Opcode.NOTIFICATION:
+                # Notifications are queued as single frames. One the PLC splits over
+                # several PDUs is not reassembled: its continuation fragments would
+                # fail the next read, and no split notification has been observed.
                 if len(self._notification_frames) == self._notification_frames.maxlen:
                     self._notification_frame_overflows += 1
                 self._notification_frames.append(response_frame)
@@ -1925,6 +2143,10 @@ class S7CommPlusConnection:
                         raise S7ProtocolError(
                             f"Too many stale S7CommPlus responses while waiting for sequence {expected_sequence}"
                         )
+                    if _response_continues(response_frame):
+                        # Drain (and verify) the rest of a split stale response so its
+                        # fragments are not read as the next response.
+                        self._recv_reassembled_payload(response_frame)
                     continue
             return response_frame
 
@@ -2547,77 +2769,47 @@ class S7CommPlusConnection:
             ca_path=tls_ca,
         )
 
-        # CPython's ssl cannot export RFC 5705 keying material, which OMS
-        # legitimation needs. Capture the TLS 1.3 exporter_master_secret via
-        # the key log (written during the handshake) and derive it ourselves
-        # in _derive_oms_secret. The key log is a private 0600 temp file,
-        # removed immediately after the handshake.
-        keylog_fd, keylog_path = tempfile.mkstemp(prefix="s7-tls-keylog-")
-        os.close(keylog_fd)
-        ctx.keylog_filename = keylog_path
-
         # BIO-based TLS: encrypt/decrypt bytes without touching the
         # TCP socket, so TPKT/COTP framing stays unencrypted.
         self._incoming_bio = ssl.MemoryBIO()
         self._outgoing_bio = ssl.MemoryBIO()
-        self._ssl_object = ctx.wrap_bio(
-            self._incoming_bio,
-            self._outgoing_bio,
-            server_side=False,
-            server_hostname=self.host if ctx.check_hostname else None,
-        )
 
-        try:
+        # The OMS exporter secret, which new legitimation needs, is derived
+        # from the handshake's key log (see _tls_key_log).
+        with _tls_key_log(ctx) as keylog_path:
+            self._ssl_object = ctx.wrap_bio(
+                self._incoming_bio,
+                self._outgoing_bio,
+                server_side=False,
+                server_hostname=self.host if ctx.check_hostname else None,
+            )
+
             # TLS handshake — records tunnel through COTP frames
-            self._do_tls_handshake()
+            try:
+                self._do_tls_handshake()
+            except ssl.SSLCertVerificationError as exc:
+                raise S7CertificateError(f"PLC TLS certificate failed verification: {exc.verify_message}") from exc
+            except (ssl.SSLError, OSError, S7Error) as exc:
+                raise S7TlsHandshakeError(f"TLS handshake with the PLC did not complete: {exc}") from exc
             self._tls_active = True
 
-            # Derive OMS exporter secret for legitimation key derivation
-            self._oms_secret = self._derive_oms_secret(keylog_path)
-            if self._oms_secret is not None:
-                logger.debug("OMS exporter secret derived (%d bytes)", len(self._oms_secret))
-        finally:
-            try:
-                os.unlink(keylog_path)
-            except OSError:
-                pass
+            # Pin the PLC certificate before any application data is trusted.
+            # Not an assert: the check must also hold under ``python -O``.
+            if self._ssl_object is None:
+                raise S7ConnectionError("TLS session was closed during the handshake")
+            self._peer_certificate_fingerprint = _verify_pinned_certificate(self._ssl_object, self._tls_cert_fingerprint)
+
+            self._oms_secret = _derive_oms_secret(self._ssl_object, keylog_path)
 
         logger.info("TLS activated (tunneled inside COTP frames)")
 
-    def _derive_oms_secret(self, keylog_path: str) -> Optional[bytes]:
-        """Derive the OMS exporter secret (RFC 5705) for legitimation.
+    def peer_certificate_fingerprint(self) -> Optional[bytes]:
+        """SHA-256 of the TLS certificate the PLC presented, or None without TLS.
 
-        CPython's ssl module has no ``export_keying_material``, so we read the
-        TLS 1.3 ``exporter_master_secret`` from the session key log and run the
-        RFC 8446 exporter derivation ourselves (stdlib hmac/hashlib only).
-        Returns None (legitimation unavailable, anonymous reads still work) if
-        the session isn't TLS 1.3 or the secret can't be recovered.
+        The raw 32-byte digest; ``.hex()`` gives the hex string that
+        ``tls_cert_fingerprint`` takes.
         """
-        cipher = self._ssl_object.cipher() if self._ssl_object else None
-        if not cipher or cipher[1] != "TLSv1.3":
-            logger.warning(
-                "OMS exporter derivation needs TLS 1.3 (session is %s)",
-                cipher[1] if cipher else "unknown",
-            )
-            return None
-        hashmod = hashlib.sha384 if cipher[0].endswith("SHA384") else hashlib.sha256
-
-        exporter_master_secret = None
-        try:
-            with open(keylog_path, "r") as fh:
-                for line in fh:
-                    parts = line.split()
-                    if len(parts) == 3 and parts[0] == "EXPORTER_SECRET":
-                        exporter_master_secret = bytes.fromhex(parts[2])
-        except OSError as e:
-            logger.warning("Could not read TLS key log: %s", e)
-            return None
-
-        if exporter_master_secret is None:
-            logger.warning("EXPORTER_SECRET not found in TLS key log")
-            return None
-
-        return _tls13_exporter(exporter_master_secret, _OMS_EXPORTER_LABEL, _OMS_EXPORTER_LENGTH, hashmod)
+        return self._peer_certificate_fingerprint
 
     def _do_tls_handshake(self) -> None:
         """Perform TLS handshake, tunneling records through COTP."""

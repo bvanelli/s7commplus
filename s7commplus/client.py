@@ -4,14 +4,17 @@ Reference: thomas-v2/S7CommPlusDriver (C#, LGPL-3.0)
 """
 
 import dataclasses
+import functools
 import logging
 import struct
+import threading
 import time
 from collections import deque
 from collections.abc import Callable, Iterable, Iterator, Mapping, Sequence
-from typing import Any, Literal, Optional, TypeAlias, TypeVar
+from contextvars import ContextVar
+from typing import Any, Concatenate, Literal, Optional, ParamSpec, TypeAlias, TypeVar
 
-from .error import S7ConnectionError, S7ProtocolError, S7SubscriptionError, S7TlsHandshakeError, S7WriteError
+from .error import S7ConnectionError, S7ProtocolError, S7SubscriptionError, S7TimeoutError, S7TlsHandshakeError, S7WriteError
 
 from . import typeinfo
 from .alarm import (
@@ -45,6 +48,7 @@ from .connection import (
     SessionKeyCandidateRejectedError,
     _check_certificate_pin,
     _check_plaintext_fallback,
+    _check_timeout,
     _resolve_use_tls,
     _request_frame_overhead,
 )
@@ -78,6 +82,7 @@ logger = logging.getLogger(__name__)
 _LEGACY_KEY_CACHE: dict[tuple[str, int], str] = {}
 
 _T = TypeVar("_T")
+_P = ParamSpec("_P")
 DBWriteItem: TypeAlias = tuple[int, int, bytes, DataType]
 SymbolicReadItem: TypeAlias = tuple[int, list[int]] | tuple[int, list[int], int]
 SymbolicWriteItem: TypeAlias = tuple[int, list[int], bytes, int, DataType | PValueArray]
@@ -315,6 +320,77 @@ def _type_info_times(root_nodes: Sequence["typeinfo.Node"], type_objects: Sequen
     }
 
 
+# Seconds an automatic reconnect waits after the previous automatic attempt
+# ended, so that a PLC that is down, or a request that fails on every fresh
+# session, is not flooded with connection attempts.
+_AUTO_RECONNECT_MIN_INTERVAL = 1.0
+
+# Clients (by id) with an auto-reconnecting read in progress in this thread or
+# task. A wrapped read called from another (read_tag -> read_tags ->
+# read_symbolic_multi) leaves a dropped connection to the outermost call, so
+# one operation reconnects at most once. Tasks and threads have their own
+# context, so concurrent callers do not see each other's calls as nested.
+_AUTO_RECONNECT_ACTIVE: ContextVar[frozenset[int]] = ContextVar("s7commplus_auto_reconnect_active", default=frozenset())
+
+_AUTO_RECONNECT_STAND_DOWN = (
+    "Connection lost while data or alarm subscriptions depend on the session; auto-reconnect does not "
+    "rebuild it silently. Call reconnect(), then resubscribe() (or forget_lost_subscriptions()) and "
+    "create alarm subscriptions again."
+)
+
+# Attribute set to True on every method that _retry_on_dropped_connection (or
+# its async counterpart) wraps, so the retried set can be read off the classes.
+_AUTO_RECONNECT_MARKER = "_retries_on_dropped_connection"
+
+
+def _retry_on_dropped_connection(
+    method: Callable[Concatenate["S7CommPlusClient", _P], _T],
+) -> Callable[Concatenate["S7CommPlusClient", _P], _T]:
+    """Retry a read once on a fresh session when auto-reconnect is on.
+
+    Auto-reconnect retries exactly the methods that carry this decorator, or
+    its counterpart in ``async_client``, which follows the same policy:
+
+    - Reads only. Each rebuilds its request, which embeds the session id and
+      sequence number, so the retry wraps the operation rather than the raw
+      send. Writes are never decorated: a lost write may have been applied,
+      so it is never replayed.
+    - Only while ``auto_reconnect`` is on, and only after an
+      ``S7ConnectionError``; a timeout reaches the caller.
+    - Only the outermost decorated call handles a drop (see
+      ``_AUTO_RECONNECT_ACTIVE``), so one operation reconnects and runs again
+      at most once.
+    - ``_recover_dropped_connection`` decides whether to reconnect: it
+      serializes reconnects, stands down while subscriptions depend on the
+      session, and declines within ``_auto_reconnect_min_interval`` of the
+      last automatic attempt.
+
+    The wrapper keeps the method's name, docstring and signature, and sets
+    ``_AUTO_RECONNECT_MARKER``.
+    """
+
+    @functools.wraps(method)
+    def wrapper(self: "S7CommPlusClient", /, *args: _P.args, **kwargs: _P.kwargs) -> _T:
+        active = _AUTO_RECONNECT_ACTIVE.get()
+        if not self._auto_reconnect or id(self) in active:
+            return method(self, *args, **kwargs)
+        token = _AUTO_RECONNECT_ACTIVE.set(active | {id(self)})
+        try:
+            generation = self._generation
+            try:
+                return method(self, *args, **kwargs)
+            except S7ConnectionError as exc:
+                if not self._recover_dropped_connection(generation, exc):
+                    raise
+            logger.info("Retrying %s() on the new session", method.__name__)
+            return method(self, *args, **kwargs)
+        finally:
+            _AUTO_RECONNECT_ACTIVE.reset(token)
+
+    setattr(wrapper, _AUTO_RECONNECT_MARKER, True)
+    return wrapper
+
+
 # A typed-value name, whether it is a leaf tag, and its leaf tags in catalog order.
 _ValuePlan: TypeAlias = tuple[str, bool, list[SymbolicTag]]
 
@@ -455,6 +531,14 @@ class S7CommPlusClient:
         # the PLC are never resent.
         self.auto_refresh_tags: bool = False
         self._last_auto_refresh_check: Optional[float] = None
+        # Sessions rebuilt by a reconnect. Reconnects are serialized so that one
+        # never tears down the session another has just built.
+        self._generation = 0
+        self._reconnect_lock = threading.Lock()
+        # Opt-in: a read that finds the connection dropped reconnects and retries once.
+        self._auto_reconnect = False
+        self._auto_reconnect_min_interval = _AUTO_RECONNECT_MIN_INTERVAL
+        self._last_auto_reconnect = float("-inf")
 
     @property
     def connected(self) -> bool:
@@ -539,6 +623,26 @@ class S7CommPlusClient:
             return None
         return self._connection.session_oms_version
 
+    @property
+    def connection_generation(self) -> int:
+        """Count of reconnects the client has performed; a change means the session was rebuilt."""
+        return self._generation
+
+    @property
+    def auto_reconnect(self) -> bool:
+        """Whether a read that finds the connection dropped reconnects and runs once more.
+
+        Set by ``connect(auto_reconnect=...)``; a change made later outlasts
+        reconnects. Writes are never retried. Neither is a read that timed out:
+        ``S7TimeoutError`` is not an ``S7ConnectionError``. When the timeout
+        ended the session, the next call finds it dropped and reconnects.
+        """
+        return self._auto_reconnect
+
+    @auto_reconnect.setter
+    def auto_reconnect(self, enabled: bool) -> None:
+        self._auto_reconnect = enabled
+
     def connect(
         self,
         host: str,
@@ -554,8 +658,13 @@ class S7CommPlusClient:
         legacy_session_key_refresh_interval: Optional[float] = 25 * 60.0,
         *,
         tls_cert_fingerprint: Optional[str] = None,
+        timeout: float = 5.0,
+        request_timeout: Optional[float] = None,
+        explore_timeout: Optional[float] = 30.0,
+        notification_timeout: Optional[float] = None,
         legacy_s7_1500: bool | None = None,
         connection_type: int | str | None = None,
+        auto_reconnect: bool = False,
     ) -> None:
         """Connect to an S7-1200/1500 PLC using S7CommPlus.
 
@@ -581,6 +690,21 @@ class S7CommPlusClient:
                 fresh sessions when a legacy PLC omits its key id.
             legacy_session_key_refresh_interval: Seconds between legacy
                 SessionKey renewals, or ``None`` to disable them.
+            timeout: Seconds for the TCP connect and the COTP, InitSSL, TLS
+                and CreateObject handshake together.
+            request_timeout: Seconds to wait for each reply once the handshake
+                is done (and for each further part of a multi-part reply), or
+                ``None`` to use ``timeout``. A reply that does not arrive in
+                time raises ``S7TimeoutError`` and closes the session, as its
+                state is then unknown; ``connected`` turns ``False``.
+            explore_timeout: The same bound for the reply to an EXPLORE (sent
+                by :meth:`browse`, :meth:`list_datablocks`, :meth:`explore`,
+                :meth:`get_cpu_state` and :meth:`read_alarms`, among others),
+                whose answer can be large; 30 s by default, or ``None`` to use
+                the request timeout.
+            notification_timeout: Seconds a notification receiver waits by
+                default (subscriptions and alarms), or ``None`` to use the
+                request timeout.
             legacy_s7_1500: Override the non-TLS V1 SessionKey profile (structured
                 browse, V2 object qualifier, trailing IntegrityId, chained fragment
                 HMAC). ``None`` (default) selects it automatically for every V1
@@ -594,12 +718,19 @@ class S7CommPlusClient:
                 engineering-style operations differently per role is not
                 verified against a PLC, so try ``"es"`` if the default is
                 refused.
+            auto_reconnect: When a read finds the connection dropped, reconnect
+                and run it once more (see :attr:`auto_reconnect`). Writes are
+                never retried. Off by default.
         """
         tls_first, auto_tls = _resolve_use_tls(use_tls)
         if legacy_s7_1500 and tls_first:
             raise ValueError("legacy_s7_1500 requires use_tls=False")
         _check_certificate_pin(tls_cert_fingerprint, tls_first)  # validate early
         remote_tsap_for_connection_type(connection_type)  # validate early
+        _check_timeout("timeout", timeout, optional=False)
+        _check_timeout("request_timeout", request_timeout)
+        _check_timeout("explore_timeout", explore_timeout)
+        _check_timeout("notification_timeout", notification_timeout)
         self._forget_tag_catalog()
         self._connect_params = {
             "host": host,
@@ -613,9 +744,14 @@ class S7CommPlusClient:
             "password": password,
             "allow_legacy_key_fallback": allow_legacy_key_fallback,
             "legacy_session_key_refresh_interval": legacy_session_key_refresh_interval,
+            "timeout": timeout,
+            "request_timeout": request_timeout,
+            "explore_timeout": explore_timeout,
+            "notification_timeout": notification_timeout,
             "legacy_s7_1500": legacy_s7_1500,
             "connection_type": connection_type,
         }
+        self._auto_reconnect = auto_reconnect
         self._open_connection()
 
     def _open_connection(self) -> None:
@@ -677,6 +813,10 @@ class S7CommPlusClient:
             connection_type=p["connection_type"],
         )
         self._connection.connect(
+            timeout=p["timeout"],
+            request_timeout=p["request_timeout"],
+            explore_timeout=p["explore_timeout"],
+            notification_timeout=p["notification_timeout"],
             use_tls=p["use_tls"],
             tls_cert=p["tls_cert"],
             tls_key=p["tls_key"],
@@ -720,6 +860,15 @@ class S7CommPlusClient:
         symbolic ``GetMultiVariables`` read per connection, so multi-step flows
         such as :meth:`browse` need a fresh session to continue.
         """
+        with self._reconnect_lock:
+            self._rebuild_session()
+
+    def _rebuild_session(self) -> None:
+        """Replace the session using the stored parameters; the caller holds the reconnect lock.
+
+        A failed attempt keeps the parameters, so a later reconnect can still
+        succeed once the PLC is reachable again.
+        """
         self._subscriptions.clear()
         self._alarm_subscription_ids.clear()
         self._alarm_notification_frames.clear()
@@ -729,6 +878,25 @@ class S7CommPlusClient:
             except Exception:
                 pass
         self._open_connection()
+        self._generation += 1
+
+    def reconnect(self) -> None:
+        """Re-establish the connection with the parameters from the last connect().
+
+        The new session is legitimated with the password given to ``connect()``.
+        Data subscriptions that were live are remembered so :meth:`resubscribe`
+        can recreate them; alarm subscriptions must be created again, and
+        notifications from the gap are not replayed. A failed attempt keeps the
+        parameters, so ``reconnect()`` can be repeated once the PLC is back.
+
+        Raises:
+            RuntimeError: ``connect()`` was never called, or ``disconnect()``
+                cleared its parameters.
+        """
+        if self._connect_params is None:
+            raise RuntimeError("Not connected")
+        logger.info("Reconnecting to the PLC")
+        self._reconnect()
 
     def _with_reconnect(self, op: Callable[[], "_T"]) -> "_T":
         """Run ``op``; if the socket was RST by the PLC, reconnect once and retry.
@@ -740,8 +908,36 @@ class S7CommPlusClient:
             return op()
         except S7ConnectionError as exc:
             logger.info("Connection dropped by PLC (%s); reconnecting and retrying", exc)
-            self._reconnect()
+            try:
+                self._reconnect()
+            finally:
+                # Counts as an automatic attempt, so an auto-reconnecting browse()
+                # does not try again at once when this one failed.
+                self._last_auto_reconnect = time.monotonic()
             return op()
+
+    def _recover_dropped_connection(self, generation: int, exc: S7ConnectionError) -> bool:
+        """Prepare the retry of an auto-reconnecting read that found the connection dropped.
+
+        ``generation`` is the session the read started on. Returns ``False``
+        to hand the original error to the caller instead of retrying.
+        """
+        with self._reconnect_lock:
+            if self._generation != generation:
+                return True  # another call already rebuilt the session; retry on it
+            if self._connect_params is None:
+                return False
+            if self._subscriptions.subscription_ids or self._subscriptions.pending_restore or self._alarm_subscription_ids:
+                raise S7ConnectionError(_AUTO_RECONNECT_STAND_DOWN) from exc
+            if time.monotonic() - self._last_auto_reconnect < self._auto_reconnect_min_interval:
+                logger.debug("Connection lost (%s); the last automatic reconnect ended too recently to try again", exc)
+                return False
+            logger.info("Connection lost (%s); reconnecting", exc)
+            try:
+                self._rebuild_session()
+            finally:
+                self._last_auto_reconnect = time.monotonic()
+            return True
 
     def disconnect(self) -> None:
         """Disconnect from PLC."""
@@ -764,6 +960,7 @@ class S7CommPlusClient:
             return None
         return self._connection.peer_certificate_fingerprint()
 
+    @_retry_on_dropped_connection
     def db_read(self, db_number: int, start: int, size: int) -> bytes:
         """Read raw bytes from a data block.
 
@@ -884,6 +1081,7 @@ class S7CommPlusClient:
         )
         self._connection.send_request(FunctionCode.SET_VAR_SUBSTREAMED, payload)
 
+    @_retry_on_dropped_connection
     def db_read_multi(self, items: list[tuple[int, int, int]]) -> list[bytes]:
         """Read multiple data block regions.
 
@@ -918,6 +1116,7 @@ class S7CommPlusClient:
             results.extend(_db_read_values(response, len(chunk)))
         return results
 
+    @_retry_on_dropped_connection
     def read_area(self, area_rid: int, start: int, size: int) -> bytes:
         """Read raw bytes from a controller memory area (M, I, Q, counters, timers).
 
@@ -979,6 +1178,7 @@ class S7CommPlusClient:
         response = self._connection.send_request(FunctionCode.SET_MULTI_VARIABLES, payload)
         _parse_write_response(response)
 
+    @_retry_on_dropped_connection
     def read_symbolic(self, access_area: int, lids: list[int], symbol_crc: int = 0) -> bytes:
         """Read a variable using S7CommPlus symbolic (LID-based) access.
 
@@ -1023,6 +1223,7 @@ class S7CommPlusClient:
             raise RuntimeError("Symbolic read failed")
         return results[0]
 
+    @_retry_on_dropped_connection
     def read_symbolic_multi(self, items: Sequence[SymbolicReadItem]) -> list[Optional[bytes]]:
         """Read multiple variables using S7CommPlus symbolic (LID-based) access.
 
@@ -1172,6 +1373,7 @@ class S7CommPlusClient:
         catalog = self._symbol_catalog or self.refresh_tag_catalog()
         return catalog.resolve(name)
 
+    @_retry_on_dropped_connection
     def read_tag(self, name: str) -> bytes:
         """Read one symbolic tag by name."""
         result = self.read_tags([name])[0]
@@ -1180,6 +1382,7 @@ class S7CommPlusClient:
         assert result.value is not None
         return result.value
 
+    @_retry_on_dropped_connection
     def read_tags(self, names: Sequence[str]) -> list[TagResult]:
         """Read names and return a success/error for every item.
 
@@ -1468,6 +1671,7 @@ class S7CommPlusClient:
             "on a real PLC (https://github.com/gijzelaerr/s7commplus/issues/8)"
         )
 
+    @_retry_on_dropped_connection
     def get_cpu_state(self) -> str:
         """Get PLC CPU operating state via S7CommPlus.
 
@@ -1575,6 +1779,7 @@ class S7CommPlusClient:
         parse_or_raise_for_return_value(response, "Data block list")
         return _parse_explore_datablocks(response)
 
+    @_retry_on_dropped_connection
     def browse(self) -> list[dict[str, Any]]:
         """Browse the full per-tag symbol tree via EXPLORE + the type-info container.
 
@@ -1850,16 +2055,27 @@ class S7CommPlusClient:
         """Stop remembering the subscriptions lost with the previous session."""
         self._subscriptions.forget_pending_restore()
 
-    def receive_subscription_notification(self, subscription_id: int | None = None) -> SubscriptionNotification:
-        """Block until one routed data notification is available."""
+    def receive_subscription_notification(
+        self, subscription_id: int | None = None, timeout: Optional[float] = None
+    ) -> SubscriptionNotification:
+        """Block until one routed data notification is available.
+
+        ``timeout`` bounds the whole call in seconds; the default is the
+        ``notification_timeout`` passed to ``connect()``, else the request
+        timeout. Raises :class:`~s7commplus.error.S7TimeoutError` when it runs
+        out; the session stays usable unless a frame was cut off part-way.
+        """
+        _check_timeout("timeout", timeout)
         if self._connection is None:
             raise RuntimeError("Not connected")
+        wait = self._notification_wait(timeout)
+        deadline = time.monotonic() + wait
         if subscription_id is not None:
             queued = self._subscriptions.pop(subscription_id)
             if queued is not None:
                 return queued
         while True:
-            frame = self._connection.receive_notification()
+            frame = self._next_notification_frame(deadline, wait)
             frame_subscription_id = notification_subscription_id(frame)
             if frame_subscription_id in self._alarm_subscription_ids:
                 self._alarm_notification_frames.append(frame)
@@ -1991,18 +2207,27 @@ class S7CommPlusClient:
         self._connection._notification_frames.clear()
         logger.info(f"Alarm subscription {subscription_id:#x} deleted")
 
-    def receive_alarm_notification(self, language_ids: Optional[list[LanguageId | int]] = None) -> AlarmNotification:
+    def receive_alarm_notification(
+        self, language_ids: Optional[list[LanguageId | int]] = None, timeout: Optional[float] = None
+    ) -> AlarmNotification:
         """Block until the PLC sends one alarm notification.
 
+        ``timeout`` bounds the whole call in seconds; the default is the
+        ``notification_timeout`` passed to ``connect()``, else the request
+        timeout. Raises :class:`~s7commplus.error.S7TimeoutError` when it runs
+        out; the session stays usable unless a frame was cut off part-way.
         Data notifications encountered first are routed to their bounded queues.
         """
+        _check_timeout("timeout", timeout)
         if self._connection is None:
             raise RuntimeError("Not connected")
+        wait = self._notification_wait(timeout)
+        deadline = time.monotonic() + wait
         while True:
             frame = (
                 self._alarm_notification_frames.popleft()
                 if self._alarm_notification_frames
-                else self._connection.receive_notification()
+                else self._next_notification_frame(deadline, wait)
             )
             frame_subscription_id = notification_subscription_id(frame)
             if self._subscriptions.contains(frame_subscription_id):
@@ -2012,6 +2237,25 @@ class S7CommPlusClient:
                     self._connection.send_subscription_credit(frame_subscription_id, credit_update)
                 continue
             return parse_alarm_notification(frame, language_ids)
+
+    def _notification_wait(self, timeout: Optional[float]) -> float:
+        """Seconds a notification wait may take: per call, else notification_timeout, else the request timeout."""
+        if timeout is not None:
+            return timeout
+        p = self._connect_params or {}
+        for key in ("notification_timeout", "request_timeout", "timeout"):
+            if p.get(key) is not None:
+                return float(p[key])
+        return 5.0
+
+    def _next_notification_frame(self, deadline: float, wait: float) -> bytes:
+        """Receive one notification frame by ``deadline`` (``time.monotonic()``), else raise S7TimeoutError."""
+        assert self._connection is not None
+        left = deadline - time.monotonic()
+        if left <= 0:
+            # Nothing of a next frame was read, so the session stays usable.
+            raise S7TimeoutError(f"No notification from the PLC within {wait}s")
+        return self._connection.receive_notification(left)
 
     def read_alarms(self, language_ids: Optional[list[LanguageId | int]] = None) -> list[Alarm]:
         """Return the PLC's current active alarm state.

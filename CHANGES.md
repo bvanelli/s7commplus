@@ -8,8 +8,7 @@ PLCSIM Advanced is now validated for the V1 SessionKey (key family 03) and TLS
 sessions, including password legitimation. Tag values convert to and from Python
 types, large batches are split to fit the PLC's request limits, and TLS gains
 certificate pinning and an automatic mode. A `s7commplus` command-line tool is
-new. Several of these changes are verified on PLCSIM or on a single CPU 1215C
-only; each entry says which.
+new. Where an entry was verified only on PLCSIM or on a single CPU, it says so.
 
 ### Upgrading from 0.2.0
 
@@ -30,8 +29,8 @@ Most applications need no changes. Check the following if you use them:
   It never produced a state change you could rely on; read the state with
   `get_cpu_state()` and change it from TIA Portal until #8 is resolved (#115).
 * Multi-item reads and writes are split into requests of at most 50 items and
-  900 bytes, so a split `db_write_multi` or `write_tags` batch is no longer
-  atomic. `S7WriteError` is a `RuntimeError`, so existing handlers still catch
+  900 bytes, and a `db_write_multi` or `write_tags` batch split over several
+  requests is not atomic. `S7WriteError` is a `RuntimeError`, so existing handlers still catch
   refused writes; keep a batch to one request if it must not be applied in part.
   A single item too large for one request, and a `create_subscription()` over
   `max_request_bytes`, now raise `ValueError` before anything is sent: set
@@ -40,9 +39,6 @@ Most applications need no changes. Check the following if you use them:
 * `SubscriptionItem.from_tag()` items now carry `symbol_crc == 0`. To send the
   browsed CRC anyway, build `SubscriptionItem(tag.access_area, tag.lids,
   symbol_crc=tag.symbol_crc, tag=tag)` (#92).
-* A STRING or WSTRING whose declared length the catalog does not give
-  (`string_length == 0`) can no longer be encoded; it raises `ValueError`
-  instead of being written as a STRING[254] (#106).
 
 ### New features
 
@@ -81,8 +77,8 @@ Most applications need no changes. Check the following if you use them:
   or stripped. Ranges follow the TIA Portal data type documentation (DATE to
   2168-12-31, LDT and DTL 1970-01-01 to 2262-04-11). A STRING or WSTRING is
   encoded with its declared length (`string_length`), which sets its header and
-  padding; when the catalog does not give it (`0`), encoding raises `ValueError`
-  instead of assuming 254. `SymbolCatalog.members()` lists the leaf tags of a
+  padding; when the catalog does not give it (`0`), encoding raises
+  `ValueError`. `SymbolCatalog.members()` lists the leaf tags of a
   struct, UDT, DTL or array (#106).
 * `Client` and `AsyncClient` can pin a PLC's TLS certificate instead of relying
   on a CA file: pass `tls_cert_fingerprint` (the SHA-256 as hex, separators
@@ -153,7 +149,8 @@ Most applications need no changes. Check the following if you use them:
   `ValueError` the library raises once connected, and 2 for a usage error found
   before connecting or an unknown tag (#103).
 * New exceptions in `s7commplus.error`: `S7ReturnValueError` (#110),
-  `S7TlsHandshakeError` (#98), `S7SubscriptionError` and `S7WriteError` (#100).
+  `S7CertificateError` (#97), `S7TlsHandshakeError` (#98), and
+  `S7SubscriptionError` and `S7WriteError` (#100).
 
 ### Behaviour changes
 

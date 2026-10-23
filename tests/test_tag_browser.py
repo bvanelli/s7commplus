@@ -445,6 +445,52 @@ def test_parse_block_interface_values_part_without_source_is_empty():
     assert parse_block_interface('<BlockInterface><Part Kind="Values"><Payload /><SubParts /></Part></BlockInterface>') == []
 
 
+def test_parse_block_interface_rejects_deep_nesting():
+    # A 400-part chain with one member per part used to exceed Python's recursion limit
+    member = '<Member ID="1" LID="1" Name="m" RID="0x02000011" SubPartIndex="{0}"/>'
+    parts = "".join(
+        f'<Part Kind="Structure"><Payload><Member>{member.format(i + 1)}</Member></Payload></Part>' for i in range(400)
+    )
+    xml_text = (
+        f'<BlockInterface><Part Kind="DBSource"><Payload><Root>{member.format(0)}</Root></Payload>'
+        f"<SubParts>{parts}</SubParts></Part></BlockInterface>"
+    )
+
+    with pytest.raises(ValueError, match="nests deeper"):
+        parse_block_interface(xml_text)
+
+
+# k Structure parts, each with two members pointing at the next part, expand to 2**k - 1 members.
+# 20 parts is the reviewer's reproducer (about a million members); 3 parts expand to exactly 7.
+@pytest.mark.parametrize(
+    ("k", "max_members", "rejected"),
+    [(20, 100_000, True), (3, 7, False), (3, 6, True)],
+)
+def test_parse_block_interface_caps_exponential_expansion(k, max_members, rejected):
+    parts = []
+    for i in range(k):
+        mem = (
+            ""
+            if i == k - 1
+            else (
+                f'<Member ID="1" LID="1" Name="a" RID="0x02000011" SubPartIndex="{i + 1}"/>'
+                f'<Member ID="2" LID="2" Name="b" RID="0x02000011" SubPartIndex="{i + 1}"/>'
+            )
+        )
+        parts.append(f'<Part Kind="Structure"><Payload><Member>{mem}</Member></Payload></Part>')
+    top = '<Member ID="1" LID="1" Name="s" RID="0x02000011" SubPartIndex="0"/>'
+    xml_text = (
+        f'<BlockInterface><Part Kind="DBSource"><Payload><Root>{top}</Root></Payload>'
+        f"<SubParts>{''.join(parts)}</SubParts></Part></BlockInterface>"
+    )
+
+    if rejected:
+        with pytest.raises(ValueError, match="more than"):
+            parse_block_interface(xml_text, max_members=max_members)
+    else:
+        parse_block_interface(xml_text, max_members=max_members)
+
+
 def test_block_interface_from_live_s7_1500_nested_struct_db():
     # An inline Struct member points via `SubPartIndex` at a Kind="Structure" part
     # in the same <SubParts> list as its parent, also when the parent is itself a

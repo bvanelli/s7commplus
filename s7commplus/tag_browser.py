@@ -85,11 +85,17 @@ def tags_from_explore(explore_payload: bytes) -> list[Tag]:
     """Decompress a raw I/Q/M EXPLORE payload and parse its symbolic tags.
 
     Returns an empty list if the payload contains no preset-dict zlib stream.
+
+    Raises:
+        ValueError: If the stream does not decompress or is not well-formed XML.
     """
     pos = _find_preset_stream(explore_payload, (_IDENT_KIND,))
     if pos is None:
         return []
-    return parse_ident_container(decompress_blob(explore_payload, offset=pos))
+    try:
+        return parse_ident_container(decompress_blob(explore_payload, offset=pos))
+    except (zlib.error, ET.ParseError) as exc:
+        raise ValueError(f"Tag EXPLORE payload is corrupt: {exc}") from exc
 
 
 # ---------------------------------------------------------------------------
@@ -352,13 +358,17 @@ def block_interface_from_explore(explore_payload: bytes, max_members: int = 250_
         max_depth: The most levels of nested parts the interface may expand to.
 
     Raises:
-        ValueError: The interface expands to more than ``max_members`` members
-            or nests deeper than ``max_depth`` levels.
+        ValueError: The stream does not decompress or is not well-formed XML,
+            or the interface expands to more than ``max_members`` members or
+            nests deeper than ``max_depth`` levels.
     """
     pos = _find_preset_stream(explore_payload, _INTFDESC_KINDS)
     if pos is None:
         return []
-    return parse_block_interface(decompress_blob(explore_payload, offset=pos), max_members, max_depth)
+    try:
+        return parse_block_interface(decompress_blob(explore_payload, offset=pos), max_members, max_depth)
+    except (zlib.error, ET.ParseError) as exc:
+        raise ValueError(f"Block interface EXPLORE payload is corrupt: {exc}") from exc
 
 
 # ---------------------------------------------------------------------------
@@ -418,6 +428,9 @@ def datablocks_from_explore(wildcard_payload: bytes) -> list[DataBlock]:
     is raw-inflated (the Adler-32 trailer would fail on the trailing bytes). The
     stream header is located tolerantly (any compression level), not assumed to
     be ``78 da``. Returns only ``Type="DB"`` blocks.
+
+    Raises:
+        ValueError: If the stream inflates to something that is not well-formed XML.
     """
     pos = _find_zlib_stream(wildcard_payload)
     if pos is None:
@@ -426,8 +439,12 @@ def datablocks_from_explore(wildcard_payload: bytes) -> list[DataBlock]:
         xml_bytes = zlib.decompressobj(wbits=-15).decompress(wildcard_payload[pos + 2 :])
     except zlib.error:
         return []
+    try:
+        root = ET.fromstring(xml_bytes.decode("utf-8"))
+    except ET.ParseError as exc:
+        raise ValueError(f"Data block list EXPLORE payload is not well-formed XML: {exc}") from exc
     dbs: list[DataBlock] = []
-    for entity in ET.fromstring(xml_bytes.decode("utf-8")).findall('.//Entity[@Id="Block"]'):
+    for entity in root.findall('.//Entity[@Id="Block"]'):
         header = entity.find("Header")
         if header is None or header.get("Type") != "DB":
             continue

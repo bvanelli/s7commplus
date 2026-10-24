@@ -167,7 +167,7 @@ USINT, a STRING and a WSTRING as USINT and UINT arrays of that layout, and a
 DATE_AND_TIME as an array of its eight bytes. An S7-1500 (CPU 1512SP-1 PN,
 FW V2.9 with TLS) and PLCSIM Advanced V8 (CPU 1511, FW V2.9 with TLS and FW
 V2.8 without) accept these forms and read the values back. Both refuse the
-scalar forms 0.2.0 sent (a CHAR as a BYTE, a STRING or WSTRING as an S7STRING
+scalar forms 0.3.0 and earlier sent (a CHAR as a BYTE, a STRING or WSTRING as an S7STRING
 or WSTRING PValue, a DATE_AND_TIME as a TIMESTAMP), which are no longer
 available. An S7-1200 has not been checked.
 

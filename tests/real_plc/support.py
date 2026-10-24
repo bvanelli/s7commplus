@@ -201,6 +201,7 @@ def _connect_arguments(config: PLCConfig, overrides: dict[str, Any]) -> dict[str
         "tls_cert": config.tls_cert,
         "tls_key": config.tls_key,
         "tls_ca": config.tls_ca,
+        "password": config.password,
     }
     arguments.update(overrides)
     return arguments

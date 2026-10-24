@@ -226,6 +226,7 @@ class S7CommPlusServer:
         self._next_session_id = 1
 
         self._server_socket: Optional[socket.socket] = None
+        self._port = 0
         self._server_thread: Optional[threading.Thread] = None
         self._client_threads: list[threading.Thread] = []
         self._running = False
@@ -278,6 +279,15 @@ class S7CommPlusServer:
         if max_request_bytes is not None and max_request_bytes <= 0:
             raise ValueError("max_request_bytes must be positive")
         self._max_request_bytes = max_request_bytes
+
+    @property
+    def port(self) -> int:
+        """The TCP port the server listens on while it runs, else 0.
+
+        With ``start(port=0)`` the OS picks a free port at bind time, so tests
+        can run emulators side by side without choosing ports in advance.
+        """
+        return self._port
 
     @property
     def cpu_state(self) -> CPUState:
@@ -346,7 +356,7 @@ class S7CommPlusServer:
 
         Args:
             host: Bind address
-            port: TCP port to listen on
+            port: TCP port to listen on; 0 lets the OS pick one (see :attr:`port`)
             use_tls: Whether to wrap client sockets with TLS after InitSSL
             tls_cert: Path to server TLS certificate (PEM)
             tls_key: Path to server private key (PEM)
@@ -388,11 +398,12 @@ class S7CommPlusServer:
             server_socket.close()
             raise
         self._server_socket = server_socket
+        self._port = server_socket.getsockname()[1]
 
         self._running = True
         self._server_thread = threading.Thread(target=self._server_loop, daemon=True, name="s7commplus-server")
         self._server_thread.start()
-        logger.info(f"S7CommPlus server started on {host}:{port} (TLS={use_tls}, V{self._protocol_version})")
+        logger.info(f"S7CommPlus server started on {host}:{self._port} (TLS={use_tls}, V{self._protocol_version})")
 
     def stop(self) -> None:
         """Stop the server."""
@@ -404,6 +415,7 @@ class S7CommPlusServer:
             except Exception:
                 pass
             self._server_socket = None
+        self._port = 0
 
         if self._server_thread:
             self._server_thread.join(timeout=5.0)

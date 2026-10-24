@@ -156,7 +156,7 @@ def test_symbolic_tag_datatype_keeps_the_read_type() -> None:
         "DB.i": DataType.INT,
     }
     for name, datatype in expected.items():
-        assert catalog.resolve(name).datatype == datatype  # unchanged from 0.2.0; only the write form differs
+        assert catalog.resolve(name).datatype == datatype  # unchanged; only the write form differs
 
 
 def test_encode_pvalue_array() -> None:

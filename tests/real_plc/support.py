@@ -291,10 +291,10 @@ class S7CommPlusAdapter:
         return _client_supports(self.client, feature)
 
     def reconnect(self) -> None:
-        self.client.reconnect()  # type: ignore[attr-defined]
+        self.client.reconnect()
 
     def peer_certificate_fingerprint(self) -> bytes | None:
-        fingerprint: bytes | None = self.client.peer_certificate_fingerprint()  # type: ignore[attr-defined]
+        fingerprint: bytes | None = self.client.peer_certificate_fingerprint()
         return fingerprint
 
     def runtime_metadata(self) -> dict[str, MetadataValue]:
@@ -388,10 +388,10 @@ class AsyncS7CommPlusAdapter:
         return _client_supports(self.client, feature)
 
     def reconnect(self) -> None:
-        self._run(self.client.reconnect)  # type: ignore[attr-defined]
+        self._run(self.client.reconnect)
 
     def peer_certificate_fingerprint(self) -> bytes | None:
-        fingerprint: bytes | None = self.client.peer_certificate_fingerprint()  # type: ignore[attr-defined]
+        fingerprint: bytes | None = self.client.peer_certificate_fingerprint()
         return fingerprint
 
     def runtime_metadata(self) -> dict[str, MetadataValue]:

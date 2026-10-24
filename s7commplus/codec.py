@@ -425,8 +425,8 @@ class PValueArray:
 
     PLCs take some types this way: a STRING as a USINT array of
     ``[max length, length, characters...]``, a WSTRING as a UINT array of the
-    same shape, and a DATE_AND_TIME as its eight BCD bytes (PLCSIM Advanced,
-    CPU 1511, FW V2.9 rejects the scalar forms).
+    same shape, and a DATE_AND_TIME as its eight BCD bytes (see
+    ``catalog._WRITE_FORMS``).
     """
 
     element: DataType

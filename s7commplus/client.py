@@ -409,15 +409,6 @@ class S7CommPlusClient:
             TLS record, COTP and TPKT around it are not counted. A larger batch
             is split; an item too large for one request raises ``ValueError``
             before anything is sent.
-        legacy_write_forms: Send CHAR, STRING, WSTRING and DATE_AND_TIME from
-            :meth:`write_tags` in the forms used before 0.3 (default ``False``):
-            a CHAR as a BYTE, a STRING or WSTRING as an S7STRING or WSTRING
-            PValue of the value's bytes as given, and a DATE_AND_TIME as a
-            TIMESTAMP of its eight BCD bytes. By default a CHAR goes out as a
-            USINT and the other three as USINT, UINT and USINT arrays of the
-            layout :meth:`read_tags` returns. PLCSIM Advanced V8 (CPU 1511, FW
-            V2.9 with TLS and FW V2.8 without) refused the old forms and accepts
-            the default ones; neither has been checked on a hardware PLC.
     """
 
     def __init__(self) -> None:
@@ -443,10 +434,6 @@ class S7CommPlusClient:
         # about 860 bytes, was answered; one with a 1034-byte payload, about 1060
         # bytes, made the PLC drop the connection. Unverified on hardware.
         self.max_request_bytes = 900
-        # Send CHAR, STRING, WSTRING and DATE_AND_TIME in their pre-0.3 forms (see
-        # the class docstring and catalog._WRITE_FORMS). PLCSIM Advanced refused
-        # them; no hardware PLC has been checked with either form.
-        self.legacy_write_forms: bool = False
         # What the cached catalog was built from, for refresh_caches_if_program_changed:
         # the data-block list, and type-info RID -> VariableTypeStructModificationTime
         # of each data block whose time the PLC reported.
@@ -1397,9 +1384,8 @@ class S7CommPlusClient:
         :meth:`read_tags` returns. A STRING is the bytes ``[max length, length,
         characters...]`` and a WSTRING the same as big-endian UINTs, both padded
         with zeros to the declared length (``SymbolicTag.string_length``); a
-        DATE_AND_TIME is its eight BCD bytes. With :attr:`legacy_write_forms`
-        set, CHAR, STRING, WSTRING and DATE_AND_TIME go out in their pre-0.3
-        forms instead, and a STRING or WSTRING value is sent as given.
+        DATE_AND_TIME is its eight BCD bytes. A CHAR goes out as a USINT, and a
+        STRING, WSTRING or DATE_AND_TIME as an array of that layout.
 
         Writes are deliberately never retried: a transport failure can leave
         the caller unable to know whether the PLC applied the request, and a
@@ -1418,14 +1404,13 @@ class S7CommPlusClient:
         if not values:
             return []
         tags, _ = self._resolve_tags(list(values))
-        legacy = self.legacy_write_forms
-        unsupported = [tag.name for tag in tags if _write_type(tag, legacy) is None]
+        unsupported = [tag.name for tag in tags if _write_type(tag) is None]
         if unsupported:
             raise ValueError(f"No S7CommPlus wire datatype mapping for: {', '.join(unsupported)}")
         items: list[SymbolicWriteItem] = [
             (tag.access_area, list(tag.lids), data, 0, write_type)
             for tag, data in zip(tags, values.values())
-            if (write_type := _write_type(tag, legacy)) is not None
+            if (write_type := _write_type(tag)) is not None
         ]
 
         def build_write(chunk: list[SymbolicWriteItem]) -> bytes:

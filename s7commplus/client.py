@@ -10,7 +10,7 @@ import struct
 import threading
 import time
 from collections import deque
-from collections.abc import Callable, Iterator, Mapping, Sequence
+from collections.abc import Callable, Iterable, Iterator, Mapping, Sequence
 from contextvars import ContextVar
 from typing import Any, Concatenate, Literal, Optional, ParamSpec, TypeAlias, TypeVar
 
@@ -41,6 +41,7 @@ from .codec import (
     skip_typed_value,
 )
 from .catalog import SymbolCatalog, SymbolicTag, TagResult, _write_type
+from .values import assemble, split
 from .connection import (
     FamilyOnlyFingerprintError,
     S7CommPlusConnection,
@@ -388,6 +389,65 @@ def _retry_on_dropped_connection(
 
     setattr(wrapper, _AUTO_RECONNECT_MARKER, True)
     return wrapper
+
+
+# A typed-value name, whether it is a leaf tag, and its leaf tags in catalog order.
+_ValuePlan: TypeAlias = tuple[str, bool, list[SymbolicTag]]
+
+
+def _value_tags(catalog: SymbolCatalog, name: str) -> tuple[bool, list[SymbolicTag]]:
+    """The leaf tag ``name``, or the leaves of the struct or array ``name`` (``False``)."""
+    try:
+        return True, [catalog.resolve(name)]
+    except KeyError:
+        members = catalog.members(name)
+        if not members:
+            raise
+        return False, members
+
+
+def _value_plans(catalog: SymbolCatalog, names: Iterable[str]) -> list[_ValuePlan]:
+    """Look up the leaf tags of each name; raises ``KeyError`` for a name the catalog lacks."""
+    return [(name, *_value_tags(catalog, name)) for name in names]
+
+
+def _raise_failures(results: Sequence[TagResult], action: str) -> None:
+    """Raise ``RuntimeError`` naming the failed items of ``results``, from the first one's error."""
+    failed = [result for result in results if result.error is not None]
+    if failed:
+        names = ", ".join(repr(result.tag.name) for result in failed[:5]) + (", ..." if len(failed) > 5 else "")
+        raise RuntimeError(f"{len(failed)} of {len(results)} {action} failed: {names}") from failed[0].error
+
+
+def _assemble_values(plans: Sequence[_ValuePlan], results: Sequence[TagResult]) -> list[Any]:
+    """Decode read results and rebuild each requested name's value from its leaves."""
+    _raise_failures(results, "reads")
+    decoded = iter((result.tag.name, result.tag.decode_value(result.value or b"")) for result in results)
+    out: list[Any] = []
+    for name, leaf, tags in plans:
+        leaves = [next(decoded) for _ in tags]
+        out.append(leaves[0][1] if leaf else assemble(name, leaves))
+    return out
+
+
+def _encode_values(plans: Sequence[_ValuePlan], values: Mapping[str, Any]) -> dict[str, bytes]:
+    """Map each planned name's Python value in ``values`` onto its leaf tags' raw bytes."""
+    encoded: dict[str, bytes] = {}
+    for name, leaf, tags in plans:
+        value = values[name]
+        by_name = {tag.name: tag for tag in tags}
+        leaf_values = {name: value} if leaf else split(name, value, list(by_name))
+        if not leaf_values:
+            raise ValueError(f"Nothing to write for {name!r}")
+        for leaf_name, leaf_value in leaf_values.items():
+            if leaf_name in encoded:
+                raise ValueError(f"{leaf_name!r} is written twice")
+            tag = by_name[leaf_name]
+            try:
+                encoded[leaf_name] = tag.encode_value(leaf_value)
+            except (TypeError, ValueError) as exc:
+                raise type(exc)(f"{leaf_name!r}: {exc}") from exc
+    return encoded
 
 
 class S7CommPlusClient:
@@ -1384,7 +1444,8 @@ class S7CommPlusClient:
         :meth:`read_tags` returns. A STRING is the bytes ``[max length, length,
         characters...]`` and a WSTRING the same as big-endian UINTs, both padded
         with zeros to the declared length (``SymbolicTag.string_length``); a
-        DATE_AND_TIME is its eight BCD bytes. A CHAR goes out as a USINT, and a
+        DATE_AND_TIME is its eight BCD bytes. :meth:`SymbolicTag.encode_value`
+        builds these from Python values. A CHAR goes out as a USINT, and a
         STRING, WSTRING or DATE_AND_TIME as an array of that layout.
 
         Writes are deliberately never retried: a transport failure can leave
@@ -1430,6 +1491,80 @@ class S7CommPlusClient:
             _record_tag_writes(results, answered, len(chunk), response)
             answered += len(chunk)
         return results
+
+    @_retry_on_dropped_connection
+    def read_value(self, name: str) -> Any:
+        """Read a tag, struct or array by name as a Python value.
+
+        A leaf tag gives its decoded value (see :func:`s7commplus.values.decode`).
+        The name of a struct, UDT instance or array gives a ``dict`` or ``list``
+        built from all its leaves, read as one batch (split over several requests
+        like :meth:`read_tags` when it is large); a DTL gives a
+        :class:`datetime.datetime`.
+
+        With ``auto_refresh_tags`` set, a name not in the catalog runs the
+        program-change check of :meth:`read_tags` once (rate-limited, and not
+        when this call browsed the catalog itself) and is looked up again; a
+        failed item does too, inside :meth:`read_tags`. A struct or array is read
+        with the members known when the call started, or after that lookup: if a
+        refresh during the read changes them, the call raises ``KeyError`` for a
+        member that is gone and leaves out one that is new.
+
+        Raises:
+            KeyError: ``name`` is neither a tag nor a struct or array in the catalog.
+            RuntimeError: The PLC reported an error for one of the items.
+        """
+        return self.read_values([name])[0]
+
+    @_retry_on_dropped_connection
+    def read_values(self, names: Sequence[str]) -> list[Any]:
+        """Read several tags, structs or arrays as one batch of leaves; see :meth:`read_value`."""
+        plans = self._plan_values(names)
+        results = self.read_tags([tag.name for _, _, tags in plans for tag in tags])
+        return _assemble_values(plans, results)
+
+    def write_value(self, name: str, value: Any) -> None:
+        """Write a Python value to a tag, struct or array by name.
+
+        Accepts what :meth:`read_value` returns. A ``dict`` for a struct may give
+        only some members; a ``list`` for an array must give every element. Every
+        leaf is encoded before anything is sent, then the leaves are written as
+        one batch through :meth:`write_tags`, which splits a large batch over
+        several requests; such a batch is not atomic. Like every write, it is
+        never retried. With ``auto_refresh_tags`` set, a name not in the catalog
+        runs the program-change check once, as for :meth:`read_value`, before
+        anything is encoded or sent.
+
+        Raises:
+            KeyError: ``name`` is neither a tag nor a struct or array in the catalog.
+            TypeError, ValueError: ``value`` does not fit the PLC type, or a
+                leaf is too large for one request; nothing is sent.
+            RuntimeError: The PLC rejected one of the items, or a failure
+                interrupted a split batch; it is raised from the first failed
+                item's error, and the other items may have been written.
+        """
+        self.write_values({name: value})
+
+    def write_values(self, values: Mapping[str, Any]) -> None:
+        """Write several tags, structs or arrays as one batch of leaves; see :meth:`write_value`."""
+        encoded = _encode_values(self._plan_values(list(values)), values)
+        _raise_failures(self.write_tags(encoded), "writes")
+
+    def _plan_values(self, names: Sequence[str]) -> list[_ValuePlan]:
+        """Look up each name's leaf tags; with ``auto_refresh_tags``, an unknown name checks once for a program change.
+
+        Only the lookup is retried after the check, never an encoding or a
+        request. As in :meth:`_resolve_tags`, no check runs when this call
+        browsed the catalog, which is then current.
+        """
+        may_check = bool(self._symbol_catalog)  # refresh_tag_catalog() browses a missing or empty catalog
+        catalog = self._symbol_catalog or self.refresh_tag_catalog()
+        try:
+            return _value_plans(catalog, names)
+        except KeyError:
+            if not (may_check and self._auto_refresh_check()):
+                raise
+        return _value_plans(self._symbol_catalog or self.refresh_tag_catalog(), names)
 
     def explore(self, explore_id: int = 0, attributes: Sequence[int] | None = None) -> bytes:
         """Browse the PLC object tree.

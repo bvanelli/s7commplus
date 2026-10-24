@@ -128,7 +128,8 @@ class SymbolicTag:
     def encode_value(self, value: Any) -> bytes:
         """Encode a Python value to this tag's raw bytes (see :func:`s7commplus.values.encode`).
 
-        The result is in the layout :meth:`Client.read_tags` returns for this tag.
+        The result is in the layout :meth:`Client.read_tags` returns for this tag,
+        which :meth:`Client.write_tags` takes.
 
         Raises:
             TypeError: ``value`` has the wrong Python type for the tag.

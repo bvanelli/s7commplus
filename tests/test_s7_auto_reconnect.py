@@ -34,6 +34,8 @@ READS = {
     "read_symbolic_multi",
     "read_tag",
     "read_tags",
+    "read_value",
+    "read_values",
     "browse",
     "get_cpu_state",
 }
@@ -264,6 +266,35 @@ def test_sync_nested_read_succeeds_after_one_reconnect() -> None:
 async def test_async_nested_read_succeeds_after_one_reconnect() -> None:
     client = _async_client(_dropped(), _read_response(b"\x3f\x80\x00\x00"))
     assert await client.read_tag("DB1.Speed") == b"\x3f\x80\x00\x00"
+    assert client._rebuild_session.await_count == 1
+
+
+def test_sync_typed_read_reconnects_once() -> None:
+    # read_value -> read_values -> read_tags are all wrapped; only read_value handles the drop.
+    client = _sync_client(*(_dropped() for _ in range(6)))
+    with pytest.raises(S7ConnectionError):
+        client.read_value("DB1.Speed")
+    assert client._rebuild_session.call_count == 1
+    assert client._connection.send_request.call_count == 2
+
+
+async def test_async_typed_read_reconnects_once() -> None:
+    client = _async_client(*(_dropped() for _ in range(6)))
+    with pytest.raises(S7ConnectionError):
+        await client.read_value("DB1.Speed")
+    assert client._rebuild_session.await_count == 1
+    assert client._send_request.await_count == 2
+
+
+def test_sync_typed_read_succeeds_after_one_reconnect() -> None:
+    client = _sync_client(_dropped(), _read_response(b"\x3f\x80\x00\x00"))
+    assert client.read_value("DB1.Speed") == 1.0
+    assert client._rebuild_session.call_count == 1
+
+
+async def test_async_typed_read_succeeds_after_one_reconnect() -> None:
+    client = _async_client(_dropped(), _read_response(b"\x3f\x80\x00\x00"))
+    assert await client.read_value("DB1.Speed") == 1.0
     assert client._rebuild_session.await_count == 1
 
 

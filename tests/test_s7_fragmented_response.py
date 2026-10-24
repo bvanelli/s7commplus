@@ -22,9 +22,7 @@ from s7commplus.connection import S7CommPlusConnection, _response_continues
 from s7commplus.error import S7ConnectionError
 from s7commplus.protocol import FunctionCode, Opcode, ProtocolVersion
 from s7commplus.server import S7CommPlusServer
-from tests.conftest import get_free_tcp_port
 
-FRAGMENT_PORT = get_free_tcp_port()
 
 TEST_FINGERPRINT = "01:BD426B091F08731A"
 TEST_CHALLENGE = bytes(range(20))
@@ -65,7 +63,7 @@ def test_response_continues_compares_the_trailer_bytes() -> None:
 def fragmenting_server() -> Iterator[S7CommPlusServer]:
     server = S7CommPlusServer(max_response_pdu=64)
     server.register_raw_db(2, bytearray(range(256)))
-    server.start(port=FRAGMENT_PORT)
+    server.start(port=0)
     time.sleep(0.1)
     yield server
     server.stop()
@@ -78,7 +76,7 @@ def test_server_rejects_a_non_positive_response_pdu() -> None:
 
 def test_sync_reads_a_response_split_over_several_pdus(fragmenting_server: S7CommPlusServer) -> None:
     client = S7CommPlusClient()
-    client.connect("127.0.0.1", port=FRAGMENT_PORT)
+    client.connect("127.0.0.1", port=fragmenting_server.port)
     try:
         assert client.db_read(2, 0, 200) == bytes(range(200))
         # The session stays in step: the next request gets its own response.
@@ -90,7 +88,7 @@ def test_sync_reads_a_response_split_over_several_pdus(fragmenting_server: S7Com
 @pytest.mark.asyncio
 async def test_async_reads_a_response_split_over_several_pdus(fragmenting_server: S7CommPlusServer) -> None:
     client = S7CommPlusAsyncClient()
-    await client.connect("127.0.0.1", port=FRAGMENT_PORT)
+    await client.connect("127.0.0.1", port=fragmenting_server.port)
     try:
         assert await client.db_read(2, 0, 200) == bytes(range(200))
         assert await client.db_read_multi([(2, 10, 2), (2, 250, 6)]) == [bytes([10, 11]), bytes(range(250, 256))]
@@ -104,8 +102,8 @@ def tiny_pdu_server_port() -> Iterator[int]:
     # clients read as one PDU: the emulator splits only the responses after them.
     server = S7CommPlusServer(max_response_pdu=8)
     server.register_raw_db(2, bytearray(range(256)))
-    port = get_free_tcp_port()
-    server.start(port=port)
+    server.start(port=0)
+    port = server.port
     time.sleep(0.1)
     yield port
     server.stop()
@@ -159,8 +157,8 @@ def fragmenting_v3_server(monkeypatch: pytest.MonkeyPatch) -> Iterator[int]:
         max_response_pdu=64,
     )
     server.register_raw_db(2, bytearray(range(256)))
-    port = get_free_tcp_port()
-    server.start(port=port)
+    server.start(port=0)
+    port = server.port
     time.sleep(0.1)
     yield port
     server.stop()

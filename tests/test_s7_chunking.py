@@ -22,7 +22,6 @@ from s7commplus.server import S7CommPlusServer
 from s7commplus.subscription import SubscriptionItem
 from s7commplus.typeinfo import Softdatatype
 from s7commplus.vlq import decode_uint32_vlq, encode_uint32_vlq, encode_uint64_vlq
-from tests.conftest import get_free_tcp_port
 from tests.test_s7_tls import _generate_self_signed_cert
 
 REFUSED = 0x8104  # any non-zero return value refuses a request as a whole
@@ -419,11 +418,11 @@ def limited_plc(
     else:
         server = S7CommPlusServer(max_request_bytes=900)
     server.register_raw_db(2, bytearray(range(256)))
-    port = get_free_tcp_port()
     if request.param == "tls":
-        server.start(port=port, use_tls=True, tls_cert=tls_files[0], tls_key=tls_files[1])
+        server.start(port=0, use_tls=True, tls_cert=tls_files[0], tls_key=tls_files[1])
     else:
-        server.start(port=port)
+        server.start(port=0)
+    port = server.port
     time.sleep(0.1)
     yield server, port, connect_kwargs
     server.stop()

@@ -23,7 +23,6 @@ from s7commplus.v1_session_key.key_derivation import derive_challenge_encryption
 from s7commplus.v1_session_key.keys import _PUBLIC_KEYS, KeyFamily, get_public_key
 from s7commplus.v1_session_key.plcsim.authenticator import authenticate
 from s7commplus.v1_session_key.plcsim.seed import ORDER, encrypt_seed
-from tests.conftest import get_free_tcp_port
 
 # HarpoS7's GenerateEncryptedSeedTest: its test PRNG fills the scalar with 0x33.
 HARPO_PUBLIC_KEY = bytes.fromhex(
@@ -246,8 +245,8 @@ def _serve_plcsim(**options: Any) -> Generator[tuple[S7CommPlusServer, int], Non
     db1 = srv.get_db(1)
     assert db1 is not None
     struct.pack_into(">f", db1.data, 0, 23.5)
-    port = get_free_tcp_port()
-    srv.start(port=port)
+    srv.start(port=0)
+    port = srv.port
     time.sleep(0.1)
     yield srv, port
     srv.stop()

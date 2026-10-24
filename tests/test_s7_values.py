@@ -704,7 +704,7 @@ async def test_no_check_when_the_value_call_browsed_the_catalog(asynchronous: bo
     client.refresh_caches_if_program_changed.assert_not_called()
 
 
-# --- Typed writes in the selected write forms (legacy_write_forms) ------------------------
+# --- Typed writes in the write forms (catalog._WRITE_FORMS) ------------------------------
 
 FORMS_BROWSE = [
     {"name": "T.c", "access_sequence": "8A0E0004.1", "data_type": "CHAR"},
@@ -713,26 +713,21 @@ FORMS_BROWSE = [
     {"name": "T.dt", "access_sequence": "8A0E0004.4", "data_type": "DATEANDTIME"},
 ]
 CHAR_AND_DT = {"T.c": "Z", "T.dt": dt.datetime(2026, 10, 2, 12, 34, 56, 123000)}
-# The item values of the request write_values(CHAR_AND_DT) sends, by legacy_write_forms.
-CHAR_AND_DT_ITEMS = {
-    False: "01 00025a 02 1002082610021234561236 00",  # a USINT; a USINT array of the eight BCD bytes
-    True: "01 000a5a 02 00102610021234561236 00",  # a BYTE; a TIMESTAMP of them (0.2.0)
-}
+# The item values of the request write_values(CHAR_AND_DT) sends: a USINT; a USINT array of the eight BCD bytes.
+CHAR_AND_DT_ITEMS = "01 00025a 02 1002082610021234561236 00"
 WRITE_ANSWER = encode_uint64_vlq(0) + encode_uint32_vlq(0)
 
 
-def _forms_client(asynchronous: bool, legacy: bool) -> tuple[Any, AsyncMock | MagicMock]:
+def _forms_client(asynchronous: bool) -> tuple[Any, AsyncMock | MagicMock]:
     """A client with FORMS_BROWSE cached and a mocked transport; returns it and the send mock."""
     if asynchronous:
         async_client = S7CommPlusAsyncClient()
-        async_client.legacy_write_forms = legacy
         async_client._connected = True
         async_client._protocol_version = ProtocolVersion.V2
         async_client._symbol_catalog = SymbolCatalog.from_browse(FORMS_BROWSE)
         async_client._send_request = send = AsyncMock(return_value=WRITE_ANSWER)  # type: ignore[method-assign]
         return async_client, send
     client = S7CommPlusClient()
-    client.legacy_write_forms = legacy
     client._connection = MagicMock(protocol_version=ProtocolVersion.V2, object_qualifier_version=ProtocolVersion.V2)
     client._connection.send_request.return_value = WRITE_ANSWER
     client._symbol_catalog = SymbolCatalog.from_browse(FORMS_BROWSE)
@@ -747,33 +742,19 @@ def _sent_payload(send: AsyncMock | MagicMock) -> bytes:
 
 
 @kinds
-@pytest.mark.parametrize("legacy", [False, True])
-async def test_write_values_sends_char_and_date_and_time_in_the_selected_form(asynchronous: bool, legacy: bool) -> None:
-    # CHAR and DATE_AND_TIME have the same raw bytes in both forms; only the PValue differs.
-    client, send = _forms_client(asynchronous, legacy)
+async def test_write_values_sends_char_and_date_and_time_in_the_write_forms(asynchronous: bool) -> None:
+    client, send = _forms_client(asynchronous)
 
     await _call(client.write_values(CHAR_AND_DT))
 
-    assert bytes.fromhex(CHAR_AND_DT_ITEMS[legacy]) in _sent_payload(send)
+    assert bytes.fromhex(CHAR_AND_DT_ITEMS) in _sent_payload(send)
 
 
 @kinds
-async def test_write_value_sends_strings_as_arrays_by_default(asynchronous: bool) -> None:
-    client, send = _forms_client(asynchronous, False)
+async def test_write_value_sends_strings_as_arrays(asynchronous: bool) -> None:
+    client, send = _forms_client(asynchronous)
 
     await _call(client.write_values({"T.s": "hi", "T.w": "ä"}))
 
     # STRING[4] "hi": USINT array [4, 2, h, i, 0, 0]; WSTRING[2] "ä": UINT array [2, 1, ä, 0]
     assert bytes.fromhex("01 100206040268690000 02 1003040002000100e40000 00") in _sent_payload(send)
-
-
-@kinds
-@pytest.mark.parametrize(("name", "value"), [("T.s", "hi"), ("T.w", "ä"), ("T.s", "")])
-async def test_write_value_refuses_a_string_under_the_legacy_write_forms(asynchronous: bool, name: str, value: str) -> None:
-    # The pre-0.3 forms send a STRING's raw bytes as given, which is not the layout write_value builds.
-    client, send = _forms_client(asynchronous, True)
-
-    with pytest.raises(ValueError, match=rf"'{name}': a W?STRING is not written by value with legacy_write_forms set"):
-        await _call(client.write_values({"T.c": "Z", name: value}))
-
-    send.assert_not_called()

@@ -2122,6 +2122,7 @@ class S7CommPlusAsyncClient:
             answered += len(chunk)
         return results
 
+    @_retry_on_dropped_connection
     async def read_value(self, name: str) -> Any:
         """Read a tag, struct or array by name as a Python value.
 
@@ -2145,6 +2146,7 @@ class S7CommPlusAsyncClient:
         """
         return (await self.read_values([name]))[0]
 
+    @_retry_on_dropped_connection
     async def read_values(self, names: Sequence[str]) -> list[Any]:
         """Read several tags, structs or arrays as one batch of leaves; see :meth:`read_value`."""
         plans = await self._plan_values(names)
@@ -2163,17 +2165,10 @@ class S7CommPlusAsyncClient:
         runs the program-change check once, as for :meth:`read_value`, before
         anything is encoded or sent.
 
-        Leaves go out in the forms :attr:`legacy_write_forms` selects. With it
-        set, a STRING or WSTRING leaf raises ``ValueError`` before anything is
-        sent, because those forms send the raw bytes as given rather than the
-        layout this method builds; CHAR and DATE_AND_TIME have the same raw bytes
-        in both forms.
-
         Raises:
             KeyError: ``name`` is neither a tag nor a struct or array in the catalog.
-            TypeError, ValueError: ``value`` does not fit the PLC type, a leaf
-                is too large for one request, or a STRING or WSTRING leaf is
-                written with :attr:`legacy_write_forms` set; nothing is sent.
+            TypeError, ValueError: ``value`` does not fit the PLC type, or a
+                leaf is too large for one request; nothing is sent.
             RuntimeError: The PLC rejected one of the items, or a failure
                 interrupted a split batch; it is raised from the first failed
                 item's error, and the other items may have been written.
@@ -2182,7 +2177,7 @@ class S7CommPlusAsyncClient:
 
     async def write_values(self, values: Mapping[str, Any]) -> None:
         """Write several tags, structs or arrays as one batch of leaves; see :meth:`write_value`."""
-        encoded = _encode_values(await self._plan_values(list(values)), values, self.legacy_write_forms)
+        encoded = _encode_values(await self._plan_values(list(values)), values)
         _raise_failures(await self.write_tags(encoded), "writes")
 
     async def _plan_values(self, names: Sequence[str]) -> list[_ValuePlan]:

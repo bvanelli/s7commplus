@@ -305,7 +305,7 @@ once more on the new session:
 
 Only these reads are retried: ``db_read``, ``db_read_multi``, ``read_area``,
 ``read_symbolic``, ``read_symbolic_multi``, ``read_tag``, ``read_tags``,
-``browse`` (and through it ``refresh_tag_catalog`` and ``resolve_tag``) and
+``read_value``, ``read_values``, ``browse`` (and through it ``refresh_tag_catalog`` and ``resolve_tag``) and
 ``get_cpu_state``. Other operations, such as ``explore``, ``list_datablocks``
 and ``read_alarms``, are not. **Writes are never retried**: when a request is
 lost, it is unknown whether the PLC applied it, so the error reaches the caller.

@@ -33,12 +33,14 @@ from .codec import (
     encode_item_address,
     encode_object_qualifier,
     encode_pvalue_blob,
+    PValueArray,
+    encode_pvalue_array,
     encode_pvalue_typed,
     parse_create_object_session_id,
     parse_or_raise_for_return_value,
     skip_typed_value,
 )
-from .catalog import SymbolCatalog, SymbolicTag, TagResult
+from .catalog import SymbolCatalog, SymbolicTag, TagResult, _write_type
 from .connection import (
     FamilyOnlyFingerprintError,
     S7CommPlusConnection,
@@ -82,7 +84,7 @@ _T = TypeVar("_T")
 _P = ParamSpec("_P")
 DBWriteItem: TypeAlias = tuple[int, int, bytes, DataType]
 SymbolicReadItem: TypeAlias = tuple[int, list[int]] | tuple[int, list[int], int]
-SymbolicWriteItem: TypeAlias = tuple[int, list[int], bytes, int, DataType]
+SymbolicWriteItem: TypeAlias = tuple[int, list[int], bytes, int, DataType | PValueArray]
 
 
 def _normalize_write_item(item: DBWriteItem) -> tuple[int, int, bytes, DataType]:
@@ -1378,6 +1380,13 @@ class S7CommPlusClient:
         written and whose ``not_sent`` positions were never sent. A failure of
         the first request propagates unchanged, as for a single request.
 
+        Each value is the tag's raw big-endian bytes in the layout
+        :meth:`read_tags` returns. A STRING is the bytes ``[max length, length,
+        characters...]`` and a WSTRING the same as big-endian UINTs, both padded
+        with zeros to the declared length (``SymbolicTag.string_length``); a
+        DATE_AND_TIME is its eight BCD bytes. A CHAR goes out as a USINT, and a
+        STRING, WSTRING or DATE_AND_TIME as an array of that layout.
+
         Writes are deliberately never retried: a transport failure can leave
         the caller unable to know whether the PLC applied the request, and a
         stale address may already have written another variable. With
@@ -1395,13 +1404,13 @@ class S7CommPlusClient:
         if not values:
             return []
         tags, _ = self._resolve_tags(list(values))
-        unsupported = [tag.name for tag in tags if tag.datatype is None]
+        unsupported = [tag.name for tag in tags if _write_type(tag) is None]
         if unsupported:
             raise ValueError(f"No S7CommPlus wire datatype mapping for: {', '.join(unsupported)}")
         items: list[SymbolicWriteItem] = [
-            (tag.access_area, list(tag.lids), data, 0, tag.datatype)
+            (tag.access_area, list(tag.lids), data, 0, write_type)
             for tag, data in zip(tags, values.values())
-            if tag.datatype is not None
+            if (write_type := _write_type(tag)) is not None
         ]
 
         def build_write(chunk: list[SymbolicWriteItem]) -> bytes:
@@ -2499,7 +2508,10 @@ def _build_multi_symbolic_write_payload(items: Sequence[SymbolicWriteItem], prot
         payload += address
     for index, (_access_area, _lids, data, _symbol_crc, datatype) in enumerate(items, 1):
         payload += encode_uint32_vlq(index)
-        payload += encode_pvalue_typed(datatype, data)
+        if isinstance(datatype, PValueArray):
+            payload += encode_pvalue_array(datatype.element, data)
+        else:
+            payload += encode_pvalue_typed(datatype, data)
     payload += bytes([0x00])
     payload += encode_object_qualifier(protocol_version=protocol_version)
     payload += struct.pack(">I", 0)

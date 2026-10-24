@@ -159,6 +159,18 @@ Failed items are reported per tag and not retried automatically unless
 layout, call ``refresh_tag_catalog``. Unknown
 names and unsupported PLC datatypes raise before a request is sent.
 
+Raw values use the layout a read returns. A STRING is written as the bytes
+``[max length, length, characters...]`` and a WSTRING the same as big-endian
+UINTs, both padded with zeros to the declared length (``tag.string_length``),
+and a DATE_AND_TIME as its eight BCD bytes. ``write_tags`` sends a CHAR as a
+USINT, a STRING and a WSTRING as USINT and UINT arrays of that layout, and a
+DATE_AND_TIME as an array of its eight bytes. An S7-1500 (CPU 1512SP-1 PN,
+FW V2.9 with TLS) and PLCSIM Advanced V8 (CPU 1511, FW V2.9 with TLS and FW
+V2.8 without) accept these forms and read the values back. Both refuse the
+scalar forms 0.3.0 and earlier sent (a CHAR as a BYTE, a STRING or WSTRING as an S7STRING
+or WSTRING PValue, a DATE_AND_TIME as a TIMESTAMP), which are no longer
+available. An S7-1200 has not been checked.
+
 ``refresh_caches_if_program_changed()`` checks before rebuilding: it compares the
 PLC's data-block list with the one the catalog was built from and, if that is
 unchanged, each cached data block's type-info modification time (one small

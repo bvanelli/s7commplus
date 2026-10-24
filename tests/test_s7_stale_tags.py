@@ -21,7 +21,6 @@ from s7commplus.protocol import DataType, Ids, ProtocolVersion
 from s7commplus.server import S7CommPlusServer
 from s7commplus.typeinfo import Softdatatype
 from s7commplus.vlq import encode_uint32_vlq, encode_uint64_vlq
-from tests.conftest import get_free_tcp_port
 
 TIME = Ids.VARIABLE_TYPE_STRUCT_MODIFICATION_TIME
 BLOCKS = [{"name": "DB1", "number": 1, "rid": 0x8A0E0001}]
@@ -352,8 +351,8 @@ async def test_async_type_info_that_no_longer_answers_refreshes_once() -> None:
 def emulator() -> Generator[tuple[S7CommPlusServer, int], None, None]:
     server = S7CommPlusServer()
     server.register_raw_db(1, bytearray(16))
-    port = get_free_tcp_port()
-    server.start(host="127.0.0.1", port=port)
+    server.start(host="127.0.0.1", port=0)
+    port = server.port
     time.sleep(0.1)
     yield server, port
     server.stop()

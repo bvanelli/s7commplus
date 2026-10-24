@@ -24,7 +24,6 @@ from s7commplus.protocol import DataType, FunctionCode, LegitimationId, Opcode, 
 from s7commplus.server import S7CommPlusServer
 from s7commplus.v1_session_key.keys import KeyFamily
 from s7commplus.vlq import encode_uint32_vlq
-from tests.conftest import get_free_tcp_port
 
 TEST_FINGERPRINT = "01:BD426B091F08731A"
 TEST_CHALLENGE = bytes(range(20))
@@ -62,8 +61,8 @@ def session_key_server(monkeypatch: pytest.MonkeyPatch) -> Generator[tuple[S7Com
     db1 = srv.get_db(1)
     assert db1 is not None
     struct.pack_into(">f", db1.data, 0, 23.5)
-    port = get_free_tcp_port()
-    srv.start(port=port)
+    srv.start(port=0)
+    port = srv.port
     time.sleep(0.1)
     yield srv, port
     srv.stop()
@@ -167,8 +166,8 @@ async def test_async_unknown_fingerprint_cannot_bypass_session_key_setup() -> No
         session_challenge=TEST_CHALLENGE,
         session_key=TEST_SESSION_KEY,
     )
-    port = get_free_tcp_port()
-    srv.start(port=port)
+    srv.start(port=0)
+    port = srv.port
     time.sleep(0.1)
     client = S7CommPlusAsyncClient()
     try:

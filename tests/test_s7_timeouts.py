@@ -29,7 +29,6 @@ from s7commplus.server import S7CommPlusServer
 from s7commplus.subscription import SubscriptionItem, SubscriptionRegistry
 from s7commplus.transport import ISOTCPConnection, _configure_tcp_socket
 from s7commplus.vlq import encode_uint32_vlq
-from tests.conftest import get_free_tcp_port
 
 # The header of a TPKT frame announcing 32 bytes; sent alone, the frame stops part-way.
 PARTIAL_FRAME = b"\x03\x00\x00\x20"
@@ -135,10 +134,10 @@ class _Proxy:
 
 @pytest.fixture()
 def emulator() -> Iterator[int]:
-    port = get_free_tcp_port()
     server = S7CommPlusServer()
     server.register_raw_db(1, bytearray(16))
-    server.start(port=port)
+    server.start(port=0)
+    port = server.port
     time.sleep(0.1)
     yield port
     server.stop()

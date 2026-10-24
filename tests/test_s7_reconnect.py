@@ -16,7 +16,6 @@ from s7commplus.client import S7CommPlusClient
 from s7commplus.error import S7ConnectionError
 from s7commplus.protocol import LegitimationType, ProtocolVersion
 from s7commplus.server import S7CommPlusServer
-from tests.conftest import get_free_tcp_port
 from tests.test_s7_tls import _generate_self_signed_cert
 
 DB1 = b"\x01\x02\x03\x04"
@@ -29,10 +28,10 @@ def _start(srv: S7CommPlusServer, port: int, **kwargs: object) -> None:
 
 @pytest.fixture()
 def server() -> Iterator[tuple[S7CommPlusServer, int]]:
-    port = get_free_tcp_port()
     srv = S7CommPlusServer()
     srv.register_raw_db(1, bytearray(DB1))
-    _start(srv, port)
+    _start(srv, 0)
+    port = srv.port
     yield srv, port
     srv.stop()
 
@@ -40,10 +39,10 @@ def server() -> Iterator[tuple[S7CommPlusServer, int]]:
 @pytest.fixture()
 def tls_server() -> Iterator[tuple[int, str]]:
     cert_path, key_path = _generate_self_signed_cert()
-    port = get_free_tcp_port()
     srv = S7CommPlusServer(protocol_version=ProtocolVersion.V2)
     srv.register_raw_db(1, bytearray(DB1))
-    _start(srv, port, use_tls=True, tls_cert=cert_path, tls_key=key_path)
+    _start(srv, 0, use_tls=True, tls_cert=cert_path, tls_key=key_path)
+    port = srv.port
     yield port, cert_path
     srv.stop()
     os.unlink(cert_path)

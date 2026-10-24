@@ -23,7 +23,6 @@ from s7commplus.error import S7ConnectionError, S7TimeoutError
 from s7commplus.protocol import ProtocolVersion
 from s7commplus.server import S7CommPlusServer
 from s7commplus.vlq import encode_uint32_vlq, encode_uint64_vlq
-from tests.conftest import get_free_tcp_port
 
 DB1 = b"\x01\x02\x03\x04"
 READS = {
@@ -114,10 +113,10 @@ def _start(srv: S7CommPlusServer, port: int) -> None:
 
 
 def _emulator(**kwargs: Any) -> Iterator[tuple[S7CommPlusServer, int]]:
-    port = get_free_tcp_port()
     srv = S7CommPlusServer(**kwargs)
     srv.register_raw_db(1, bytearray(DB1))
-    _start(srv, port)
+    _start(srv, 0)
+    port = srv.port
     yield srv, port
     srv.stop()
 

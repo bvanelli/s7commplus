@@ -482,15 +482,6 @@ class S7CommPlusClient:
             TLS record, COTP and TPKT around it are not counted. A larger batch
             is split; an item too large for one request raises ``ValueError``
             before anything is sent.
-        legacy_write_forms: Send CHAR, STRING, WSTRING and DATE_AND_TIME from
-            :meth:`write_tags` in the forms used before 0.3 (default ``False``):
-            a CHAR as a BYTE, a STRING or WSTRING as an S7STRING or WSTRING
-            PValue of the value's bytes as given, and a DATE_AND_TIME as a
-            TIMESTAMP of its eight BCD bytes. By default a CHAR goes out as a
-            USINT and the other three as USINT, UINT and USINT arrays of the
-            layout :meth:`read_tags` returns. PLCSIM Advanced V8 (CPU 1511, FW
-            V2.9 with TLS and FW V2.8 without) refused the old forms and accepts
-            the default ones; neither has been checked on a hardware PLC.
     """
 
     def __init__(self) -> None:
@@ -516,10 +507,6 @@ class S7CommPlusClient:
         # about 860 bytes, was answered; one with a 1034-byte payload, about 1060
         # bytes, made the PLC drop the connection. Unverified on hardware.
         self.max_request_bytes = 900
-        # Send CHAR, STRING, WSTRING and DATE_AND_TIME in their pre-0.3 forms (see
-        # the class docstring and catalog._WRITE_FORMS). PLCSIM Advanced refused
-        # them; no hardware PLC has been checked with either form.
-        self.legacy_write_forms: bool = False
         # What the cached catalog was built from, for refresh_caches_if_program_changed:
         # the data-block list, and type-info RID -> VariableTypeStructModificationTime
         # of each data block whose time the PLC reported.
@@ -1471,9 +1458,8 @@ class S7CommPlusClient:
         characters...]`` and a WSTRING the same as big-endian UINTs, both padded
         with zeros to the declared length (``SymbolicTag.string_length``); a
         DATE_AND_TIME is its eight BCD bytes. :meth:`SymbolicTag.encode_value`
-        builds these from Python values. With :attr:`legacy_write_forms` set,
-        CHAR, STRING, WSTRING and DATE_AND_TIME go out in their pre-0.3 forms
-        instead, and a STRING or WSTRING value is sent as given.
+        builds these from Python values. A CHAR goes out as a USINT, and a
+        STRING, WSTRING or DATE_AND_TIME as an array of that layout.
 
         Writes are deliberately never retried: a transport failure can leave
         the caller unable to know whether the PLC applied the request, and a
@@ -1492,14 +1478,13 @@ class S7CommPlusClient:
         if not values:
             return []
         tags, _ = self._resolve_tags(list(values))
-        legacy = self.legacy_write_forms
-        unsupported = [tag.name for tag in tags if _write_type(tag, legacy) is None]
+        unsupported = [tag.name for tag in tags if _write_type(tag) is None]
         if unsupported:
             raise ValueError(f"No S7CommPlus wire datatype mapping for: {', '.join(unsupported)}")
         items: list[SymbolicWriteItem] = [
             (tag.access_area, list(tag.lids), data, 0, write_type)
             for tag, data in zip(tags, values.values())
-            if (write_type := _write_type(tag, legacy)) is not None
+            if (write_type := _write_type(tag)) is not None
         ]
 
         def build_write(chunk: list[SymbolicWriteItem]) -> bytes:
@@ -2376,6 +2361,11 @@ def _parse_read_response(response: bytes, expected_count: Optional[int] = None) 
         raise RuntimeError(f"Symbolic multi-read failed: PLC answered {len(values) + len(errors)} of {expected_count} items")
 
     max_item = max(max(values.keys(), default=0), max(errors.keys(), default=0))
+    # Every requested item is answered once, with a value or an error, so item
+    # numbers run 1..N for N answered items. A higher number would make the list
+    # below as long as the number says (up to 2**32 entries from a few bytes).
+    if max_item > len(values) + len(errors):
+        raise ValueError(f"Read response names item {max_item} but answers only {len(values) + len(errors)} items")
     results: list[Optional[bytes]] = []
     for i in range(1, max_item + 1):
         if i in values:

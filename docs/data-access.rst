@@ -164,17 +164,12 @@ Raw values use the layout a read returns. A STRING is written as the bytes
 UINTs, both padded with zeros to the declared length (``tag.string_length``),
 and a DATE_AND_TIME as its eight BCD bytes. ``write_tags`` sends a CHAR as a
 USINT, a STRING and a WSTRING as USINT and UINT arrays of that layout, and a
-DATE_AND_TIME as an array of its eight bytes. PLCSIM Advanced V8 (CPU 1511,
-FW V2.9 with TLS and FW V2.8 without) refused the forms earlier versions sent
-and accepts these, and they read back correctly; they are verified on PLCSIM
-only, not on a hardware PLC.
-
-To send the forms of earlier versions instead, set
-``client.legacy_write_forms = True``: a CHAR as a BYTE, a STRING or WSTRING as
-an S7STRING or WSTRING PValue of the value's bytes exactly as given, and a
-DATE_AND_TIME as a TIMESTAMP of its eight bytes. That is the behaviour of
-0.2.0, which PLCSIM refused and which has not been checked on a hardware PLC
-either. On a real PLC, try either form on a disposable tag first.
+DATE_AND_TIME as an array of its eight bytes. An S7-1500 (CPU 1512SP-1 PN,
+FW V2.9 with TLS) and PLCSIM Advanced V8 (CPU 1511, FW V2.9 with TLS and FW
+V2.8 without) accept these forms and read the values back. Both refuse the
+scalar forms 0.2.0 sent (a CHAR as a BYTE, a STRING or WSTRING as an S7STRING
+or WSTRING PValue, a DATE_AND_TIME as a TIMESTAMP), which are no longer
+available. An S7-1200 has not been checked.
 
 ``refresh_caches_if_program_changed()`` checks before rebuilding: it compares the
 PLC's data-block list with the one the catalog was built from and, if that is

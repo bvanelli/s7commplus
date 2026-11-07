@@ -1,6 +1,7 @@
 """Tests for S7CommPlus codec (header encoding, typed values, payload builders)."""
 
 import struct
+from typing import Any
 
 import pytest
 
@@ -769,6 +770,32 @@ class TestDecodePValue:
         result, consumed = decode_pvalue_to_bytes(data, 0)
         # Result re-encodes each element as VLQ
         assert result == encode_uint32_vlq(100) + encode_uint32_vlq(200)
+
+
+class TestVlqArrayElements:
+    """Array elements use the VLQ reader of their own type (#147)."""
+
+    @pytest.mark.parametrize(
+        "datatype, encode, value",
+        [
+            (DataType.ULINT, encode_uint64_vlq, 2**40),
+            (DataType.ULINT, encode_uint64_vlq, 2**64 - 1),
+            (DataType.LINT, encode_int64_vlq, -(2**40)),
+            (DataType.LINT, encode_int64_vlq, 2**62),
+            (DataType.TIMESPAN, encode_int64_vlq, 2**40),
+            (DataType.DINT, encode_int32_vlq, -(2**31)),
+            (DataType.UDINT, encode_uint32_vlq, 2**32 - 1),
+        ],
+    )
+    def test_decode_and_skip_stop_after_the_element(self, datatype: DataType, encode: Any, value: int) -> None:
+        element = encode(value)
+        pvalue = bytes([0x10, datatype]) + encode_uint32_vlq(1) + element + b"\xaa"
+        assert decode_pvalue_to_bytes(pvalue, 0) == (element, len(pvalue) - 1)
+        assert skip_typed_value(pvalue, 2, datatype, 0x10) == len(pvalue) - 1
+
+    def test_negative_dint_scalar_is_skipped(self) -> None:
+        element = encode_int32_vlq(-(2**31))
+        assert skip_typed_value(element + b"\xaa", 0, DataType.DINT, 0x00) == len(element)
 
 
 class TestPValueElementSize:

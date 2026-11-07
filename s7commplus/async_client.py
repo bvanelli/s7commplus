@@ -2453,7 +2453,9 @@ class S7CommPlusAsyncClient:
             await self._invalidate_integrity_failure()
             raise S7IntegrityError(f"Authenticated response used unauthenticated frame version V{version}; reconnect")
         response = response_data[consumed : consumed + data_length]
-        if self._session_key is not None:
+        if version == ProtocolVersion.V3:
+            if self._session_key is None:
+                raise S7ConnectionError("V3 response received without a session key")
             try:
                 response = _verify_v3_hmac(response, self._session_key)
             except S7IntegrityError:
@@ -2644,7 +2646,9 @@ class S7CommPlusAsyncClient:
             await ensure(frag_len)
             fragment_data = bytes(buf[:frag_len])
             del buf[:frag_len]
-            if digest_state is not None:
+            if fragment_version == ProtocolVersion.V3:
+                if digest_state is None:
+                    raise S7ConnectionError("V3 response received without a session key")
                 try:
                     fragment_data = (
                         legacy_verifier.verify(fragment_data)

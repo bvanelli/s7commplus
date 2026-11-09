@@ -100,9 +100,12 @@ class Member:
     lid: int
     offset: int  # StdO: standard (non-optimized) byte offset
     rid: int  # raw type RID
-    section: str = ""  # Input/Output/InOut/Static/Temp/Constant (FB/OB); "" for a DB
+    section: str = ""  # Input/Output/InOut/Static/Temp/Constant (FB/OB), also Return (FC); "" for a DB
     fields: list[Member] = field(default_factory=list)  # sub-members for a UDT/Struct type
     id: int | None = None  # interface ID, unique among its siblings; None when the XML has none
+    # the type a SubPartIndex references without the interface embedding it, as BlockInterface.references
+    # names it; it can differ from element_type (IEC_TIMER for a TON_TIME instance)
+    referenced_type: str | None = None
 
     @property
     def element_type(self) -> str:
@@ -122,14 +125,21 @@ class BlockInterface:
     Attributes:
         members: The block's top-level members, as :func:`parse_block_interface` returns them.
         source: The FB an instance DB copies its interface from, or None for any
-            other interface. A DB declared of a UDT has no source.
-        references: Names of the other blocks the interface mentions: the ``Block``
+            other interface. The FB is embedded in the instance DB's interface, so a
+            library FB has a source too. A DB declared of a UDT has none, and neither
+            does the instance DB of a system type such as ``IEC_TIMER``: the
+            interface only references the type, so the DB has no members and the
+            type is in `references`.
+        references: Names of the other types the interface mentions: the ``Block``
             of every ``<Part>``, every ``<ExternalType>`` and every UDT or FB a
             member ``Type`` quotes, array element types included. A member ``Type``
             that names a UDT without quotes is not listed unless a ``<Part>`` or
             ``<ExternalType>`` also names it. The block's own name is left out, and
-            so is an instance DB's FB: it is in `source` instead, so a caller
-            exploring the blocks an interface is built from needs both.
+            so is the FB of an instance DB that has a `source`: it is there instead, so a caller
+            exploring the blocks an interface is built from needs both. Besides the
+            program's UDTs and FBs, it holds the library and system types the interface
+            references without embedding, such as ``IEC_TIMER``; these are not blocks of
+            the program, and they are the names :attr:`Member.referenced_type` gives.
     """
 
     members: list[Member]
@@ -258,18 +268,24 @@ def _parse_source_part(part: ET.Element, section: str, seen: set[int], limits: _
     # Flat DB/UDT: variables are direct <Member> children of <Payload><Root>.
     # A UDT's fields inherit the section of the member typed with it, like a Struct's fields do.
     members = _build_members(part.findall("./Payload/Root"), section, subparts, seen, limits)
-    # OB, FC and library FB: a section header in Root holds its variables itself,
-    # and its SubPartIndex selects an empty <Part/>.
-    # Constants are left out in both layouts: they have a LID, but the PLC refuses to read it.
+    # FB, FC and OB: Root holds one header per section, in declaration order. A header holds its
+    # variables itself (OB start info, FC Return, library FBs) or selects the <Part Kind="*Section">
+    # holding them; a block may mix both.
+    read: set[int] = set()
     for header in part.findall("./Payload/Root/Member"):
-        if header.get("RID") is None and header.get("Name") != "Constant":
-            members += _build_members([header], header.get("Name", ""), subparts, seen, limits)
-    # User FB: variables live in the <Part Kind="*Section"> entries of <SubParts>.
+        if header.get("RID") is not None:
+            continue
+        members += _build_members([header], header.get("Name", ""), subparts, seen, limits)
+        target = _subpart(header, subparts, seen)
+        kind = "" if target is None else target.get("Kind", "")
+        if target is not None and id(target) not in read and kind.endswith("Section"):
+            read.add(id(target))
+            members += _build_members(target.findall("./Payload/Member"), kind[: -len("Section")], subparts, seen, limits)
+    # a section part no header selects (corrupt SubPartIndex) is still read, after the declared ones
     for sp in subparts:
         kind = sp.get("Kind", "")
-        if not kind.endswith("Section") or kind == "ConstantSection":
-            continue
-        members += _build_members(sp.findall("./Payload/Member"), kind[: -len("Section")], subparts, seen, limits)
+        if id(sp) not in read and kind.endswith("Section"):
+            members += _build_members(sp.findall("./Payload/Member"), kind[: -len("Section")], subparts, seen, limits)
     return members
 
 
@@ -300,6 +316,8 @@ def _build_member(m: ET.Element, section: str, subparts: list[ET.Element], seen:
         section=section,
         fields=_member_fields(target, section, subparts, seen, limits),
         id=None if raw_id is None else int(raw_id),
+        # a referenced, not embedded, type is a part with a Block but no Kind
+        referenced_type=None if target is None or target.get("Kind") else target.get("Block") or None,
     )
 
 
@@ -339,9 +357,13 @@ def parse_block_interface(xml_text: str, max_members: int = 250_000, max_depth: 
     DB/UDT, or for an FB/OB from the section headers there, which hold the
     variables of an OB, FC or library FB themselves, and from the
     ``<Part Kind="*Section">`` entries. Members are returned in declaration
-    order, each tagged with its section (Input/Output/... for FB/OB; empty for
-    DB/UDT). Named constants (the ``Constant`` section) are left out: the PLC
-    refuses to read them, so a constant's ``LineComm`` comment resolves to None.
+    order: a DB's or UDT's as ``<Root>`` lists them, an FB's, FC's or OB's
+    section by section as the section headers in ``<Root>`` list them, each
+    tagged with its section (Input/Output/... for FB/FC/OB; empty for DB/UDT).
+    A ``*Section`` part that no header selects is read after the declared
+    sections. Named constants are returned in the ``Constant`` section, so their
+    ``LineComm`` comments resolve, but they have no value to read: the PLC
+    refuses a read of a constant's LID.
 
     When a member is of a UDT, an FB or an inline Struct, the interface embeds
     that type's definition under the primary part's ``<SubParts>``; the member's
@@ -367,8 +389,8 @@ def parse_block_interface(xml_text: str, max_members: int = 250_000, max_depth: 
         The block's top-level members, with nested members in :attr:`Member.fields`.
 
     Raises:
-        ValueError: The interface expands to more than ``max_members`` members
-            or nests deeper than ``max_depth`` levels.
+        ValueError: The text is not well-formed XML, or the interface expands to
+            more than ``max_members`` members or nests deeper than ``max_depth`` levels.
     """
     return BlockInterface.from_xml(xml_text, max_members, max_depth).members
 
@@ -407,8 +429,9 @@ def resolve_id_path(
     ``name[0,1]``.
 
     A member whose type the interface did not embed has no fields. The walk
-    continues in the members `types` holds for its :attr:`Member.element_type`,
-    and a path below a type that is in neither is not resolved.
+    continues in the members `types` holds for its :attr:`Member.referenced_type`,
+    or for its :attr:`Member.element_type` when it has none, and a path below a
+    type that is in neither is not resolved.
 
     Example::
 
@@ -418,10 +441,9 @@ def resolve_id_path(
     Args:
         members: Member tree of the block the path starts in.
         id_path: Colon-joined path as written in a ``<Comment Path="...">``.
-        types: Members of the types the interface did not embed, by name: the
-            interface of a UDT or FB explored on its own, or a library type such
-            as ``IEC_TIMER`` or ``TON_TIME``, keyed by :attr:`Member.element_type`.
-            :attr:`BlockInterface.references` names the UDTs and FBs.
+        types: Members of the types the interface did not embed, by the names
+            :attr:`BlockInterface.references` gives them: the interface of a UDT,
+            FB or system type explored on its own, such as ``IEC_TIMER``.
 
     Returns:
         The dotted name path, or None when a segment is malformed or names no member.
@@ -435,11 +457,18 @@ def resolve_id_path(
         entry = next((member for member in members if member.id == member_id), None)
         if entry is None:
             return None
-        names.append(entry.name + (matched.group(2) or ""))
+        prefix = _ARRAY_PREFIX.match(entry.data_type)
+        # an element needs one index per dimension ("Array[0..1, 0..2] of" has 2); no index names the whole member
+        dimensions = prefix.group().count(",") + 1 if prefix else 0
+        index = matched.group(2) or ""
+        if index and index.count(",") + 1 != dimensions:
+            return None
+        names.append(entry.name + index)
         # an embedded type carries its own ids; only a missing one needs the caller's types.
-        # An inline Struct is always embedded, so an empty one must not be looked up there.
-        if entry.fields or entry.element_type == "Struct":
+        # An inline Struct is always embedded, so an empty one must not be looked up there;
+        # its type is unquoted, unlike a UDT that happens to be named "Struct".
+        if entry.fields or entry.data_type[prefix.end() if prefix else 0 :] == "Struct":
             members = entry.fields
         else:
-            members = (types or {}).get(entry.element_type, ())
+            members = (types or {}).get(entry.referenced_type or entry.element_type, ())
     return ".".join(names)

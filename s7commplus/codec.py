@@ -18,7 +18,7 @@ from dataclasses import dataclass
 from typing import Any, Optional
 
 from .error import S7ReturnValueError
-from .protocol import PROTOCOL_ID, DataType, ElementID, Ids, ObjectId, ProtocolVersion, service_result_code
+from .protocol import PROTOCOL_ID, DataType, ElementID, Ids, ObjectId, ProtocolVersion, ReturnValue
 from .vlq import (
     decode_int32_vlq,
     decode_int64_vlq,
@@ -157,7 +157,7 @@ def decode_response_header(data: bytes, offset: int = 0) -> dict[str, Any]:
 def parse_or_raise_for_return_value(response: bytes, operation: str) -> int:
     """Raise if a response's leading ReturnValue is truncated or non-zero.
 
-    The low 16 bits of an error ReturnValue hold a signed error code (see `service_result_code`).
+    The error message names the decoded code, generic category and source (see `ReturnValue`).
 
     Args:
         response: Raw response payload, starting with the ReturnValue.
@@ -175,8 +175,8 @@ def parse_or_raise_for_return_value(response: bytes, operation: str) -> int:
     except ValueError as error:
         raise ValueError(f"{operation}: truncated ReturnValue") from error
     if return_value != 0:
-        code = service_result_code(return_value)
-        raise S7ReturnValueError(f"{operation} failed: PLC returned 0x{return_value:016X} (error {code})", return_value, response)
+        result = ReturnValue.from_int(return_value)
+        raise S7ReturnValueError(f"{operation} failed: PLC returned 0x{result.raw:016X} ({result})", return_value, response)
     return offset
 
 

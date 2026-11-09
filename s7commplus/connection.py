@@ -100,7 +100,6 @@ from .protocol import (
     Opcode,
     ProtocolVersion,
     ServiceResult,
-    service_result_code,
 )
 from .vlq import decode_uint32_vlq, decode_uint64_vlq, encode_uint32_vlq, encode_uint64_vlq
 
@@ -1037,7 +1036,8 @@ def _check_v1_legitimation_response(payload: bytes, raw_payload: Optional[bytes]
         if signed < 0:
             # Pass 1: a negative reading is always the return value, in either
             # reading position, and always a rejection.
-            if service_result_code(signed) in _LEGITIMATION_REJECTED:
+            low = signed & 0xFFFF
+            if (low - 0x10000 if low & 0x8000 else low) in _LEGITIMATION_REJECTED:
                 raise S7AuthenticationError(
                     f"Post-auth legitimation rejected by PLC (wrong password): return_value=0x{return_value:X}"
                 )

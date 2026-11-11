@@ -81,7 +81,6 @@ from .codec import (
     decode_header,
     encode_header,
     encode_object_qualifier,
-    encode_pvalue_blob,
     encode_typed_value,
     parse_create_object_attributes,
     parse_create_object_session_id,
@@ -110,6 +109,7 @@ from .connection import (
     _check_v1_legitimation_response,
     _derive_oms_secret,
     _encode_security_key_struct,
+    _build_subscription_credit_frame,
     _frame_request,
     _generate_session_key_blob,
     _incoming_frame_opcode,
@@ -187,7 +187,7 @@ from .protocol import (
 )
 from .transport import _configure_tcp_socket
 from .v1_session_key.keys import KeyFamily
-from .vlq import decode_uint32_vlq, decode_uint64_vlq, encode_uint32_vlq
+from .vlq import decode_uint64_vlq, encode_uint32_vlq
 
 logger = logging.getLogger(__name__)
 
@@ -1481,51 +1481,44 @@ class S7CommPlusAsyncClient:
         return _parse_cpu_state(response)
 
     async def upload_block(self, block_type: int, block_number: int) -> bytes:
-        """Upload (read) a program block from the PLC.
+        """Upload (read) a program block from the PLC. Not implemented yet.
 
-        .. warning:: This method is **experimental** and may change.
+        Earlier versions sent a guessed GET_VAR_SUBSTREAMED request that follows
+        no captured exchange, and returned whatever came back without checking
+        the PLC's return value. Until the request is derived from a real block
+        upload and validated on hardware, this refuses without sending anything.
 
         Args:
-            block_type: Block type (e.g. 0x08 for DB, 0x0C for FC).
+            block_type: Block type.
             block_number: Block number.
 
-        Returns:
-            Raw block data.
+        Raises:
+            NotImplementedError: Always.
         """
-        payload = bytearray()
-        payload += struct.pack(">I", self._session_id)
-        payload += encode_uint32_vlq(1)  # item count
-        payload += encode_uint32_vlq(1)  # field count
-        payload += encode_uint32_vlq(block_type)
-        payload += encode_uint32_vlq(block_number)
-        payload += struct.pack(">I", 0)
-
-        response = await self._send_request(FunctionCode.GET_VAR_SUBSTREAMED, bytes(payload))
-        # Skip return code VLQ
-        offset = 0
-        _, consumed = decode_uint32_vlq(response, offset)
-        offset += consumed
-        return response[offset:]
+        raise NotImplementedError(
+            "Uploading a block is not implemented yet: the request has not been derived from a capture or validated on a real PLC"
+        )
 
     async def download_block(self, block_type: int, block_number: int, data: bytes) -> None:
-        """Download (write) a program block to the PLC.
+        """Download (write) a program block to the PLC. Not implemented yet.
 
-        .. warning:: This method is **experimental** and may change.
+        Earlier versions sent a guessed SET_VAR_SUBSTREAMED request that follows
+        no captured exchange, and ignored the PLC's answer, so they could report
+        success when nothing was written. Until the request is derived from a
+        real block download and validated on hardware, this refuses without
+        sending anything.
 
         Args:
             block_type: Block type.
             block_number: Block number.
             data: Raw block data to write.
-        """
-        payload = bytearray()
-        payload += struct.pack(">I", self._session_id)
-        payload += encode_uint32_vlq(1)
-        payload += encode_uint32_vlq(block_type)
-        payload += encode_uint32_vlq(block_number)
-        payload += encode_pvalue_blob(data)
-        payload += struct.pack(">I", 0)
 
-        await self._send_request(FunctionCode.SET_VAR_SUBSTREAMED, bytes(payload))
+        Raises:
+            NotImplementedError: Always.
+        """
+        raise NotImplementedError(
+            "Downloading a block is not implemented yet: the request has not been derived from a capture or validated on a real PLC"
+        )
 
     async def create_subscription(
         self,
@@ -2350,17 +2343,18 @@ class S7CommPlusAsyncClient:
         """Send a fire-and-forget update before finite credits expire."""
         if not 1 <= credit_limit <= 255:
             raise ValueError("credit_limit must be between 1 and 255")
-        value = bytes([0x00, DataType.INT]) + struct.pack(">h", credit_limit)
-        payload = _build_set_variable_payload(subscription_id, Ids.SUBSCRIPTION_CREDIT_LIMIT, value)
         async with self._lock:
             if not self._connected or self._writer is None or self._reader is None or self._blocked_by_rebuild():
                 raise S7NotConnectedError("Not connected")
-            sequence = self._next_sequence_number()
-            header = struct.pack(">BHHHHIB", Opcode.REQUEST, 0, FunctionCode.SET_VARIABLE, 0, sequence, self._session_id, 0x74)
-            integrity = encode_uint32_vlq(self._integrity_id_write) if self._with_integrity_id else b""
-            request = header + payload[:-4] + integrity + payload[-4:]
-            frame = encode_header(self._protocol_version, len(request)) + request
-            frame += struct.pack(">BBH", 0x72, self._protocol_version, 0)
+            frame = _build_subscription_credit_frame(
+                subscription_id,
+                credit_limit,
+                self._next_sequence_number(),
+                self._session_id,
+                self._integrity_id_write if self._with_integrity_id else None,
+                self._protocol_version,
+                self._session_key,
+            )
             await self._send_cotp_dt(frame)
             if self._with_integrity_id:
                 self._integrity_id_write = (self._integrity_id_write + 1) & 0xFFFFFFFF

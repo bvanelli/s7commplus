@@ -68,7 +68,6 @@ from .protocol import (
     ElementID,
     FunctionCode,
     Ids,
-    ObjectId,
     ProtocolVersion,
     block_language_name,
     remote_tsap_for_connection_type,
@@ -1790,60 +1789,44 @@ class S7CommPlusClient:
         return _parse_cpu_state(response)
 
     def upload_block(self, block_type: int, block_number: int) -> bytes:
-        """Upload (read) a program block from the PLC.
+        """Upload (read) a program block from the PLC. Not implemented yet.
 
-        .. warning:: This method is **experimental** and may change.
+        Earlier versions sent a guessed GET_VAR_SUBSTREAMED request that follows
+        no captured exchange, and returned whatever came back without checking
+        the PLC's return value. Until the request is derived from a real block
+        upload and validated on hardware, this refuses without sending anything.
 
         Args:
-            block_type: Block type (e.g. 0x08 for DB, 0x0C for FC).
+            block_type: Block type.
             block_number: Block number.
 
-        Returns:
-            Raw block data.
+        Raises:
+            NotImplementedError: Always.
         """
-        if self._connection is None:
-            raise S7NotConnectedError("Not connected")
-
-        # Use GET_VAR_SUBSTREAMED to read block content
-        payload = bytearray()
-        payload += struct.pack(">I", self._connection.session_id)
-        payload += encode_uint32_vlq(1)  # item count
-        payload += encode_uint32_vlq(1)  # field count
-        payload += encode_uint32_vlq(block_type)
-        payload += encode_uint32_vlq(block_number)
-        payload += struct.pack(">I", 0)
-
-        response = self._connection.send_request(FunctionCode.GET_VAR_SUBSTREAMED, bytes(payload))
-        # Skip return code VLQ
-        offset = 0
-        _, consumed = decode_uint32_vlq(response, offset)
-        offset += consumed
-        return response[offset:]
+        raise NotImplementedError(
+            "Uploading a block is not implemented yet: the request has not been derived from a capture or validated on a real PLC"
+        )
 
     def download_block(self, block_type: int, block_number: int, data: bytes) -> None:
-        """Download (write) a program block to the PLC.
+        """Download (write) a program block to the PLC. Not implemented yet.
 
-        .. warning:: This method is **experimental** and may change.
+        Earlier versions sent a guessed SET_VAR_SUBSTREAMED request that follows
+        no captured exchange, and ignored the PLC's answer, so they could report
+        success when nothing was written. Until the request is derived from a
+        real block download and validated on hardware, this refuses without
+        sending anything.
 
         Args:
             block_type: Block type.
             block_number: Block number.
             data: Raw block data to write.
+
+        Raises:
+            NotImplementedError: Always.
         """
-        if self._connection is None:
-            raise S7NotConnectedError("Not connected")
-
-        from .codec import encode_pvalue_blob
-
-        payload = bytearray()
-        payload += struct.pack(">I", self._connection.session_id)
-        payload += encode_uint32_vlq(1)
-        payload += encode_uint32_vlq(block_type)
-        payload += encode_uint32_vlq(block_number)
-        payload += encode_pvalue_blob(data)
-        payload += struct.pack(">I", 0)
-
-        self._connection.send_request(FunctionCode.SET_VAR_SUBSTREAMED, bytes(payload))
+        raise NotImplementedError(
+            "Downloading a block is not implemented yet: the request has not been derived from a capture or validated on a real PLC"
+        )
 
     def list_datablocks(self) -> list[ProgramObject]:
         """List all datablocks on the PLC via EXPLORE.
@@ -3105,86 +3088,3 @@ def _parse_program_objects(response: bytes) -> list[ProgramObject]:
     if stack:
         logger.warning("EXPLORE reply ends inside %d open object(s); their entries are missing from the object list", len(stack))
     return objects
-
-
-# ---------------------------------------------------------------------------
-# Subscription helpers (experimental)
-# ---------------------------------------------------------------------------
-
-_SUBSCRIPTION_RELATION_ID = 0x7FFFC001
-
-
-def _build_subscription_request(items: list[tuple[int, int, int]], cycle_ms: int, session_id: int) -> bytes:
-    """Build a CREATE_OBJECT request for a data change subscription.
-
-    The subscription object is modeled after the S7CommPlusDriver alarm
-    subscription pattern, adapted for data variable monitoring.
-
-    Args:
-        items: List of (db_number, start_offset, size) to monitor.
-        cycle_ms: Cycle time in milliseconds (0 = on change).
-        session_id: Current session ID.
-
-    Returns:
-        CREATE_OBJECT payload.
-    """
-    payload = bytearray()
-
-    # Session container
-    payload += struct.pack(">I", session_id)
-    payload += bytes([0x00, DataType.UDINT])
-    payload += encode_uint32_vlq(0)
-    payload += struct.pack(">I", 0)
-
-    # Start subscription object
-    payload += bytes([ElementID.START_OF_OBJECT])
-    payload += struct.pack(">I", ObjectId.GET_NEW_RID_ON_SERVER)
-    payload += encode_uint32_vlq(Ids.CLASS_SUBSCRIPTION)
-    payload += encode_uint32_vlq(0)
-    payload += encode_uint32_vlq(0)
-
-    # Subscription attributes
-    payload += bytes([ElementID.ATTRIBUTE])
-    payload += encode_uint32_vlq(Ids.OBJECT_VARIABLE_TYPE_NAME)
-    payload += bytes([0x00, DataType.WSTRING])
-    name = f"PySub_{_SUBSCRIPTION_RELATION_ID:#x}".encode("utf-8")
-    payload += encode_uint32_vlq(len(name))
-    payload += name
-
-    payload += bytes([ElementID.ATTRIBUTE])
-    payload += encode_uint32_vlq(Ids.SUBSCRIPTION_FUNCTION_CLASS_ID)
-    payload += bytes([0x00, DataType.USINT])
-    payload += bytes([0x02])
-
-    payload += bytes([ElementID.ATTRIBUTE])
-    payload += encode_uint32_vlq(Ids.SUBSCRIPTION_ACTIVE)
-    payload += bytes([0x00, DataType.BOOL])
-    payload += bytes([0x01])
-
-    payload += bytes([ElementID.ATTRIBUTE])
-    payload += encode_uint32_vlq(Ids.SUBSCRIPTION_CYCLE_TIME)
-    payload += bytes([0x00, DataType.UDINT])
-    payload += encode_uint32_vlq(cycle_ms)
-
-    payload += bytes([ElementID.ATTRIBUTE])
-    payload += encode_uint32_vlq(Ids.SUBSCRIPTION_CREDIT_LIMIT)
-    payload += bytes([0x00, DataType.INT])
-    payload += struct.pack(">h", 10)  # 10 credits
-
-    # Build reference list from items
-    ref_list = bytearray()
-    for db_number, start, size in items:
-        access_area = Ids.DB_ACCESS_AREA_BASE + (db_number & 0xFFFF)
-        ref_list += struct.pack(">I", access_area)
-
-    payload += bytes([ElementID.ATTRIBUTE])
-    payload += encode_uint32_vlq(Ids.SUBSCRIPTION_REFERENCE_LIST)
-    payload += bytes([0x10, DataType.UDINT])  # 0x10 = array
-    payload += encode_uint32_vlq(len(items))
-    payload += ref_list
-
-    # Close subscription object
-    payload += bytes([ElementID.TERMINATING_OBJECT])
-    payload += struct.pack(">I", 0)
-
-    return bytes(payload)

@@ -91,7 +91,8 @@ _ARRAY_PREFIX = re.compile(r"Array\[[^\]]*\] of ")
 _ID_PATH_SEGMENT = re.compile(r"(\d{1,10})(\[-?\d{1,10}(?:,-?\d{1,10})*])?")
 
 
-class BlockInterfaceError(ValueError, ET.ParseError):
+# ParseError first: on Python 3.10 SyntaxError's __str__ shows msg, which only SyntaxError's __init__ sets
+class BlockInterfaceError(ET.ParseError, ValueError):
     """Malformed block-interface XML.
 
     It is a `ValueError` and, for callers written against earlier versions, an

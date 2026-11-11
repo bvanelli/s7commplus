@@ -1448,7 +1448,7 @@ def service_result_code(return_value: int) -> int:
     A plain small negative number is already the code (legacy encoding) and is
     returned unchanged.
 
-    .. deprecated:: 0.5.0
+    .. deprecated:: 0.6.0
         Use ``ReturnValue.from_int(return_value).code`` instead. It differs
         when the source (bits 39..32) is non-zero: it then returns the
         subsystem's 32-bit code, where this function keeps the low 16 bits.

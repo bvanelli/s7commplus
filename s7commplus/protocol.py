@@ -1129,12 +1129,28 @@ class ErrorSource(IntEnum):
     31..0 instead of an OMS `ServiceResult` code, and no name for those codes
     is known.
 
-    Members are ordered by value. The members after "Deprecated names" are
-    older names for the same values, kept for compatibility; use the names
-    above them. `.name` and iteration return the new names, e.g.
-    ``ErrorSource(32).name == "ACE_FILESYSTEM"``.
+    The "Deprecated names" section holds the names of earlier releases, kept
+    for compatibility; use the subsystem names after it. Because the
+    deprecated names come first, `.name`, `repr()` and iteration still return
+    them for those values, e.g. ``ErrorSource(32).name == "FILESYSTEM"`` while
+    ``ErrorSource.ACE_FILESYSTEM is ErrorSource.FILESYSTEM``.
     """
 
+    # --- Deprecated names ---
+    OBJECT_MANAGEMENT_SYSTEM = 0
+    OPERATING_STATE_CONTROL = 1
+    LOAD_MEMORY_CONTROL = 3
+    WORKING_MEMORY_CONTROL = 4
+    TEST_DEBUG_SYSTEM = 7
+    ALARMING_SYSTEM = 8
+    ONBOARD_COMPILER = 13
+    GENERAL_AS_OBJECT_MODEL_ERRORS = 25
+    GENERAL_HARDWARE_CONFIGURATION_ERRORS = 26
+    FILESYSTEM = 32
+    COMMUNICATION_SYSTEM = 33
+    EXECUTION_LEVEL_SYSTEM = 64
+
+    # --- Subsystem names ---
     OMS_INTERNAL = 0
     OMS = 0
     OST = 1
@@ -1234,20 +1250,6 @@ class ErrorSource(IntEnum):
     FWUP_WEB = 253
     FWUP_ES = 254
     DEFAULT = 255
-
-    # --- Deprecated names ---
-    OBJECT_MANAGEMENT_SYSTEM = 0
-    OPERATING_STATE_CONTROL = 1
-    LOAD_MEMORY_CONTROL = 3
-    WORKING_MEMORY_CONTROL = 4
-    TEST_DEBUG_SYSTEM = 7
-    ALARMING_SYSTEM = 8
-    ONBOARD_COMPILER = 13
-    GENERAL_AS_OBJECT_MODEL_ERRORS = 25
-    GENERAL_HARDWARE_CONFIGURATION_ERRORS = 26
-    FILESYSTEM = 32
-    COMMUNICATION_SYSTEM = 33
-    EXECUTION_LEVEL_SYSTEM = 64
 
 
 class GenericError(IntEnum):

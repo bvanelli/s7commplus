@@ -1596,7 +1596,9 @@ class TestReturnValue:
         assert ServiceResult.TYPE_INFO_MAX_COMPLEXITY_REACHED is ServiceResult.OBJECT_IS_NOT_INSTANTIABLE
         assert GenericError.REFERENCED_OBJECT_DELETED is GenericError.INVALID_OBJECT_REFERENCE
         assert ErrorSource.OST is ErrorSource.OPERATING_STATE_CONTROL
-        assert ErrorSource(25).name == "CPU_PARAM"
+        assert ErrorSource(1).name == "OPERATING_STATE_CONTROL"
+        assert ErrorSource(25).name == "GENERAL_AS_OBJECT_MODEL_ERRORS"
+        assert ErrorSource(24).name == "SECU"
         assert ErrorSource.GENERAL_AS_OBJECT_MODEL_ERRORS is ErrorSource.CPU_PARAM
 
 

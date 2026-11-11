@@ -24,7 +24,7 @@ from .blob_decompressor import (
     iter_preset_headers,
     iter_preset_streams,
 )
-from .block_interface import BlockInterface, Member, block_interface_from_explore, resolve_id_path
+from .block_interface import BlockInterface, BlockInterfaceError, Member, block_interface_from_explore, resolve_id_path
 from .catalog import ArrayDimension, SymbolCatalog, SymbolicTag, TagResult
 from .client import DBWriteItem, ProgramObject, SymbolicReadItem
 from .client import S7CommPlusClient as Client
@@ -52,6 +52,7 @@ __all__ = [
     "AsyncClient",
     "AsyncSubscriptionQueue",
     "BlockInterface",
+    "BlockInterfaceError",
     "CPUState",
     "Client",
     "DBWriteItem",

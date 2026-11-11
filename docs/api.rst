@@ -42,6 +42,8 @@ Block interfaces
 .. autoclass:: s7commplus.Member
    :members:
 
+.. autoexception:: s7commplus.BlockInterfaceError
+
 .. autofunction:: s7commplus.resolve_id_path
 
 .. autofunction:: s7commplus.block_interface_from_explore

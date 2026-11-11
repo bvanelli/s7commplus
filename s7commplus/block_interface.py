@@ -91,6 +91,14 @@ _ARRAY_PREFIX = re.compile(r"Array\[[^\]]*\] of ")
 _ID_PATH_SEGMENT = re.compile(r"(\d{1,10})(\[-?\d{1,10}(?:,-?\d{1,10})*])?")
 
 
+class BlockInterfaceError(ValueError, ET.ParseError):
+    """Malformed block-interface XML.
+
+    It is a `ValueError` and, for callers written against earlier versions, an
+    `xml.etree.ElementTree.ParseError`.
+    """
+
+
 @dataclass
 class Member:
     """A single variable inside a data block or FB/OB interface."""
@@ -155,13 +163,13 @@ class BlockInterface:
         "DB of type" is declared with and UDTs named only in an ``<ExternalType>``.
 
         Raises:
-            ValueError: The text is not well-formed XML, or the interface exceeds
-                the limits of :func:`parse_block_interface`.
+            BlockInterfaceError: The text is not well-formed XML.
+            ValueError: The interface exceeds the limits of :func:`parse_block_interface`.
         """
         try:
             root = ET.fromstring(xml_text)
         except ET.ParseError as exc:
-            raise ValueError(f"Block interface XML is not well-formed: {exc}") from exc
+            raise BlockInterfaceError(f"Block interface XML is not well-formed: {exc}") from exc
         references = {part.get("Block", "") for part in root.iter("Part")}
         references |= {external.get("Name", "") for external in root.iter("ExternalType")}
         # A member type names a block only when quoted: an unquoted one cannot be told from an elementary
@@ -389,8 +397,9 @@ def parse_block_interface(xml_text: str, max_members: int = 250_000, max_depth: 
         The block's top-level members, with nested members in :attr:`Member.fields`.
 
     Raises:
-        ValueError: The text is not well-formed XML, or the interface expands to
-            more than ``max_members`` members or nests deeper than ``max_depth`` levels.
+        BlockInterfaceError: The text is not well-formed XML.
+        ValueError: The interface expands to more than ``max_members`` members
+            or nests deeper than ``max_depth`` levels.
     """
     return BlockInterface.from_xml(xml_text, max_members, max_depth).members
 

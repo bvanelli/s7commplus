@@ -12,6 +12,7 @@ paths are checked on real bytes.
 """
 
 import base64
+import xml.etree.ElementTree as ET
 import zlib
 
 import pytest
@@ -19,6 +20,7 @@ import pytest
 from s7commplus.blob_decompressor import iter_preset_streams
 from s7commplus.block_interface import (
     BlockInterface,
+    BlockInterfaceError,
     Member,
     block_interface_from_explore,
     parse_block_interface,
@@ -955,10 +957,13 @@ def test_info_from_explore_without_stream_is_empty():
     assert BlockInterface.from_explore(b"no zlib stream here") == BlockInterface([], None, frozenset())
 
 
-def test_from_xml_rejects_malformed_xml():
-    # ElementTree's ParseError must not leak out of the public API
-    with pytest.raises(ValueError, match="not well-formed"):
+@pytest.mark.parametrize("caught", [BlockInterfaceError, ValueError, ET.ParseError])
+def test_from_xml_rejects_malformed_xml(caught: type[Exception]):
+    # older callers catch ElementTree's ParseError, newer ones ValueError
+    with pytest.raises(caught, match="not well-formed"):
         BlockInterface.from_xml("not xml")
+    with pytest.raises(caught, match="not well-formed"):
+        parse_block_interface("not xml")
 
 
 def test_from_xml_without_part_is_empty():

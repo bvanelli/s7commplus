@@ -110,7 +110,7 @@ class Member:
     rid: int  # raw type RID
     section: str = ""  # Input/Output/InOut/Static/Temp/Constant (FB/OB), also Return (FC); "" for a DB
     fields: list[Member] = field(default_factory=list)  # sub-members for a UDT/Struct type
-    id: int | None = None  # interface ID, unique among its siblings; None when the XML has none
+    id: int = 0  # interface ID, unique among its siblings; 0 when the XML has none, which no path matches
     # the type a SubPartIndex references without the interface embedding it, as BlockInterface.references
     # names it; it can differ from element_type (IEC_TIMER for a TON_TIME instance)
     referenced_type: str | None = None
@@ -312,8 +312,6 @@ def _build_members(
 def _build_member(m: ET.Element, section: str, subparts: list[ET.Element], seen: set[int], limits: _ExpansionLimits) -> Member:
     """Build a :class:`Member`, expanding a structured type via ``SubPartIndex``."""
     limits.take_member()
-    # kept None when absent: a default would let resolve_id_path match it for a real id
-    raw_id = m.get("ID")
     target = _subpart(m, subparts, seen)
     return Member(
         name=m.get("Name", ""),
@@ -323,7 +321,7 @@ def _build_member(m: ET.Element, section: str, subparts: list[ET.Element], seen:
         rid=int(m.get("RID", "0") or "0", 16),
         section=section,
         fields=_member_fields(target, section, subparts, seen, limits),
-        id=None if raw_id is None else int(raw_id),
+        id=int(m.get("ID", "0")),
         # a referenced, not embedded, type is a part with a Block but no Kind
         referenced_type=None if target is None or target.get("Kind") else target.get("Block") or None,
     )
@@ -463,7 +461,8 @@ def resolve_id_path(
         if matched is None:
             return None
         member_id = int(matched.group(1))
-        entry = next((member for member in members if member.id == member_id), None)
+        # 0 marks a member without an ID, so it names none
+        entry = next((member for member in members if member_id and member.id == member_id), None)
         if entry is None:
             return None
         prefix = _ARRAY_PREFIX.match(entry.data_type)

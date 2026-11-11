@@ -430,14 +430,14 @@ def test_parse_block_interface_types():
 
 
 def test_member_without_id_matches_no_path_segment():
-    # regression: a missing ID defaulted to 0, so segment "0" resolved to this member
+    # regression: a missing ID defaults to 0, and segment "0" resolved to this member
     xml = (
         "<BlockInterface><Part><Payload><Root>"
         '<Member Name="flag" RID="0x02000001" StdO="0" LID="9" />'
         "</Root></Payload></Part></BlockInterface>"
     )
     members = parse_block_interface(xml)
-    assert members == [Member("flag", "Bool", 9, 0, 0x02000001)]
+    assert members == [Member("flag", "Bool", 9, 0, 0x02000001, id=0)]
     assert resolve_id_path(members, "0") is None
 
 

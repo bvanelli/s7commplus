@@ -45,6 +45,7 @@ from s7commplus.protocol import (
     ReturnValue,
     ServiceResult,
     block_language_name,
+    service_result_code,
 )
 from s7commplus.vlq import (
     encode_uint32_vlq,
@@ -1492,6 +1493,26 @@ class TestServiceResultCodes:
     )
     def test_code_extracts_the_low_word(self, return_value: int, expected_code: int) -> None:
         assert ReturnValue.from_int(return_value).code == expected_code
+
+    @pytest.mark.parametrize(
+        ("return_value", "expected_code"),
+        [
+            (0, 0),  # plain success
+            (-118, -118),  # legacy bare negative
+            (0x8318890001B3FFFE, -2),  # composite from issue #70: sign-extended low word
+            (0x8318890001B3FF9A, -102),  # arbitrary negative low word
+            (17, 17),  # positive informational stays itself
+            (25, 25),
+            (0x100, 256),  # low word without the sign bit is the value itself
+            (-9000293222178357250, -2),  # the issue #70 composite as a negative int
+            ((1 << 63) | (24 << 32) | 0x02000003, 3),  # keeps the low word where ReturnValue returns the 32-bit code
+            (-65535, -65535),  # bare negatives down to -65535 stay unchanged
+            (-32769, -32769),
+        ],
+    )
+    def test_deprecated_service_result_code(self, return_value: int, expected_code: int) -> None:
+        with pytest.warns(DeprecationWarning, match="service_result_code"):
+            assert service_result_code(return_value) == expected_code
 
 
 class TestReturnValue:

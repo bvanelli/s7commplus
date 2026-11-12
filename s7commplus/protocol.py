@@ -1129,14 +1129,13 @@ class ErrorSource(IntEnum):
     31..0 instead of an OMS `ServiceResult` code, and no name for those codes
     is known.
 
-    The "Deprecated names" section holds the names of earlier releases, kept
-    for compatibility; use the subsystem names after it. Because the
-    deprecated names come first, `.name`, `repr()` and iteration still return
-    them for those values, e.g. ``ErrorSource(32).name == "FILESYSTEM"`` while
+    The names from earlier releases come first, so `.name`, `repr()` and
+    iteration still return them for those values, e.g.
+    ``ErrorSource(32).name == "FILESYSTEM"`` while
     ``ErrorSource.ACE_FILESYSTEM is ErrorSource.FILESYSTEM``.
     """
 
-    # --- Deprecated names ---
+    # --- Names from earlier releases ---
     OBJECT_MANAGEMENT_SYSTEM = 0
     OPERATING_STATE_CONTROL = 1
     LOAD_MEMORY_CONTROL = 3

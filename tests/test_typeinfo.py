@@ -614,3 +614,90 @@ class TestExtractTypeInfoObjects:
         response = bytes([0x00, 0x00, 0x00, 0x00, 0xC9, 0x4F]) + container  # 6-byte preamble
         objs = ti.extract_type_info_objects(response)
         assert [o.relation_id for o in objs] == [0x100]
+
+
+class TestCapturedSystemTypes:
+    """EXPLORE of the OMS type-info container from an S7-1500 (6ES7 512-1CK01-0AB0, FW V2.9).
+
+    Cut to the type objects of two DBs: 0x92000053 is ``DB_SysTypeArrays`` (DB83, optimized
+    arrays of system types) and 0x92000054 is ``DB_SysTypes_Std`` (DB84, standard access).
+    The bytes around the container's children are unchanged; its other 453 children are
+    left out. A raw ``db_read`` of DB84 on that PLC matched every non-optimized offset
+    derived here.
+    """
+
+    REPLY = bytes.fromhex(
+        "00000000c98276a10000021984163000a38169001500a192000053837f2000a38169001500a38308000c80000003a383"
+        "14000400a384110005c0cbc0eae9d8cee96ca38b5e00042aa38b5f000801a384630017000006068c070004008c080004"
+        "008c090004811400a3831a00058cba98af98aec9cf00a3831c000b0001a3831d000400ab00e40200008009000000303e"
+        "606b95aac000000000001c0000000000000000000000030000000a000000a285a75fd0aac00000000000220000000600"
+        "000000000000020000000b0000009334bbd0a0aac00000000000260000000a00000000000000020000000c0000004c7b"
+        "0dbeabaac00000000000040000000e00000000000000020000000d000000654610e181aac000000000000c0000001600"
+        "000001000000020000000e00000015d0b1b3c8aac000000000002a0000001e00000000000000030000000f00000017f1"
+        "a720c9aac00000000000140000002200000000000000020000000000ac003d05614877496f0006614462416e79000661"
+        "4f62416e79000861436f6e6e5249640009614576656e74416e7900076155614d61736b00066155614c656e000000a2a1"
+        "92000054837f2000a38169001500a38308000c80000003a38314000400a3841100058ca999d0e193d788f1a38b5e0004"
+        "32a38b5f000801a384630017000006068c070004328c080004008c0900040400a3831a00058cba98afa98eacd410a383"
+        "1c000b0001a3831d000400ab00d4020000800900000059f3a8ae018ac008000000000a0000005173a58f958ac0080200"
+        "02000b000000c245c910028ac008040004000c0000006218e76bc88ac008050005000d000000abaae6c8a08ac0080600"
+        "06000e00000036e497ccab8ac008080008000f000000c9fc84bb028ac0080c000c00100000003fcbc1a0818ac0080e00"
+        "0e0011000000068a3e4dd08ac0081200120012000000c7ccfeb2028ac0081400140013000000303e606b95aac0080000"
+        "00001600000016000000000000000300000014000000cc75b319028ac0081c001c000070150000004c7b0dbeabaac008"
+        "000000001e0000001e0000000000000002000000160000009334bbd0a0aac00800000000260000002600000000000000"
+        "020000001700000015d0b1b3c8aac008000000002a0000002a000000000000000300000018000000a9a972ffc98ac008"
+        "2e002e000000ac00730262300005764877496f0002633000077655614d61736b0006764f62416e79000876436f6e6e52"
+        "4964000263310009764576656e74416e790006764462416e79000263320005614877496f00026333000861436f6e6e52"
+        "49640006614f62416e7900076155614d61736b00067655614c656e000000a2a200000000"
+    )
+
+    def test_standard_access_offsets_match_db_read(self) -> None:
+        root = _root("DB_SysTypes_Std", 0x8A0E0054, 0x92000054)
+        ti.build_tree([root], ti.extract_type_info_objects(self.REPLY))
+        infos = ti.build_flat_list([root])
+        assert {v.name: (v.softdatatype, v.nonopt_address, v.nonopt_bitoffset, v.access_sequence) for v in infos} == {
+            "DB_SysTypes_Std.b0": (ti.Softdatatype.BOOL, 0, 0, "8A0E0054.9"),
+            "DB_SysTypes_Std.vHwIo": (ti.Softdatatype.HW_IO, 2, 0, "8A0E0054.A"),
+            "DB_SysTypes_Std.c0": (ti.Softdatatype.BYTE, 4, 0, "8A0E0054.B"),
+            "DB_SysTypes_Std.vUaMask": (ti.Softdatatype.OPC_UA_LOCALIZEDTEXTENCODINGMASK, 5, 0, "8A0E0054.C"),
+            "DB_SysTypes_Std.vObAny": (ti.Softdatatype.OB_ANY, 6, 0, "8A0E0054.D"),
+            "DB_SysTypes_Std.vConnRId": (ti.Softdatatype.CONN_R_ID, 8, 0, "8A0E0054.E"),
+            "DB_SysTypes_Std.c1": (ti.Softdatatype.BYTE, 12, 0, "8A0E0054.F"),
+            "DB_SysTypes_Std.vEventAny": (ti.Softdatatype.EVENT_ANY, 14, 0, "8A0E0054.10"),
+            "DB_SysTypes_Std.vDbAny": (ti.Softdatatype.DB_ANY, 18, 0, "8A0E0054.11"),
+            "DB_SysTypes_Std.c2": (ti.Softdatatype.BYTE, 20, 0, "8A0E0054.12"),
+            "DB_SysTypes_Std.aHwIo[0]": (ti.Softdatatype.HW_IO, 22, 0, "8A0E0054.13.0"),
+            "DB_SysTypes_Std.aHwIo[1]": (ti.Softdatatype.HW_IO, 24, 0, "8A0E0054.13.1"),
+            "DB_SysTypes_Std.aHwIo[2]": (ti.Softdatatype.HW_IO, 26, 0, "8A0E0054.13.2"),
+            "DB_SysTypes_Std.c3": (ti.Softdatatype.BYTE, 28, 0, "8A0E0054.14"),
+            "DB_SysTypes_Std.aConnRId[0]": (ti.Softdatatype.CONN_R_ID, 30, 0, "8A0E0054.15.0"),
+            "DB_SysTypes_Std.aConnRId[1]": (ti.Softdatatype.CONN_R_ID, 34, 0, "8A0E0054.15.1"),
+            "DB_SysTypes_Std.aObAny[0]": (ti.Softdatatype.OB_ANY, 38, 0, "8A0E0054.16.0"),
+            "DB_SysTypes_Std.aObAny[1]": (ti.Softdatatype.OB_ANY, 40, 0, "8A0E0054.16.1"),
+            "DB_SysTypes_Std.aUaMask[0]": (ti.Softdatatype.OPC_UA_LOCALIZEDTEXTENCODINGMASK, 42, 0, "8A0E0054.17.0"),
+            "DB_SysTypes_Std.aUaMask[1]": (ti.Softdatatype.OPC_UA_LOCALIZEDTEXTENCODINGMASK, 43, 0, "8A0E0054.17.1"),
+            "DB_SysTypes_Std.aUaMask[2]": (ti.Softdatatype.OPC_UA_LOCALIZEDTEXTENCODINGMASK, 44, 0, "8A0E0054.17.2"),
+            "DB_SysTypes_Std.vUaLen": (ti.Softdatatype.OPC_UA_BYTESTRINGACTUALLENGTH, 46, 0, "8A0E0054.18"),
+        }
+
+    def test_optimized_arrays_step_by_element_size(self) -> None:
+        root = _root("DB_SysTypeArrays", 0x8A0E0053, 0x92000053)
+        ti.build_tree([root], ti.extract_type_info_objects(self.REPLY))
+        infos = ti.build_flat_list([root])
+        assert {v.name: (v.softdatatype, v.opt_address, v.access_sequence, v.array_dimensions) for v in infos} == {
+            "DB_SysTypeArrays.aHwIo[0]": (ti.Softdatatype.HW_IO, 28, "8A0E0053.9.0", ((0, 3),)),
+            "DB_SysTypeArrays.aHwIo[1]": (ti.Softdatatype.HW_IO, 30, "8A0E0053.9.1", ((0, 3),)),
+            "DB_SysTypeArrays.aHwIo[2]": (ti.Softdatatype.HW_IO, 32, "8A0E0053.9.2", ((0, 3),)),
+            "DB_SysTypeArrays.aDbAny[0]": (ti.Softdatatype.DB_ANY, 34, "8A0E0053.A.0", ((0, 2),)),
+            "DB_SysTypeArrays.aDbAny[1]": (ti.Softdatatype.DB_ANY, 36, "8A0E0053.A.1", ((0, 2),)),
+            "DB_SysTypeArrays.aObAny[0]": (ti.Softdatatype.OB_ANY, 38, "8A0E0053.B.0", ((0, 2),)),
+            "DB_SysTypeArrays.aObAny[1]": (ti.Softdatatype.OB_ANY, 40, "8A0E0053.B.1", ((0, 2),)),
+            "DB_SysTypeArrays.aConnRId[0]": (ti.Softdatatype.CONN_R_ID, 4, "8A0E0053.C.0", ((0, 2),)),
+            "DB_SysTypeArrays.aConnRId[1]": (ti.Softdatatype.CONN_R_ID, 8, "8A0E0053.C.1", ((0, 2),)),
+            "DB_SysTypeArrays.aEventAny[1]": (ti.Softdatatype.EVENT_ANY, 12, "8A0E0053.D.0", ((1, 2),)),
+            "DB_SysTypeArrays.aEventAny[2]": (ti.Softdatatype.EVENT_ANY, 16, "8A0E0053.D.1", ((1, 2),)),
+            "DB_SysTypeArrays.aUaMask[0]": (ti.Softdatatype.OPC_UA_LOCALIZEDTEXTENCODINGMASK, 42, "8A0E0053.E.0", ((0, 3),)),
+            "DB_SysTypeArrays.aUaMask[1]": (ti.Softdatatype.OPC_UA_LOCALIZEDTEXTENCODINGMASK, 43, "8A0E0053.E.1", ((0, 3),)),
+            "DB_SysTypeArrays.aUaMask[2]": (ti.Softdatatype.OPC_UA_LOCALIZEDTEXTENCODINGMASK, 44, "8A0E0053.E.2", ((0, 3),)),
+            "DB_SysTypeArrays.aUaLen[0]": (ti.Softdatatype.OPC_UA_BYTESTRINGACTUALLENGTH, 20, "8A0E0053.F.0", ((0, 2),)),
+            "DB_SysTypeArrays.aUaLen[1]": (ti.Softdatatype.OPC_UA_BYTESTRINGACTUALLENGTH, 24, "8A0E0053.F.1", ((0, 2),)),
+        }

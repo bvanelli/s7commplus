@@ -717,6 +717,7 @@ class Node:
     vte: VartypeListElement | None = None
     array_adr_offset_opt: int = 0
     array_adr_offset_nonopt: int = 0
+    array_bitoffset_nonopt: int = 0
     children: list["Node"] = field(default_factory=list)
 
 
@@ -763,6 +764,13 @@ def build_tree(root_nodes: list[Node], type_objects: list[PObject]) -> None:
             _add_subnodes(node, obj, type_objects)
 
 
+def _nonopt_element_offset(vte: VartypeListElement, access_id: int, elem_off: int) -> tuple[int, int]:
+    # BBOOL has only been seen in optimized DBs (one S7-1500, FW V2.9), which have no standard-access offset
+    if vte.softdatatype == Softdatatype.BOOL:
+        return divmod(access_id, 8)  # a Bool element's access id is its bit position in standard access
+    return elem_off, 0
+
+
 def _add_subnodes(node: Node, obj: PObject, objects: list[PObject]) -> None:
     for i, vte in enumerate(obj.vartype_list):
         name = obj.varname_list[i] if i < len(obj.varname_list) else ""
@@ -797,6 +805,7 @@ def _add_subnodes(node: Node, obj: PObject, objects: list[PObject]) -> None:
                         _add_subnodes(arr_node, struct_type, objects)
                 else:
                     stride = datatype_size(vte.softdatatype, string_len=oi.unspecified1)
+                    nonopt_off, nonopt_bit = _nonopt_element_offset(vte, elem, elem * stride)  # elem is the access id
                     arr_node = Node(
                         node_type=NodeType.ARRAY,
                         name=label,
@@ -804,7 +813,8 @@ def _add_subnodes(node: Node, obj: PObject, objects: list[PObject]) -> None:
                         softdatatype=vte.softdatatype,
                         vte=vte,
                         array_adr_offset_opt=elem * stride,
-                        array_adr_offset_nonopt=elem * stride,
+                        array_adr_offset_nonopt=nonopt_off,
+                        array_bitoffset_nonopt=nonopt_bit,
                     )
                     subnode.children.append(arr_node)
 
@@ -848,6 +858,7 @@ def _add_mdim_subnodes(subnode: Node, vte: VartypeListElement, oi: OffsetInfo, o
             if struct_type is not None:
                 _add_subnodes(arr_node, struct_type, objects)
         else:
+            nonopt_off, nonopt_bit = _nonopt_element_offset(vte, arr_id, elem_off)
             arr_node = Node(
                 node_type=NodeType.ARRAY,
                 name=label,
@@ -855,13 +866,15 @@ def _add_mdim_subnodes(subnode: Node, vte: VartypeListElement, oi: OffsetInfo, o
                 softdatatype=vte.softdatatype,
                 vte=vte,
                 array_adr_offset_opt=elem_off,
-                array_adr_offset_nonopt=elem_off,
+                array_adr_offset_nonopt=nonopt_off,
+                array_bitoffset_nonopt=nonopt_bit,
             )
             subnode.children.append(arr_node)
 
         # Odometer step (axis 0 fastest).
         xx[0] += 1
-        if vte.softdatatype == Softdatatype.BBOOL and xx[0] >= counts[0] and counts[0] % 8 != 0:
+        # BOOL padding is confirmed for standard-access DBs on one S7-1500, FW V2.9; BBOOL's predates this
+        if vte.softdatatype in (Softdatatype.BOOL, Softdatatype.BBOOL) and xx[0] >= counts[0] and counts[0] % 8 != 0:
             arr_id += 8 - (xx[0] % 8)  # rows of bits pad up to a byte
         for dim in range(5):
             if xx[dim] >= counts[dim]:
@@ -971,5 +984,8 @@ def _walk(
         info.nonopt_bitoffset = vte.nonopt_bitoffset if vte.classic else vte.attribute_bitoffset
     elif node.softdatatype == Softdatatype.BBOOL and vte is not None:
         info.opt_bitoffset = vte.opt_bitoffset
+    # Only Bool array elements carry a standard-access bit (seen on one S7-1500, FW V2.9; other array types unconfirmed).
+    if node.node_type == NodeType.ARRAY and node.softdatatype == Softdatatype.BOOL:
+        info.nonopt_bitoffset = node.array_bitoffset_nonopt
 
     result.append(info)

@@ -419,30 +419,39 @@ class TestMultiSymbolicWritePayload:
     """A batched symbolic write packs every address, then every value, into one SetMultiVariables request."""
 
     # Requests an S7-1500 (6ES7 512-1CK01, FW V2.9, V2 with TLS) accepted for DB_HwTypes.vHwIo (a HW_IO, sent as
-    # a WORD) and DB_SystemTypes.vUaActualLength (an OPC_UA_BYTESTRINGACTUALLENGTH, sent as a VLQ UDINT).
+    # a WORD), DB_SystemTypes.vUaActualLength (an OPC_UA_BYTESTRINGACTUALLENGTH, sent as a VLQ UDINT) and
+    # DB_SysTypeArrays.aEventAny[2] (an element of an Array[1..2] of EVENT_ANY: the extra LID is its zero-based
+    # position, 1, not its index, 2).
     @pytest.mark.parametrize(
-        ("access_area", "lid", "datatype", "data", "expected"),
+        ("access_area", "lids", "datatype", "data", "expected"),
         [
             (
                 0x8A0E002B,
-                0x0B,
+                [0x0B],
                 DataType.WORD,
                 "0068",
                 "00000000 01 05 00 88d0b8802b 02 9376 0b 01 000b0068 00 000004e88969001200000000896a001300896b0004000000000000",
             ),
             (
                 0x8A0E002A,
-                0x1E,
+                [0x1E],
                 DataType.UDINT,
                 "b2d05e02",
                 "00000000 01 05 00 88d0b8802a 02 9376 1e 01 00048b96c1bc02 00 000004e88969001200000000896a001300896b0004000000000000",
             ),
+            (
+                0x8A0E0053,
+                [0x0D, 0x01],
+                DataType.DWORD,
+                "000000f3",
+                "00000000 01 06 00 88d0b88053 03 9376 0d 01 01 000c000000f3 00 000004e88969001200000000896a001300896b0004000000000000",
+            ),
         ],
     )
     def test_matches_a_request_the_plc_accepted(
-        self, access_area: int, lid: int, datatype: DataType, data: str, expected: str
+        self, access_area: int, lids: list[int], datatype: DataType, data: str, expected: str
     ) -> None:
-        payload = _build_multi_symbolic_write_payload([(access_area, [lid], bytes.fromhex(data), 0, datatype)])
+        payload = _build_multi_symbolic_write_payload([(access_area, lids, bytes.fromhex(data), 0, datatype)])
         assert payload == bytes.fromhex(expected)
 
 

@@ -8,7 +8,10 @@ UDT and DTL member and every array element).
 
 The layouts were read from, and the writes accepted by, PLCSIM Advanced (CPU
 1511, FW V2.9) with one member per datatype; they follow the TIA Portal
-memory formats. They are not yet checked on real hardware.
+memory formats. An S7-1500 (CPU 1512C-1 PN, FW V2.9) read and wrote the same
+types, and the system types (HW_*, OB_*, EVENT_*, CONN_*, DB_ANY, DB_WWW,
+DB_DYN, PORT, RTM, PIP, AOM_IDENT and the two OPC UA types). No S7-1200 has
+been checked.
 
 The value ranges are those of the TIA Portal data type documentation (STEP 7
 online help, "Date and time" and "Character strings" data types), not verified
@@ -62,6 +65,45 @@ _FORMATS: dict[Softdatatype, str] = {
     Softdatatype.ULINT: ">Q",
     Softdatatype.REAL: ">f",
     Softdatatype.LREAL: ">d",
+    Softdatatype.AOMIDENT: ">I",
+    Softdatatype.EVENT_ANY: ">I",
+    Softdatatype.EVENT_ATT: ">I",
+    Softdatatype.EVENT_HWINT: ">I",
+    Softdatatype.HW_ANY: ">H",
+    Softdatatype.HW_IOSYSTEM: ">H",
+    Softdatatype.HW_DPMASTER: ">H",
+    Softdatatype.HW_DEVICE: ">H",
+    Softdatatype.HW_DPSLAVE: ">H",
+    Softdatatype.HW_IO: ">H",
+    Softdatatype.HW_MODULE: ">H",
+    Softdatatype.HW_SUBMODULE: ">H",
+    Softdatatype.HW_HSC: ">H",
+    Softdatatype.HW_PWM: ">H",
+    Softdatatype.HW_PTO: ">H",
+    Softdatatype.HW_INTERFACE: ">H",
+    Softdatatype.HW_IEPORT: ">H",
+    Softdatatype.OB_ANY: ">h",
+    Softdatatype.OB_DELAY: ">h",
+    Softdatatype.OB_TOD: ">h",
+    Softdatatype.OB_CYCLIC: ">h",
+    Softdatatype.OB_ATT: ">h",
+    Softdatatype.CONN_ANY: ">H",
+    Softdatatype.CONN_PRG: ">H",
+    Softdatatype.CONN_OUC: ">H",
+    Softdatatype.CONN_R_ID: ">I",
+    Softdatatype.PORT: ">H",
+    Softdatatype.RTM: ">H",
+    Softdatatype.PIP: ">H",
+    Softdatatype.OB_PCYCLE: ">h",
+    Softdatatype.OB_HWINT: ">h",
+    Softdatatype.OB_DIAG: ">h",
+    Softdatatype.OB_TIMEERROR: ">h",
+    Softdatatype.OB_STARTUP: ">h",
+    Softdatatype.OPC_UA_LOCALIZEDTEXTENCODINGMASK: ">B",
+    Softdatatype.OPC_UA_BYTESTRINGACTUALLENGTH: ">I",
+    Softdatatype.DB_ANY: ">H",
+    Softdatatype.DB_WWW: ">H",
+    Softdatatype.DB_DYN: ">H",
 }
 
 _S5_BASES_MS = (10, 100, 1000, 10000)
@@ -197,7 +239,9 @@ def _decode(softdatatype: Softdatatype, raw: bytes) -> Any:
 def decode(softdatatype: Softdatatype, raw: bytes) -> Any:
     """Return the Python value of ``raw``, or ``raw`` itself when it cannot be decoded.
 
-    Integers and bit strings become ``int``, REAL/LREAL ``float``, BOOL ``bool``,
+    Integers, bit strings and the system types (HW_*, OB_*, EVENT_*, CONN_*,
+    DB_*, PORT, RTM, PIP, AOM_IDENT, the OPC UA types) become ``int``, OB_*
+    signed and the others unsigned; REAL/LREAL ``float``, BOOL ``bool``,
     CHAR/WCHAR/STRING/WSTRING ``str`` (single-byte types as Latin-1), DATE a
     :class:`datetime.date`, TIME/LTIME/S5TIME a :class:`datetime.timedelta`,
     TIME_OF_DAY/LTOD a :class:`datetime.time`, and DATE_AND_TIME/LDT a naive

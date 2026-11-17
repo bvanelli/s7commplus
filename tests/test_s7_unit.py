@@ -1529,6 +1529,9 @@ class TestReturnValue:
             (0xA025AB000109FFFD, True, True, GenericError.INVALID_ARGUMENT_VALUE, ServiceResult.INVALID_ARGUMENT_VALUE),
             # S7-1500s V2.9 and V3.1: EXPLORE of the data blocks or type info with an invalid filter flag
             (0x8318890001E1FFFE, True, True, GenericError.INVALID_DATATYPE, ServiceResult.INVALID_VALUE_TYPE),
+            # S7-1512C V2.9: SetMultiVariables item error for a value sent as another PValue type than the
+            # member's wire type (UINT for a WORD, for example); it follows a partial-error ReturnValue
+            (0x800989001176FFFE, True, True, GenericError.INVALID_DATATYPE, ServiceResult.INVALID_VALUE_TYPE),
             # S7-1517 V3.1: EXPLORE of PLCProgram without the request trailer. The PLC
             # reports it as a SystemEvent and drops the connection, with bit 47 clear.
             (0xA2013B00029FFF88, True, False, GenericError.GENERAL_COM_ERROR, ServiceResult.SERVICE_REQUEST_PARSING_ERROR),
@@ -1536,8 +1539,10 @@ class TestReturnValue:
             # known). Reported as a SystemEvent that drops the connection, with bit 47 clear.
             (0xA2013B000236FF88, True, False, GenericError.GENERAL_COM_ERROR, ServiceResult.SERVICE_REQUEST_PARSING_ERROR),
             # CPU 1512SP-1 PN V2.9: multi-read with some items that do not exist (#129).
-            # The only captured positive code: bit 63 clear, bit 61 (firmware-internal) set.
+            # A positive code: bit 63 clear, bit 61 (firmware-internal) set.
             (0x20278000009A0013, False, True, GenericError.OK, ServiceResult.SERVICE_EXECUTED_WITH_PARTIAL_ERROR),
+            # S7-1512C V2.9: SetMultiVariables with an item refused for its PValue type; the item errors follow
+            (0x202C800000E50013, False, True, GenericError.OK, ServiceResult.SERVICE_EXECUTED_WITH_PARTIAL_ERROR),
         ],
     )
     def test_oms_source_fields(self, raw: int, failed: bool, from_responder: bool, generic: int, code: int) -> None:

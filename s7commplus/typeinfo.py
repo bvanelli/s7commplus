@@ -88,12 +88,51 @@ class Softdatatype(IntEnum):
     LDT = 66
     DTL = 67
     REMOTE = 96
-    AOMIDENT = 128
+    AOMIDENT = 128  # AOM_IDENT
+    EVENT_ANY = 129
+    EVENT_ATT = 130
+    EVENT_HWINT = 134
+    HW_ANY = 144
+    HW_IOSYSTEM = 145
+    HW_DPMASTER = 146
+    HW_DEVICE = 147
+    HW_DPSLAVE = 148
+    HW_IO = 149
+    HW_MODULE = 150
+    HW_SUBMODULE = 151
+    HW_HSC = 152
+    HW_PWM = 153
+    HW_PTO = 154
+    HW_INTERFACE = 155
+    HW_IEPORT = 156
+    OB_ANY = 160
+    OB_DELAY = 161
+    OB_TOD = 162
+    OB_CYCLIC = 163
+    OB_ATT = 164
+    CONN_ANY = 168
+    CONN_PRG = 169
+    CONN_OUC = 170
+    CONN_R_ID = 171
+    PORT = 173
+    RTM = 174
+    PIP = 175
+    OB_PCYCLE = 192
+    OB_HWINT = 193
+    OB_DIAG = 195
+    OB_TIMEERROR = 196
+    OB_STARTUP = 197
+    OPC_UA_LOCALIZEDTEXTENCODINGMASK = 200
+    OPC_UA_BYTESTRINGACTUALLENGTH = 201
+    DB_ANY = 208
+    DB_WWW = 209
+    DB_DYN = 210
 
 
 # Leaf datatypes that browse() emits as readable tags. Containers and markers
-# (VOID, ARRAY, STRUCT, ENDSTRUCT, MULTIFB, VARIANT, DTL, system ids) are not
-# leaves — their members are emitted instead.
+# (VOID, ARRAY, STRUCT, ENDSTRUCT, MULTIFB, VARIANT, DTL) are not leaves; their
+# members are emitted instead. Any other leaf, such as REMOTE, a BLOCK_*, COUNTER,
+# TIMER, INTERNETTIME or an id missing from Softdatatype, is skipped.
 SUPPORTED_SOFTDATATYPES = frozenset(
     {
         Softdatatype.BOOL,
@@ -126,6 +165,45 @@ SUPPORTED_SOFTDATATYPES = frozenset(
         Softdatatype.LTIME,
         Softdatatype.LTOD,
         Softdatatype.LDT,
+        Softdatatype.AOMIDENT,
+        Softdatatype.EVENT_ANY,
+        Softdatatype.EVENT_ATT,
+        Softdatatype.EVENT_HWINT,
+        Softdatatype.HW_ANY,
+        Softdatatype.HW_IOSYSTEM,
+        Softdatatype.HW_DPMASTER,
+        Softdatatype.HW_DEVICE,
+        Softdatatype.HW_DPSLAVE,
+        Softdatatype.HW_IO,
+        Softdatatype.HW_MODULE,
+        Softdatatype.HW_SUBMODULE,
+        Softdatatype.HW_HSC,
+        Softdatatype.HW_PWM,
+        Softdatatype.HW_PTO,
+        Softdatatype.HW_INTERFACE,
+        Softdatatype.HW_IEPORT,
+        Softdatatype.OB_ANY,
+        Softdatatype.OB_DELAY,
+        Softdatatype.OB_TOD,
+        Softdatatype.OB_CYCLIC,
+        Softdatatype.OB_ATT,
+        Softdatatype.CONN_ANY,
+        Softdatatype.CONN_PRG,
+        Softdatatype.CONN_OUC,
+        Softdatatype.CONN_R_ID,
+        Softdatatype.PORT,
+        Softdatatype.RTM,
+        Softdatatype.PIP,
+        Softdatatype.OB_PCYCLE,
+        Softdatatype.OB_HWINT,
+        Softdatatype.OB_DIAG,
+        Softdatatype.OB_TIMEERROR,
+        Softdatatype.OB_STARTUP,
+        Softdatatype.OPC_UA_LOCALIZEDTEXTENCODINGMASK,
+        Softdatatype.OPC_UA_BYTESTRINGACTUALLENGTH,
+        Softdatatype.DB_ANY,
+        Softdatatype.DB_WWW,
+        Softdatatype.DB_DYN,
     }
 )
 
@@ -142,6 +220,7 @@ _SIZE_1 = {
     Softdatatype.USINT,
     Softdatatype.SINT,
     Softdatatype.BBOOL,
+    Softdatatype.OPC_UA_LOCALIZEDTEXTENCODINGMASK,
 }
 _SIZE_2 = {
     Softdatatype.WORD,
@@ -150,6 +229,38 @@ _SIZE_2 = {
     Softdatatype.DATE,
     Softdatatype.S5TIME,
     Softdatatype.WCHAR,
+    Softdatatype.HW_ANY,
+    Softdatatype.HW_IOSYSTEM,
+    Softdatatype.HW_DPMASTER,
+    Softdatatype.HW_DEVICE,
+    Softdatatype.HW_DPSLAVE,
+    Softdatatype.HW_IO,
+    Softdatatype.HW_MODULE,
+    Softdatatype.HW_SUBMODULE,
+    Softdatatype.HW_HSC,
+    Softdatatype.HW_PWM,
+    Softdatatype.HW_PTO,
+    Softdatatype.HW_INTERFACE,
+    Softdatatype.HW_IEPORT,
+    Softdatatype.OB_ANY,
+    Softdatatype.OB_DELAY,
+    Softdatatype.OB_TOD,
+    Softdatatype.OB_CYCLIC,
+    Softdatatype.OB_ATT,
+    Softdatatype.CONN_ANY,
+    Softdatatype.CONN_PRG,
+    Softdatatype.CONN_OUC,
+    Softdatatype.PORT,
+    Softdatatype.RTM,
+    Softdatatype.PIP,
+    Softdatatype.OB_PCYCLE,
+    Softdatatype.OB_HWINT,
+    Softdatatype.OB_DIAG,
+    Softdatatype.OB_TIMEERROR,
+    Softdatatype.OB_STARTUP,
+    Softdatatype.DB_ANY,
+    Softdatatype.DB_WWW,
+    Softdatatype.DB_DYN,
 }
 _SIZE_4 = {
     Softdatatype.DWORD,
@@ -158,6 +269,12 @@ _SIZE_4 = {
     Softdatatype.TIMEOFDAY,
     Softdatatype.TIME,
     Softdatatype.UDINT,
+    Softdatatype.AOMIDENT,
+    Softdatatype.EVENT_ANY,
+    Softdatatype.EVENT_ATT,
+    Softdatatype.EVENT_HWINT,
+    Softdatatype.CONN_R_ID,
+    Softdatatype.OPC_UA_BYTESTRINGACTUALLENGTH,
 }
 _SIZE_8 = {
     Softdatatype.LREAL,

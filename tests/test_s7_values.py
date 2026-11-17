@@ -19,8 +19,9 @@ from s7commplus.async_client import S7CommPlusAsyncClient
 from s7commplus.catalog import SymbolCatalog, SymbolicTag, TagResult
 from s7commplus.client import _AUTO_REFRESH_MIN_INTERVAL, S7CommPlusClient
 from s7commplus.codec import encode_pvalue_blob
-from s7commplus.protocol import ProtocolVersion
+from s7commplus.protocol import DataType, ProtocolVersion
 from s7commplus.typeinfo import Softdatatype as T
+from s7commplus.typeinfo import datatype_size, is_softdatatype_supported
 from s7commplus.vlq import decode_uint32_vlq, encode_uint32_vlq, encode_uint64_vlq
 
 UTC_PLUS_2 = dt.timezone(dt.timedelta(hours=2))
@@ -154,6 +155,14 @@ def test_encode_round_trips_plcsim_values(softdatatype: T, raw: str, expected: A
         (T.REAL, math.inf, 0, "7f800000"),  # IEEE 754 values a REAL can hold
         (T.REAL, -math.inf, 0, "ff800000"),
         (T.LREAL, math.inf, 0, "7ff0000000000000"),
+        # An S7-1500 (6ES7 512-1CK01, FW V2.9) stored and read back these system-type values, which name no real object
+        (T.HW_IO, 65535, 0, "ffff"),
+        (T.DB_ANY, 60000, 0, "ea60"),
+        (T.OB_ANY, 32767, 0, "7fff"),
+        (T.HW_ANY, 0, 0, "0000"),
+        (T.DB_DYN, 0, 0, "0000"),
+        (T.CONN_R_ID, 2**32 - 1, 0, "ffffffff"),
+        (T.OB_CYCLIC, -1, 0, "ffff"),  # read from an S7-1500 in issue #170: an OB number is a signed INT
     ],
 )
 def test_encode_known_answers(softdatatype: T, value: Any, length: int, raw: str) -> None:
@@ -203,6 +212,13 @@ def test_encode_known_answers(softdatatype: T, value: Any, length: int, raw: str
         (T.S5TIME, dt.timedelta(seconds=10000), ValueError),
         (T.S5TIME, 15, ValueError),  # not a multiple of 10 ms
         (T.DTL, 1, TypeError),
+        # the range of each system type's wire type, checked by the client; no PLC was sent these
+        (T.HW_IO, -1, ValueError),
+        (T.HW_IO, 65536, ValueError),
+        (T.HW_IO, True, TypeError),
+        (T.OB_ANY, 32768, ValueError),
+        (T.CONN_R_ID, 2**32, ValueError),
+        (T.OPC_UA_LOCALIZEDTEXTENCODINGMASK, 256, ValueError),
     ],
 )
 def test_encode_rejects_values_the_type_cannot_hold(softdatatype: T, value: Any, error: type[Exception]) -> None:
@@ -267,6 +283,64 @@ def test_symbolic_tag_decodes_array_elements_and_strings() -> None:
     # Element tags carry their array's dimensions; they are still scalars.
     assert _tag("T.a[1]", T.INT, dimensions=[(0, 2)]).decode_value(b"\x00\x02") == 2
     assert _tag("s", T.STRING, string_length=4).decode_value(bytes.fromhex("040268690000")) == "hi"
+
+
+# Source: https://github.com/gijzelaerr/s7commplus/issues/170#issuecomment-6831952583
+@pytest.mark.parametrize(
+    ("softdatatype", "softdatatype_id", "datatype", "raw", "expected"),
+    [
+        (T.AOMIDENT, 128, DataType.DWORD, "00000082", 130),
+        (T.EVENT_ANY, 129, DataType.DWORD, "00000078", 120),
+        (T.EVENT_ATT, 130, DataType.DWORD, "00000079", 121),
+        (T.EVENT_HWINT, 134, DataType.DWORD, "0000007a", 122),
+        (T.HW_ANY, 144, DataType.WORD, "0065", 101),
+        (T.HW_IOSYSTEM, 145, DataType.WORD, "0083", 131),
+        (T.HW_DPMASTER, 146, DataType.WORD, "0084", 132),
+        (T.HW_DEVICE, 147, DataType.WORD, "0066", 102),
+        (T.HW_DPSLAVE, 148, DataType.WORD, "0085", 133),
+        (T.HW_IO, 149, DataType.WORD, "0067", 103),
+        (T.HW_MODULE, 150, DataType.WORD, "0086", 134),
+        (T.HW_SUBMODULE, 151, DataType.WORD, "0068", 104),
+        (T.HW_HSC, 152, DataType.WORD, "0087", 135),
+        (T.HW_PWM, 153, DataType.WORD, "0088", 136),
+        (T.HW_PTO, 154, DataType.WORD, "0089", 137),
+        (T.HW_INTERFACE, 155, DataType.WORD, "0069", 105),
+        (T.HW_IEPORT, 156, DataType.WORD, "006a", 106),
+        (T.OB_ANY, 160, DataType.INT, "006e", 110),
+        (T.OB_DELAY, 161, DataType.INT, "0070", 112),
+        (T.OB_TOD, 162, DataType.INT, "0071", 113),
+        (T.OB_CYCLIC, 163, DataType.INT, "006f", 111),
+        (T.OB_ATT, 164, DataType.INT, "0077", 119),
+        (T.CONN_ANY, 168, DataType.WORD, "007b", 123),
+        (T.CONN_PRG, 169, DataType.WORD, "007d", 125),
+        (T.CONN_OUC, 170, DataType.WORD, "007c", 124),
+        (T.CONN_R_ID, 171, DataType.DWORD, "0000007e", 126),
+        (T.PORT, 173, DataType.UINT, "007f", 127),
+        (T.RTM, 174, DataType.UINT, "0080", 128),
+        (T.PIP, 175, DataType.UINT, "0081", 129),
+        (T.OB_PCYCLE, 192, DataType.INT, "0076", 118),
+        (T.OB_HWINT, 193, DataType.INT, "0072", 114),
+        (T.OB_DIAG, 195, DataType.INT, "0073", 115),
+        (T.OB_TIMEERROR, 196, DataType.INT, "0075", 117),
+        (T.OB_STARTUP, 197, DataType.INT, "0074", 116),
+        (T.OPC_UA_LOCALIZEDTEXTENCODINGMASK, 200, DataType.BYTE, "03", 3),
+        (T.OPC_UA_BYTESTRINGACTUALLENGTH, 201, DataType.UDINT, "b2d05e01", 3000000001),
+        (T.DB_ANY, 208, DataType.UINT, "006b", 107),
+        (T.DB_WWW, 209, DataType.UINT, "006c", 108),
+        (T.DB_DYN, 210, DataType.UINT, "006d", 109),
+    ],
+)
+def test_system_types_read_on_an_s7_1500(
+    softdatatype: T, softdatatype_id: int, datatype: DataType, raw: str, expected: int
+) -> None:
+    """The id, wire type, raw bytes and value an S7-1500 (6ES7 512-1CK01, FW V2.9) gave for a DB member of each type."""
+    assert softdatatype == softdatatype_id
+    tag = _tag("DB_HwTypes.member", softdatatype)
+    assert tag.datatype is datatype
+    assert tag.decode_value(bytes.fromhex(raw)) == expected
+    assert tag.encode_value(expected) == bytes.fromhex(raw)
+    assert is_softdatatype_supported(softdatatype)
+    assert datatype_size(softdatatype) == len(raw) // 2
 
 
 def test_one_element_array_decodes_its_element() -> None:
@@ -718,19 +792,19 @@ CHAR_AND_DT_ITEMS = "01 00025a 02 1002082610021234561236 00"
 WRITE_ANSWER = encode_uint64_vlq(0) + encode_uint32_vlq(0)
 
 
-def _forms_client(asynchronous: bool) -> tuple[Any, AsyncMock | MagicMock]:
-    """A client with FORMS_BROWSE cached and a mocked transport; returns it and the send mock."""
+def _forms_client(asynchronous: bool, browse: list[dict[str, Any]] = FORMS_BROWSE) -> tuple[Any, AsyncMock | MagicMock]:
+    """A client with ``browse`` cached and a mocked transport; returns it and the send mock."""
     if asynchronous:
         async_client = S7CommPlusAsyncClient()
         async_client._connected = True
         async_client._protocol_version = ProtocolVersion.V2
-        async_client._symbol_catalog = SymbolCatalog.from_browse(FORMS_BROWSE)
+        async_client._symbol_catalog = SymbolCatalog.from_browse(browse)
         async_client._send_request = send = AsyncMock(return_value=WRITE_ANSWER)  # type: ignore[method-assign]
         return async_client, send
     client = S7CommPlusClient()
     client._connection = MagicMock(protocol_version=ProtocolVersion.V2, object_qualifier_version=ProtocolVersion.V2)
     client._connection.send_request.return_value = WRITE_ANSWER
-    client._symbol_catalog = SymbolCatalog.from_browse(FORMS_BROWSE)
+    client._symbol_catalog = SymbolCatalog.from_browse(browse)
     return client, client._connection.send_request
 
 
@@ -758,3 +832,64 @@ async def test_write_value_sends_strings_as_arrays(asynchronous: bool) -> None:
 
     # STRING[4] "hi": USINT array [4, 2, h, i, 0, 0]; WSTRING[2] "ä": UINT array [2, 1, ä, 0]
     assert bytes.fromhex("01 100206040268690000 02 1003040002000100e40000 00") in _sent_payload(send)
+
+
+# What write_value sent for each system type to an S7-1500 (6ES7 512-1CK01, FW V2.9, V2 with TLS), which stored
+# and read back every value: the value as a PValue of the type's wire type (flags 00, then the type id). The
+# UDINT goes as a VLQ. Captured one write per request; the same items went out in batches.
+SYSTEM_TYPE_WRITES = [
+    (T.OPC_UA_LOCALIZEDTEXTENCODINGMASK, 4, "000a 04"),
+    (T.OPC_UA_BYTESTRINGACTUALLENGTH, 3000000002, "0004 8b96c1bc02"),
+    (T.HW_ANY, 102, "000b 0066"),
+    (T.HW_DEVICE, 103, "000b 0067"),
+    (T.HW_IO, 104, "000b 0068"),
+    (T.HW_SUBMODULE, 105, "000b 0069"),
+    (T.HW_INTERFACE, 106, "000b 006a"),
+    (T.HW_IEPORT, 107, "000b 006b"),
+    (T.DB_ANY, 108, "0003 006c"),
+    (T.DB_WWW, 109, "0003 006d"),
+    (T.DB_DYN, 110, "0003 006e"),
+    (T.OB_ANY, 111, "0007 006f"),
+    (T.OB_CYCLIC, 112, "0007 0070"),
+    (T.OB_DELAY, 113, "0007 0071"),
+    (T.OB_TOD, 114, "0007 0072"),
+    (T.OB_HWINT, 115, "0007 0073"),
+    (T.OB_DIAG, 116, "0007 0074"),
+    (T.OB_STARTUP, 117, "0007 0075"),
+    (T.OB_TIMEERROR, 118, "0007 0076"),
+    (T.OB_PCYCLE, 119, "0007 0077"),
+    (T.OB_ATT, 120, "0007 0078"),
+    (T.EVENT_ANY, 121, "000c 00000079"),
+    (T.EVENT_ATT, 122, "000c 0000007a"),
+    (T.EVENT_HWINT, 123, "000c 0000007b"),
+    (T.CONN_ANY, 124, "000b 007c"),
+    (T.CONN_OUC, 125, "000b 007d"),
+    (T.CONN_PRG, 126, "000b 007e"),
+    (T.CONN_R_ID, 127, "000c 0000007f"),
+    (T.PORT, 128, "0003 0080"),
+    (T.RTM, 129, "0003 0081"),
+    (T.PIP, 130, "0003 0082"),
+    (T.AOMIDENT, 131, "000c 00000083"),
+    (T.HW_IOSYSTEM, 132, "000b 0084"),
+    (T.HW_DPMASTER, 133, "000b 0085"),
+    (T.HW_DPSLAVE, 134, "000b 0086"),
+    (T.HW_MODULE, 135, "000b 0087"),
+    (T.HW_HSC, 136, "000b 0088"),
+    (T.HW_PWM, 137, "000b 0089"),
+    (T.HW_PTO, 138, "000b 008a"),
+]
+
+
+@kinds
+async def test_write_values_sends_system_types_in_their_wire_types(asynchronous: bool) -> None:
+    browse = [
+        {"name": f"T.{softdatatype.name}", "access_sequence": f"8A0E002B.{lid:X}", "data_type": softdatatype.name}
+        for lid, (softdatatype, _, _) in enumerate(SYSTEM_TYPE_WRITES, 9)
+    ]
+    client, send = _forms_client(asynchronous, browse)
+
+    await _call(client.write_values({f"T.{softdatatype.name}": value for softdatatype, value, _ in SYSTEM_TYPE_WRITES}))
+
+    assert send.call_count == 1
+    items = b"".join(encode_uint32_vlq(index) + bytes.fromhex(item) for index, (_, _, item) in enumerate(SYSTEM_TYPE_WRITES, 1))
+    assert items + b"\x00" in _sent_payload(send)

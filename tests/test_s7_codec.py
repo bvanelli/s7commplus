@@ -5,7 +5,12 @@ from typing import Any
 
 import pytest
 
-from s7commplus.client import _build_multi_symbolic_read_payload, _build_symbolic_read_payload, _build_symbolic_write_payload
+from s7commplus.client import (
+    _build_multi_symbolic_read_payload,
+    _build_multi_symbolic_write_payload,
+    _build_symbolic_read_payload,
+    _build_symbolic_write_payload,
+)
 from s7commplus.codec import (
     skip_typed_value,
     _pvalue_element_size,
@@ -408,6 +413,37 @@ class TestMultiSymbolicReadPayload:
         assert _build_multi_symbolic_read_payload([(self.DB_AREA, [1, 4])]) == _build_multi_symbolic_read_payload(
             [(self.DB_AREA, [1, 4], 0)]
         )
+
+
+class TestMultiSymbolicWritePayload:
+    """A batched symbolic write packs every address, then every value, into one SetMultiVariables request."""
+
+    # Requests an S7-1500 (6ES7 512-1CK01, FW V2.9, V2 with TLS) accepted for DB_HwTypes.vHwIo (a HW_IO, sent as
+    # a WORD) and DB_SystemTypes.vUaActualLength (an OPC_UA_BYTESTRINGACTUALLENGTH, sent as a VLQ UDINT).
+    @pytest.mark.parametrize(
+        ("access_area", "lid", "datatype", "data", "expected"),
+        [
+            (
+                0x8A0E002B,
+                0x0B,
+                DataType.WORD,
+                "0068",
+                "00000000 01 05 00 88d0b8802b 02 9376 0b 01 000b0068 00 000004e88969001200000000896a001300896b0004000000000000",
+            ),
+            (
+                0x8A0E002A,
+                0x1E,
+                DataType.UDINT,
+                "b2d05e02",
+                "00000000 01 05 00 88d0b8802a 02 9376 1e 01 00048b96c1bc02 00 000004e88969001200000000896a001300896b0004000000000000",
+            ),
+        ],
+    )
+    def test_matches_a_request_the_plc_accepted(
+        self, access_area: int, lid: int, datatype: DataType, data: str, expected: str
+    ) -> None:
+        payload = _build_multi_symbolic_write_payload([(access_area, [lid], bytes.fromhex(data), 0, datatype)])
+        assert payload == bytes.fromhex(expected)
 
 
 class TestCodecRoundTrips:

@@ -241,6 +241,8 @@ PLC type                                            Python value
 ==================================================  ==========================================
 BOOL                                                ``bool``
 integers, BYTE, WORD, DWORD, LWORD                  ``int``
+HW_*, OB_*, EVENT_*, CONN_*, DB_ANY/WWW/DYN         ``int``
+PORT, RTM, PIP, AOM_IDENT, OPC_UA_*                 ``int``
 REAL, LREAL                                         ``float``
 CHAR, WCHAR, STRING, WSTRING                        ``str`` (CHAR and STRING as Latin-1)
 DATE                                                ``datetime.date``

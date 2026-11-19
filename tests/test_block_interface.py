@@ -12,6 +12,7 @@ paths are checked on real bytes.
 """
 
 import base64
+import logging
 import xml.etree.ElementTree as ET
 import zlib
 
@@ -376,6 +377,24 @@ _TON_COMMENTS_DB_BLOB = base64.b64decode(
     "oqGKEf//oTEgAKKhijIAfJRXIACjk3AAFACFM5gAAAI="
 )
 
+# DB declared of the UDT UDT_Comments; its LineComm stream is empty, the comments are the UDT's.
+_DB_OF_UDT_BLOB = base64.b64decode(
+    "eH1mBSsTpVfbThsxEP2VaPtsdsbXNSKRgAS1UhESBR76gta73qoSIqihKJ/f8dq7cS4otH2K4+we"
+    "j2fmnDM5rozVvjBuF2S25UCTMnpQql30B2r1WB+k1e0lfWIlQaAGEdthWlx8eViczi8eb7r79rWU"
+    "3itvnWS1AcEk+orVHCTztW887xznVUs368V0Wjz2L9N09Uj+ELxmVQIIowAl084Dk60hAGsV010D"
+    "Ep0VwtTFbNPgycf+U90jSqbudMTDhFxK0cXfpoUpQnrSY7QYjx8VNc9dqG3ozXjNMYeUsut6nRNM"
+    "xa1REHFIMzdSKWPQ8JFEyY3/PWlRwcO06devfFrErgydmn6aFjnogbGR4gKuGSIDewfmVBAj8KTS"
+    "FoW23w9Mn8deGFXwoy/cXH97CZn98PNbY8mxp/ss9AIDa4t9bs6pQMvWPxEhOPUGRNFJWpwyKK0J"
+    "d08U1TLMRsl+lB4HoFBWWJs5FzAP7InJmvuXQGgemf3VP/+IX2dnd7/IDInMk+Y36WznPKJxglnl"
+    "PJNcKFZrDQyMcN5x7Nqqopc+/1wFdZnQ0cQ0bo1yDIh4xESlmPO6Y0LYStkOm7YRsauHkzJWhTlm"
+    "dwKwtag0uo45CzWTUjbMdg0yWUnR1p0x1tgiGyzokrNB60NOA5Wi1q1evG+TlI96qfoc3tBOknfb"
+    "R5cD8AGAfIykdg8CBwgaCiMGwh6IGECeycYyDCp4X/Jd14MBVPABFHvQNKROVnnll3nlxzbpO2S3"
+    "A2Zny8kywpZpLavNOkZeplNoFWpyVHpGCubKvas6uK06dtB2sGAAiQ4bbT+NgPD3evNJIvDGGneQ"
+    "MphTJqRgpEz/JafMuVxYfWVMrvqpoHRxiicp6TvN9uTf/NNup1SHm22vpCGYZR7ZpqS4KWkW4eHS"
+    "xcDy4pX9372DhhsxhbGXeHW52Pe6bWdCBfG4uMn7zbvb+0W2SeNLepifqPecLEVUbtrq/Z1t95z9"
+    "AV18eNOjk3JAFAEAEJgAAAJ4fTxVQ2oDAAAAAAEAoqGKDgAmlA4gAKOTcAAUAIccmAAAAg=="
+)
+
 # FB Frequency from the same program, not one of the test blocks: it keeps its four constants
 # in a separate ConstantSection part, and its Root Constant header is empty.
 _FREQUENCY_FB_BLOB = base64.b64decode(
@@ -689,15 +708,20 @@ def test_block_interface_from_live_s7_1500_udt_db():
 
 
 def test_block_interface_from_live_s7_1500_library_instance_db_is_empty():
-    # The Values part only references the library FB, so there is no source to parse.
+    # The Values part only references the system type IEC_TIMER, so there is no source to parse.
     assert block_interface_from_explore(_LIBRARY_INSTANCE_DB_INTERFACE_BLOB) == []
 
 
 @pytest.mark.parametrize("blob", [_LIBRARY_INSTANCE_DB_INTERFACE_BLOB, _TON_COMMENTS_DB_BLOB])
 def test_library_instance_db_references_the_timer_type(blob):
-    # a library FB is not embedded as a BlockSource, so there is no source; the reference is the timer type
+    # the instance DB of a system type only references it, so there is no source; the reference is the timer type
     interface = BlockInterface.from_explore(blob)
-    assert (interface.members, interface.source, interface.references) == ([], None, frozenset({"IEC_TIMER"}))
+    assert (interface.members, interface.source, interface.kind, interface.references) == (
+        [],
+        None,
+        None,
+        frozenset({"IEC_TIMER"}),
+    )
 
 
 def test_parse_block_interface_values_part_without_source_is_empty():
@@ -1029,10 +1053,23 @@ def test_live_line_comment_paths_have_no_section_prefix(blob: bytes):
     assert len(expected) >= 4
 
 
-def test_live_user_fb_instance_db_has_its_fb_as_source():
-    interface = BlockInterface.from_explore(_FB_COMMENTS_DB_BLOB)
-    assert interface.source == "FB_Comments"
-    assert interface.references == frozenset({"FB_Inner", "IEC_TIMER", "UDT_Comments"})
+@pytest.mark.parametrize(
+    ("blob", "source", "kind", "references"),
+    [
+        (_FB_COMMENTS_DB_BLOB, "FB_Comments", "BlockSource", {"FB_Inner", "IEC_TIMER", "UDT_Comments"}),
+        # Live S7-1500 LGF_SinusCI_DB: a library FB is embedded like a program FB
+        (_SINUS_INSTANCE_DB_INTERFACE_BLOB, "LGF_SinusCI", "BlockSource", set()),
+        # A DataTypeSource below Values is a DB of a UDT, not an instance
+        (_UDT_DB_INTERFACE_BLOB, "BRCV_User", "DataTypeSource", set()),
+        # The purpose-built DB of a UDT, whose UDT is _UDT_COMMENTS_BLOB
+        (_DB_OF_UDT_BLOB, "UDT_Comments", "DataTypeSource", set()),
+    ],
+)
+def test_db_names_the_type_it_is_declared_of_as_source_and_not_as_reference(
+    blob: bytes, source: str, kind: str, references: set[str]
+):
+    interface = BlockInterface.from_explore(blob)
+    assert (interface.source, interface.kind, interface.references) == (source, kind, references)
 
 
 def test_resolve_id_path_does_not_look_up_an_empty_struct_in_types():
@@ -1053,16 +1090,6 @@ def test_resolve_id_path_looks_up_a_udt_named_struct():
     assert resolve_id_path([Member("a", 'Array[0..1] of "Struct"', 1, 0, 0, id=5)], "5[0]:7", types=types) == "a[0].x"
 
 
-def test_instance_db_names_its_fb():
-    # Live S7-1500 LGF_SinusCI_DB: the FB sits below the Values part
-    assert BlockInterface.from_explore(_SINUS_INSTANCE_DB_INTERFACE_BLOB).source == "LGF_SinusCI"
-
-
-def test_udt_db_has_no_source():
-    # A DataTypeSource below Values is a DB of a UDT, not an instance
-    assert BlockInterface.from_explore(_UDT_DB_INTERFACE_BLOB).source is None
-
-
 def test_info_from_explore_without_stream_is_empty():
     assert BlockInterface.from_explore(b"no zlib stream here") == BlockInterface([], None, frozenset())
 
@@ -1080,10 +1107,29 @@ def test_from_xml_without_part_is_empty():
     assert BlockInterface.from_xml("<Other />") == BlockInterface([], None, frozenset())
 
 
-def test_from_xml_values_part_with_empty_block_has_no_source():
-    # an empty Block attribute must not become the source name ""
-    xml = '<BlockInterface><Part Kind="Values"><SubParts><Part Kind="BlockSource" Block="" /></SubParts></Part></BlockInterface>'
-    assert BlockInterface.from_xml(xml).source is None
+@pytest.mark.parametrize(
+    ("part", "references", "warnings"),
+    [
+        # an empty Block attribute must not become the source name ""
+        ('<Part Kind="BlockSource" Block="" />', set(), []),
+        # a system type is only referenced, in a part without a Kind, which is expected
+        ('<Part Block="IEC_TIMER" />', {"IEC_TIMER"}, []),
+        # only the known kinds make a source; an unknown one stays a reference and is reported
+        (
+            '<Part Kind="SomeNewSource" Block="X" />',
+            {"X"},
+            ["Values part embeds 'X' of unknown kind 'SomeNewSource'; it is not taken as a source"],
+        ),
+    ],
+)
+def test_from_xml_values_part_without_a_known_source(
+    part: str, references: set[str], warnings: list[str], caplog: pytest.LogCaptureFixture
+):
+    xml = f'<BlockInterface><Part Kind="Values"><SubParts>{part}</SubParts></Part></BlockInterface>'
+    with caplog.at_level(logging.WARNING, logger="s7commplus.block_interface"):
+        interface = BlockInterface.from_xml(xml)
+    assert (interface.source, interface.kind, interface.references) == (None, None, references)
+    assert caplog.messages == warnings
 
 
 def test_from_xml_references_skip_empty_names():

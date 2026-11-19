@@ -13,13 +13,22 @@ that also names the blocks the interface is built from.
 
 from __future__ import annotations
 
+import logging
 import re
 import xml.etree.ElementTree as ET
 import zlib
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
+from typing import Literal, get_args
 
 from .blob_decompressor import find_preset_stream, decompress_blob
+
+logger = logging.getLogger(__name__)
+
+# The Part kinds seen embedding the FB or UDT a DB is declared with, so far only on an S7-1500 with FW V2.9
+# (the instance DB and DB-of-UDT fixtures in tests/test_block_interface.py). A kind added here is recognized
+# by BlockInterface.from_xml as well; a part of any other kind is not taken as a source.
+SourceKind = Literal["BlockSource", "DataTypeSource"]
 
 # Interface-description preset-dict kinds, most preferred first. ``DebugInfo IntfDesc``
 # carries the optimized (symbolic-access) block interface; ``IntfDesc`` the standard one.
@@ -187,27 +196,38 @@ class BlockInterface:
 
     Attributes:
         members: The block's top-level members, as :func:`parse_block_interface` returns them.
-        source: The FB an instance DB copies its interface from, or None for any
-            other interface. The FB is embedded in the instance DB's interface, so a
-            library FB has a source too. A DB declared of a UDT has none, and neither
-            does the instance DB of a system type such as ``IEC_TIMER``: the
-            interface only references the type, so the DB has no members and the
-            type is in `references`.
+        source: The name of the block whose interface this DB copies: the FB of an
+            instance DB, library FBs included, or the UDT of a DB declared of a UDT.
+            `kind` tells the two apart: check ``kind == "BlockSource"`` to find
+            instance DBs, since a `source` alone may be a UDT.
+
+            None when the interface is the block's own, as in an FB, FC, OB, UDT or
+            global DB. The instance DB of a system type such as ``IEC_TIMER`` has none
+            either: its interface only references the type, so the DB has no members
+            and the type is in `references`.
         references: Names of the other types the interface mentions: the ``Block``
             of every ``<Part>``, every ``<ExternalType>`` and every UDT or FB a
             member ``Type`` quotes, array element types included. A member ``Type``
             that names a UDT without quotes is not listed unless a ``<Part>`` or
             ``<ExternalType>`` also names it. The block's own name is left out, and
-            so is the FB of an instance DB that has a `source`: it is there instead, so a caller
-            exploring the blocks an interface is built from needs both. Besides the
-            program's UDTs and FBs, it holds the library and system types the interface
-            references without embedding, such as ``IEC_TIMER``; these are not blocks of
-            the program, and they are the names :attr:`Member.referenced_type` gives.
+            so is the `source`, so a caller exploring the blocks an interface is
+            built from needs both. Besides the program's UDTs and FBs, it holds the
+            library and system types the interface references without embedding,
+            such as ``IEC_TIMER``; these are not blocks of the program, and they are
+            the names :attr:`Member.referenced_type` gives.
+        kind: What kind of type `source` is, as the ``Kind`` of its part, and None when
+            there is no `source`. It describes the `source`, so a global DB, whose
+            interface is its own, has None too. The kinds known so far are ``BlockSource``,
+            the kind of any code block, here always the FB of an instance DB since only
+            an FB has instances, and ``DataTypeSource`` for the UDT of a DB declared of a
+            UDT; a later version may add others, so compare against the
+            kind you handle instead of treating every other value as the remaining one.
     """
 
     members: list[Member]
     source: str | None
     references: frozenset[str]
+    kind: SourceKind | None = None
 
     @classmethod
     def from_xml(cls, xml_text: str, max_members: int = 250_000, max_depth: int = 64) -> BlockInterface:
@@ -238,18 +258,27 @@ class BlockInterface:
             references.discard(primary.get("Block", ""))
         references.discard("")
 
-        source = None
+        source: str | None = None
+        kind: SourceKind | None = None
         if primary is not None and primary.get("Kind") == "Values":
-            # An instance DB or a DB of a UDT embeds the FB or UDT it is declared with below its Values part;
-            # only a BlockSource there makes it an instance. ``VersionElement`` also names the FB, but
-            # truncated or with its library path; ``Block`` is the reliable one.
+            # A DB declared of another type embeds that type below its Values part, in a part of one of the
+            # SourceKind kinds, such as the FB of an instance DB or the UDT of a DB of a UDT. A part of any
+            # other kind is not taken as a source: the instance DB of a system type only references it, in a
+            # part without a Kind. ``VersionElement`` also names the type, but truncated or with its library
+            # path; ``Block`` is the reliable one.
             primary = primary.find("SubParts/Part")
-            if primary is not None and primary.get("Kind") == "BlockSource":
-                source = primary.get("Block") or None
-        if source:
-            references.discard(source)
+            if primary is not None and (source := primary.get("Block") or None):
+                part_kind = primary.get("Kind")
+                kind = next((known for known in get_args(SourceKind) if known == part_kind), None)
+                if kind:
+                    references.discard(source)
+                else:
+                    # A part without a Kind is the expected reference to a system type
+                    if part_kind:
+                        logger.warning("Values part embeds %r of unknown kind %r; it is not taken as a source", source, part_kind)
+                    source = None
         members = [] if primary is None else _parse_source_part(primary, "", set(), _ExpansionLimits(max_members, max_depth))
-        return cls(members=members, source=source, references=frozenset(references))
+        return cls(members=members, source=source, references=frozenset(references), kind=kind)
 
     @classmethod
     def from_explore(cls, explore_payload: bytes, max_members: int = 250_000, max_depth: int = 64) -> BlockInterface:

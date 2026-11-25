@@ -78,7 +78,7 @@ class TestParseServerSessionRole:
         # The same shape for a different attribute must behave identically —
         # the new branch adds no new failure mode.
         payload = bytes([0xA3]) + bytes.fromhex("8a39") + bytes([0x00, 0x04])  # key 12345
-        with pytest.raises(ValueError):
+        with pytest.raises(S7ProtocolError, match="CreateObject attribute 1337 cannot be skipped"):
             parse_create_object_attributes(payload)
 
 

@@ -6,19 +6,19 @@ from itertools import accumulate
 
 import pytest
 
-from s7commplus import PresetStream, decompress_blob, find_and_decompress, iter_preset_streams
-from s7commplus.blob_decompressor import compress_blob, find_preset_stream, iter_preset_headers
+from s7commplus import PresetIdentity, PresetStream, decompress_blob, find_and_decompress, iter_preset_streams
+from s7commplus.blob_decompressor import _compress_blob, find_preset_stream, iter_preset_headers
 from s7commplus.block_interface import _INTFDESC_KINDS
 from s7commplus.zlib_dicts import ZLIB_DICTIONARIES, ZLIB_DICT_IDENTITIES, ZLIB_DICT_NAMES
 
 
 def test_compress_blob_round_trips_and_rejects_an_unknown_dictionary():
     text = '<Comment Path="51"><DictEntry Language="de-DE">Füllstand</DictEntry></Comment>'
-    blob = compress_blob(text, 0x3C55436A)
+    blob = _compress_blob(text, ZLIB_DICT_IDENTITIES[0x3C55436A])
     assert blob[:6] == bytes.fromhex("787d3c55436a")
     assert decompress_blob(blob) == text
     with pytest.raises(ValueError, match="Unknown preset dictionary 0x12345678"):
-        compress_blob(text, 0x12345678)
+        _compress_blob(text, PresetIdentity(0x12345678, "LineComm", 0x90000001))
 
 
 def test_all_dictionaries_have_correct_adler32():
@@ -76,11 +76,11 @@ def test_iter_preset_headers_and_streams():
     line_comm, int_ref, ident = (ZLIB_DICT_IDENTITIES[a] for a in (0x3C55436A, 0xB0155FF8, 0xCE9B821B))
     parts = [
         b"\x00\x01",
-        compress_blob("<A/>", line_comm.adler),
-        compress_blob("<A/>", line_comm.adler)[:6] + b"\xff" * 8,  # known dictionary, undecodable body
-        compress_blob("", int_ref.adler),  # empty document
+        _compress_blob("<A/>", line_comm),
+        _compress_blob("<A/>", line_comm)[:6] + b"\xff" * 8,  # known dictionary, undecodable body
+        _compress_blob("", int_ref),  # empty document
         b"\x78\x7d\xde\xad\xbe\xef",  # unknown dictionary
-        compress_blob("<B/>", ident.adler),
+        _compress_blob("<B/>", ident),
         b"\x78\x7d\xce\x9b",  # header truncated by the end of the payload
     ]
     offsets = [0, *accumulate(map(len, parts))]
@@ -102,7 +102,7 @@ def test_iter_preset_streams_keeps_payload_order_across_versions(adlers: tuple[i
     # LineComm 0x90000001 and 0x98000001 in both orders: the output follows the payload,
     # not the Adler-32 order of ZLIB_DICT_IDENTITIES.
     first, second = (ZLIB_DICT_IDENTITIES[a] for a in adlers)
-    payload = compress_blob("<First/>", first.adler) + compress_blob("<Second/>", second.adler)
+    payload = _compress_blob("<First/>", first) + _compress_blob("<Second/>", second)
 
     assert list(iter_preset_streams(payload)) == [PresetStream(first, "<First/>"), PresetStream(second, "<Second/>")]
 
@@ -110,7 +110,7 @@ def test_iter_preset_streams_keeps_payload_order_across_versions(adlers: tuple[i
 def test_iter_preset_streams_skips_header_inside_compressed_data():
     # Level 0 stores the bytes verbatim, so a real preset header shows up inside a standard stream.
     ident = ZLIB_DICT_IDENTITIES[0xCE9B821B]
-    payload = zlib.compress(b"<Outer>" + compress_blob("", ident.adler)[:6] + b"<B/></Outer>", 0)
+    payload = zlib.compress(b"<Outer>" + _compress_blob("", ident)[:6] + b"<B/></Outer>", 0)
 
     assert [preset for _, preset in iter_preset_headers(payload)] == [ident]
     assert list(iter_preset_streams(payload)) == []

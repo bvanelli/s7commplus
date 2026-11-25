@@ -542,12 +542,9 @@ def decode_blob_element(data: bytes, offset: int) -> tuple[int, bytes, int]:
         consumed += 8
         blob_flags, c = decode_uint32_vlq(data, offset + consumed)
         consumed += c
-        if blob_flags & 0x10:
-            # 0x10 selects a layout that is not known (only 0x02 has been captured)
+        if blob_flags & 0x410:
+            # 0x10 and 0x400 select layouts that are not known (only 0x02 has been captured)
             raise ValueError(f"Unsupported type-safe BLOB flags: {blob_flags:#x}")
-        if blob_flags & 0x400:
-            _, c = decode_uint32_vlq(data, offset + consumed)  # a second count, as in a packed STRUCT; the length follows it
-            consumed += c
     length, c = decode_uint32_vlq(data, offset + consumed)
     consumed += c
     if offset + consumed + length > len(data):

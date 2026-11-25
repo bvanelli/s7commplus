@@ -679,16 +679,9 @@ class TestDecodePValue:
         data = bytes.fromhex("90808213 0000000000000000 02 04 01010000")
         assert decode_blob_element(data, 0) == (0x02000113, b"\x01\x01\x00\x00", len(data))
 
-    @pytest.mark.parametrize(
-        "flags, length_prefix",
-        [
-            (b"\x00", b"\x02"),
-            (b"\x03", b"\x02"),
-            (b"\x88\x02", b"\x09\x02"),  # 0x402: the second count comes before the length
-        ],
-    )
-    def test_type_safe_blob_flags_that_keep_the_length_layout(self, flags: bytes, length_prefix: bytes) -> None:
-        data = b"\x02" + bytes(8) + flags + length_prefix + b"\xaa\xbb"
+    @pytest.mark.parametrize("flags", [b"\x00", b"\x03"])
+    def test_type_safe_blob_flags_that_keep_the_length_layout(self, flags: bytes) -> None:
+        data = b"\x02" + bytes(8) + flags + b"\x02\xaa\xbb"
         assert decode_blob_element(data, 0) == (2, b"\xaa\xbb", len(data))
 
     @pytest.mark.parametrize(
@@ -696,6 +689,7 @@ class TestDecodePValue:
         [
             (bytes([0x01, 0x02, 0xAA, 0xBB, 0x00]), "Unsupported BLOB root id 1"),
             (bytes([0x02] + [0] * 8 + [0x12, 0x00]), "Unsupported type-safe BLOB flags: 0x12"),
+            (bytes([0x02] + [0] * 8 + [0x88, 0x02, 0x00]), "Unsupported type-safe BLOB flags: 0x402"),
             (bytes([0x02] + [0] * 7), "Truncated type-safe BLOB header"),
         ],
     )

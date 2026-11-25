@@ -1,10 +1,12 @@
 """Tests for S7CommPlus codec (header encoding, typed values, payload builders)."""
 
+import base64
 import struct
 from typing import Any
 
 import pytest
 
+from s7commplus.blob_decompressor import iter_preset_streams
 from s7commplus.client import (
     _build_multi_symbolic_read_payload,
     _build_multi_symbolic_write_payload,
@@ -20,6 +22,8 @@ from s7commplus.codec import (
     decode_int16,
     decode_int32,
     decode_int64,
+    decode_blob_element,
+    decode_pvalue_sparse_array,
     decode_pvalue_to_bytes,
     encode_pvalue_array,
     decode_response_header,
@@ -50,6 +54,73 @@ from s7commplus.codec import (
 from s7commplus.error import S7ReturnValueError
 from s7commplus.protocol import PROTOCOL_ID, DataType, FunctionCode, Ids, Opcode, ProtocolVersion
 from s7commplus.vlq import encode_int32_vlq, encode_int64_vlq, encode_uint32_vlq, encode_uint64_vlq
+
+# Live S7-1500 (6ES7 512-1CK01, FW V2.9) reply to a program EXPLORE for [2544, 2546]: the LineComm
+# attribute of a test DB whose comments name the unusual characters of its members ('ß', 'ü', ...),
+# from its sparse array PValue header to its closing key. One element, key 1, of 471 bytes.
+_LINE_COMMENTS_SPARSE_ARRAY = base64.b64decode(
+    "QBQBAINXmAAAAnh9PFVDap2WzU7CQBDHX2XDwRqNqZ+oSLh45abxapa62kb6YVv1Cj6BiAe5KAYB"
+    "NWhivIDxtBt8EJ7EsVBspLLdPUy26bb/3387mZnG+8gNjQyp4c3U+Bwj0toS3IpDBOKp3B52DVwo"
+    "EnRu+DryHIB4yLaQrxNkYZNk1fHLuaw60p6ALItADmxfArEigjg5Jd5PFpGJ3WNx1up0Vt7wfGQf"
+    "Ise1gWhi39CQpmMXa5AmdDZy4iVkZcRSpLA7ReJEGbEPqLBPOcq6GKUhR9kQo7zLUTbFKHUpSnpR"
+    "jPIsRRGrUGVeDsKpmz+QBTnImhBkXw6SFoKoUpC0WN3PYNPZkgOJJX9ODiLWX2YlIJykhG3Zc4hm"
+    "4OJvS07YiTmtK29bR8jzXQOW4AxF4icW56VgW4fJ7pGIZ+TDCEumzSm7UBsXHR0XSEJRTjp3iFsw"
+    "sCVnmFPCobaQYd5MyO+yyuCiwypfV6xCy0Fc0g+ILkQP5W0Nw9BGnOeSeeFMDmDc0DarDUq3cNGD"
+    "eIN4ZLV+HdanqJdpzyXywpsvwHigXfrCmv3qoNRj7f494KIWYraTkTn9DaRbg9I1bbJWv0o7rEHL"
+    "9DUKntz9h6sGf/hZNf4/+RuagBecAA=="
+)
+
+# Live S7-1500 (6ES7 512-1CK01, FW V2.9) reply to an alarm EXPLORE: the en-US texts of one alarm, a sparse
+# BLOB array keyed by (language << 16) | text id, here with text ids 1, 2, 3, 6 and 9.
+_ALARM_TEXTS_SPARSE_ARRAY = bytes.fromhex(
+    "4014a0a480010081094f6e65206f662074686520706172747320697320737475636b206f6e20746865206c696e652c20736f20746865206c"
+    "696e6520686173206265656e2073746f707065642e20506c656173652061636b6e6f776c656467652074686520616c61726d20616e642072"
+    "65706f72742074686520697373756520746f2074686520736166657479207465616da0a48002003a4552524f523a2028403525734029204d"
+    "616368696e65204031256440202d205374617475733a204572726f72202d20537475636b20706172742ea0a48003000b424d4b3a20403525"
+    "734020a0a48006001c416c61726d20636c6173733a2041636b6e6f776c656467656d656e74a0a480090034436f6e746163743a20284e616d"
+    "65206f662074686520636f6e7461637420706572736f6e20666f72207468697320616c61726d2900"
+)
+
+# Live S7-1500 (6ES7 512-1CK01, FW V2.9) reply to an EXPLORE of object 0x31: attribute 4288, the CPU comment, a
+# sparse WString array with one element, key 1034, of 158 bytes.
+_CPU_COMMENT_SPARSE_ARRAY = bytes.fromhex(
+    "4015880a811e4350552031353132432d3120504e2073657276696e6720617320746865206261736520504c43206f6620746865207465"
+    "7374696e672070726f6a6563742e2049742068656c70732074657374206564676520636173657320776974682069747320766172696f"
+    "757320626c6f636b732e20497420697320636f6e6e656374656420746f20746865204b5450373030206f66207468652070726f6a6563"
+    "742e00"
+)
+
+# Live S7-1500 (6ES7 512-1CK01, FW V2.9) reply to an EXPLORE of ASRoot for attribute 608: the OffsetArea of
+# TextLibrary object 0x8A360409, a 0x20 array of three plain BLOBs of 124, 518 and 1746 bytes.
+_TEXT_LIBRARY_OFFSET_AREA = base64.b64decode(
+    "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"
+)
 
 
 class TestFrameHeader:
@@ -544,6 +615,113 @@ class TestPValueTyped:
 class TestDecodePValue:
     """Test decode_pvalue_to_bytes for all scalar and array type branches."""
 
+    def test_sparse_blob_array_keeps_or_joins_its_elements(self) -> None:
+        # as an S7-1500 V2.9 sends LineComm in a program EXPLORE: key, BlobRootId, length, data, up to a key of 0
+        data = bytes([0x40, DataType.BLOB, 0x01, 0x00, 0x02, 0xAA, 0xBB, 0x0B, 0x00, 0x01, 0xCC, 0x00, 0xFF])
+        assert decode_pvalue_sparse_array(data, 0) == ([(1, bytes([0xAA, 0xBB])), (11, bytes([0xCC]))], 12)
+        assert decode_pvalue_to_bytes(data, 0) == (bytes([0xAA, 0xBB, 0xCC]), 12)
+
+    def test_live_line_comments_sparse_array(self) -> None:
+        data = _LINE_COMMENTS_SPARSE_ARRAY + b"\xff"
+        elements, consumed = decode_pvalue_sparse_array(data, 0)
+        assert (consumed, [(key, len(blob)) for key, blob in elements]) == (478, [(1, 471)])
+        assert decode_pvalue_to_bytes(data, 0) == (elements[0][1], 478)
+        # the element carries 4 bytes ahead of its preset-dictionary zlib stream
+        assert elements[0][1][:6] == bytes.fromhex("98000002787d")
+        [stream] = iter_preset_streams(elements[0][1])
+        assert stream.preset.kind == "LineComm"
+        assert '<Comment Path="54:53"><DictEntry Language="en-US">Variable with \'ü\' on the name</DictEntry>' in stream.text
+
+    @pytest.mark.parametrize("data", [b"", bytes([0x40]), bytes([0x00, DataType.BLOB, 0x00, 0x00])])
+    def test_sparse_blob_decoder_rejects_another_pvalue(self, data: bytes) -> None:
+        with pytest.raises(ValueError, match="Not a sparse array PValue"):
+            decode_pvalue_sparse_array(data, 0)
+
+    @pytest.mark.parametrize(
+        "blobs, encoded",
+        [
+            ([], bytes([0x40, DataType.BLOB, 0x00])),
+            ([b"\xaa\xbb"], bytes([0x40, DataType.BLOB, 0x01, 0x00, 0x02, 0xAA, 0xBB, 0x00])),
+            ([b"\xaa\xbb", b""], bytes([0x40, DataType.BLOB, 0x01, 0x00, 0x02, 0xAA, 0xBB, 0x02, 0x00, 0x00, 0x00])),
+            ([b"\xaa", b"\xcc"], bytes([0x40, DataType.BLOB, 0x01, 0x00, 0x01, 0xAA, 0x02, 0x00, 0x01, 0xCC, 0x00])),
+        ],
+    )
+    def test_sparse_blob_array_decodes(self, blobs: list[bytes], encoded: bytes) -> None:
+        assert decode_pvalue_sparse_array(encoded + b"\xff", 0) == (list(enumerate(blobs, 1)), len(encoded))
+        assert decode_pvalue_to_bytes(encoded + b"\xff", 0) == (b"".join(blobs), len(encoded))
+
+    def test_live_alarm_texts_sparse_array(self) -> None:
+        elements, consumed = decode_pvalue_sparse_array(_ALARM_TEXTS_SPARSE_ARRAY + b"\xff", 0)
+        assert consumed == len(_ALARM_TEXTS_SPARSE_ARRAY)
+        assert [key for key, _ in elements] == [0x04090001, 0x04090002, 0x04090003, 0x04090006, 0x04090009]
+        assert elements[3][1] == b"Alarm class: Acknowledgement"
+
+    def test_live_cpu_comment_sparse_wstring_array(self) -> None:
+        data = _CPU_COMMENT_SPARSE_ARRAY + b"\xa3"  # the next attribute's tag follows
+        [(key, comment)], consumed = decode_pvalue_sparse_array(data, 0)
+        assert (key, consumed) == (1034, len(_CPU_COMMENT_SPARSE_ARRAY))
+        assert comment.decode("utf-8").startswith("CPU 1512C-1 PN serving as the base PLC")
+        assert decode_pvalue_to_bytes(data, 0) == (comment, consumed)
+
+    @pytest.mark.parametrize(
+        "data, message",
+        [
+            (bytes([0x40, DataType.BLOB, 0x01, 0x00, 0x05, 0xAA]), "Not enough data for a BLOB"),
+            (bytes([0x40, DataType.WSTRING, 0x01, 0x05, 0x41]), "Not enough data for a WString"),
+        ],
+    )
+    def test_sparse_array_cut_inside_an_element(self, data: bytes, message: str) -> None:
+        with pytest.raises(ValueError, match=message):
+            decode_pvalue_to_bytes(data, 0)
+
+    def test_type_safe_blob_from_an_alarm_associated_value(self) -> None:
+        # S7-1500 V2.9: root id, 8-byte modification time, flags 0x02, length 4, data
+        data = bytes.fromhex("90808213 0000000000000000 02 04 01010000")
+        assert decode_blob_element(data, 0) == (0x02000113, b"\x01\x01\x00\x00", len(data))
+
+    @pytest.mark.parametrize(
+        "flags, length_prefix",
+        [
+            (b"\x00", b"\x02"),
+            (b"\x03", b"\x02"),
+            (b"\x88\x02", b"\x09\x02"),  # 0x402: the second count comes before the length
+        ],
+    )
+    def test_type_safe_blob_flags_that_keep_the_length_layout(self, flags: bytes, length_prefix: bytes) -> None:
+        data = b"\x02" + bytes(8) + flags + length_prefix + b"\xaa\xbb"
+        assert decode_blob_element(data, 0) == (2, b"\xaa\xbb", len(data))
+
+    @pytest.mark.parametrize(
+        "data, message",
+        [
+            (bytes([0x01, 0x02, 0xAA, 0xBB, 0x00]), "Unsupported BLOB root id 1"),
+            (bytes([0x02] + [0] * 8 + [0x12, 0x00]), "Unsupported type-safe BLOB flags: 0x12"),
+            (bytes([0x02] + [0] * 7), "Truncated type-safe BLOB header"),
+        ],
+    )
+    def test_blob_element_rejects_unconfirmed_or_cut_forms(self, data: bytes, message: str) -> None:
+        with pytest.raises(ValueError, match=message):
+            decode_blob_element(data, 0)
+
+    @pytest.mark.parametrize("keys", [(2, 2), (2, 1)])
+    def test_sparse_blob_array_rejects_keys_out_of_order(self, keys: tuple[int, int]) -> None:
+        data = bytes([0x40, DataType.BLOB, keys[0], 0x00, 0x00, keys[1], 0x00, 0x00, 0x00])
+        with pytest.raises(ValueError, match=f"Sparse array key {keys[1]} does not follow key {keys[0]}"):
+            decode_pvalue_sparse_array(data, 0)
+
+    def test_sparse_blob_array_with_a_type_safe_element(self) -> None:
+        data = bytes([0x40, DataType.BLOB, 0x01, 0x02] + [0] * 8 + [0x02, 0x01, 0xAA, 0x00])
+        assert decode_pvalue_sparse_array(data, 0) == ([(1, b"\xaa")], len(data))
+
+    def test_sparse_array_of_another_type_is_unsupported(self) -> None:
+        with pytest.raises(ValueError, match="Unsupported sparse array PValue datatype: 0x04"):
+            decode_pvalue_to_bytes(bytes([0x40, DataType.UDINT, 0x01, 0x02, 0x00]), 0)
+
+    @pytest.mark.parametrize("flags", [0x30, 0x50, 0x60, 0xD0])
+    def test_flags_with_two_array_kinds_are_rejected(self, flags: int) -> None:
+        with pytest.raises(ValueError, match=f"Invalid PValue flags: {flags:#04x}"):
+            decode_pvalue_to_bytes(bytes([flags, DataType.USINT, 0x01, 0xAA]), 0)
+
     def test_null(self) -> None:
         data = bytes([0x00, DataType.NULL])
         result, consumed = decode_pvalue_to_bytes(data, 0)
@@ -697,6 +875,27 @@ class TestDecodePValue:
         result, consumed = decode_pvalue_to_bytes(data, 0)
         assert result == blob_data
 
+    def test_type_safe_blob(self) -> None:
+        # the S7-1500 V2.9 alarm associated value as a scalar: root id, 8-byte modification time, flags 0x02, length 4
+        data = bytes([0x00, DataType.BLOB]) + bytes.fromhex("90808213 0000000000000000 02 04 01010000") + b"\xff"
+        assert decode_pvalue_to_bytes(data, 0) == (b"\x01\x01\x00\x00", len(data) - 1)
+        assert skip_typed_value(data, 2, DataType.BLOB, 0x00) == len(data) - 1
+
+    @pytest.mark.parametrize(
+        "value, message",
+        [
+            (bytes([0x00, 0x05, 0xDE, 0xAD]), "Not enough data for a BLOB"),
+            (bytes([0x01, 0x02, 0xDE, 0xAD]), "Unsupported BLOB root id 1"),
+        ],
+        ids=["cut", "root-id-1"],
+    )
+    def test_blob_rejected(self, value: bytes, message: str) -> None:
+        data = bytes([0x00, DataType.BLOB]) + value
+        with pytest.raises(ValueError, match=message):
+            decode_pvalue_to_bytes(data, 0)
+        with pytest.raises(ValueError, match=message):
+            skip_typed_value(data, 2, DataType.BLOB, 0x00)
+
     def test_wstring(self) -> None:
         text = "hello".encode("utf-8")
         vlq_len = encode_uint32_vlq(len(text))
@@ -816,6 +1015,33 @@ class TestDecodePValue:
         result, consumed = decode_pvalue_to_bytes(data, 0)
         # Result re-encodes each element as VLQ
         assert result == encode_uint32_vlq(100) + encode_uint32_vlq(200)
+
+    def test_live_text_library_offset_area_blob_array(self) -> None:
+        data = _TEXT_LIBRARY_OFFSET_AREA + b"\xa2"  # the TerminatingObject that followed it
+        result, consumed = decode_pvalue_to_bytes(data, 0)
+        assert consumed == len(_TEXT_LIBRARY_OFFSET_AREA) == 2399
+        # the elements joined: each starts with u32le 2, 0, its entry size and its own length
+        assert len(result) == 124 + 518 + 1746
+        assert result[:16] == struct.pack("<4I", 2, 0, 32, 124)
+        assert result[124:140] == struct.pack("<4I", 2, 0, 16, 518)
+        assert result[642:658] == struct.pack("<4I", 2, 0, 8, 1746)
+        assert skip_typed_value(data, 2, DataType.BLOB, 0x20) == consumed
+
+    def test_blob_array_with_a_type_safe_element(self) -> None:
+        type_safe = bytes.fromhex("90808213 0000000000000000 02 04 01010000")
+        data = bytes([0x10, DataType.BLOB, 0x02, 0x00, 0x02, 0xAA, 0xBB]) + type_safe + b"\xff"
+        assert decode_pvalue_to_bytes(data, 0) == (b"\xaa\xbb\x01\x01\x00\x00", len(data) - 1)
+        assert skip_typed_value(data, 2, DataType.BLOB, 0x10) == len(data) - 1
+
+    def test_blob_array_cut_inside_an_element(self) -> None:
+        with pytest.raises(ValueError, match="Not enough data for a BLOB"):
+            decode_pvalue_to_bytes(bytes([0x20, DataType.BLOB, 0x02, 0x00, 0x01, 0xAA, 0x00, 0x05, 0xBB]), 0)
+
+    def test_dyn_array_is_read_like_a_fix_array(self) -> None:
+        # flags 0x20 (DynArray) has the same count-then-elements layout as 0x10 (FixArray)
+        data = bytes([0x20, DataType.UINT]) + encode_uint32_vlq(2) + b"\x00\x01\x00\x02\xff"
+        assert decode_pvalue_to_bytes(data, 0) == (b"\x00\x01\x00\x02", 7)
+        assert skip_typed_value(data, 2, DataType.UINT, 0x20) == 7
 
 
 class TestVlqArrayElements:

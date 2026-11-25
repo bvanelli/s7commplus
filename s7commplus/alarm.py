@@ -9,7 +9,7 @@ from dataclasses import dataclass, field
 from enum import IntEnum
 from typing import Any
 
-from .codec import encode_object_qualifier, parse_or_raise_for_return_value
+from .codec import decode_blob_element, encode_object_qualifier, parse_or_raise_for_return_value
 from .protocol import DataType, ElementID, Ids, Opcode
 from .vlq import decode_int32_vlq, decode_int64_vlq, decode_uint32_vlq, decode_uint64_vlq, encode_uint32_vlq
 
@@ -262,23 +262,6 @@ def _read_vlq64(data: bytes, offset: int) -> tuple[int, int]:
     return value, offset + consumed
 
 
-def _decode_blob(data: bytes, offset: int) -> tuple[_Blob, int]:
-    root_id, offset = _read_vlq32(data, offset)
-    if root_id > 1:
-        if offset + 9 > len(data):
-            raise ValueError("Truncated typed alarm blob")
-        offset += 8
-        blob_type = data[offset]
-        offset += 1
-        if blob_type not in (2, 3):
-            raise ValueError(f"Unsupported alarm blob type: {blob_type}")
-    size, offset = _read_vlq32(data, offset)
-    end = offset + size
-    if end > len(data):
-        raise ValueError("Truncated alarm blob")
-    return _Blob(root_id, bytes(data[offset:end])), end
-
-
 def _decode_scalar(data: bytes, offset: int, datatype: int) -> tuple[Any, int]:
     if datatype == DataType.NULL:
         return None, offset
@@ -317,7 +300,8 @@ def _decode_scalar(data: bytes, offset: int, datatype: int) -> tuple[Any, int]:
         end = offset + size
         return data[offset:end].decode("utf-8", errors="replace"), end
     if datatype == DataType.BLOB:
-        return _decode_blob(data, offset)
+        root_id, blob, consumed = decode_blob_element(data, offset)
+        return _Blob(root_id, blob), offset + consumed
     if datatype == DataType.STRUCT:
         struct_id = struct.unpack_from(">I", data, offset)[0]
         offset += 4
@@ -339,10 +323,7 @@ def _decode_value(data: bytes, offset: int) -> tuple[Any, int]:
         values: dict[int, Any] = {}
         key, offset = _read_vlq32(data, offset)
         while key:
-            if datatype == DataType.BLOB:
-                value, offset = _decode_blob(data, offset)
-            else:
-                value, offset = _decode_scalar(data, offset, datatype)
+            value, offset = _decode_scalar(data, offset, datatype)
             values[key] = value
             key, offset = _read_vlq32(data, offset)
         return values, offset

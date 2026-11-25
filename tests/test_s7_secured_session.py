@@ -13,6 +13,7 @@ from s7commplus.codec import (
     SERVER_SESSION_ROLES_ID,
     parse_create_object_attributes,
 )
+from s7commplus.error import S7ProtocolError
 from s7commplus.protocol import DataType, ElementID
 from s7commplus.server import S7CommPlusServer
 from s7commplus.vlq import encode_uint32_vlq
@@ -52,6 +53,12 @@ class TestParseServerSessionRole:
         attrs = parse_create_object_attributes(payload)
         assert attrs.server_session_role is None
 
+    def test_attribute_that_cannot_be_skipped_raises_a_protocol_error(self) -> None:
+        payload = _attribute(12345, bytes([0x00, DataType.BLOB, 0x01, 0x02, 0xAA, 0xBB])) + b"\x00"  # BLOB root id 1
+
+        with pytest.raises(S7ProtocolError, match="CreateObject attribute 12345 cannot be skipped"):
+            parse_create_object_attributes(payload)
+
     def test_truncated_attribute_header_does_not_crash(self) -> None:
         # An attribute cut off right after its id leaves no room for the
         # typed-value header; the parser must not crash or misread.
@@ -62,10 +69,10 @@ class TestParseServerSessionRole:
     def test_truncated_role_value_leaves_role_unset(self) -> None:
         # The role attribute's typed-value header present, its VLQ value cut
         # off: the role stays unset. The scan continues and the parser
-        # reports the same malformed-input error as before this attribute
-        # existed (the truncation leaves no valid following element).
+        # reports a protocol error (the truncation leaves no valid following
+        # element).
         payload = bytes([0xA3]) + bytes.fromhex("8239") + bytes([0x00, 0x04])
-        with pytest.raises(ValueError):
+        with pytest.raises(S7ProtocolError, match="CreateObject attribute 313 cannot be skipped"):
             parse_create_object_attributes(payload)
 
         # The same shape for a different attribute must behave identically —

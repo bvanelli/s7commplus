@@ -216,6 +216,31 @@ class DataType(IntEnum):
     S7STRING = 0x19
 
 
+class ArrayKind(IntEnum):
+    """The array kind in the flags byte of a PValue header.
+
+    Fixed and dynamic arrays have the same layout on the wire: a count, then the elements.
+    A sparse array has no count: (key, element) pairs up to a key of 0.
+    """
+
+    SCALAR = 0x00
+    FIXED = 0x10
+    DYNAMIC = 0x20
+    SPARSE = 0x40
+
+    @staticmethod
+    def from_flags(flags: int) -> "ArrayKind":
+        """Return the array kind of a PValue header's flags byte, ignoring its 0x80 bit.
+
+        Raises:
+            ValueError: If the flags set more than one array kind.
+        """
+        try:
+            return ArrayKind(flags & 0x70)
+        except ValueError:
+            raise ValueError(f"Invalid PValue flags: {flags:#04x}") from None
+
+
 class Ids(IntEnum):
     """Well-known IDs for S7CommPlus protocol structures.
 

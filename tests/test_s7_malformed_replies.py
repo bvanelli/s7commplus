@@ -39,6 +39,7 @@ PARSERS: list[tuple[str, Callable[[bytes], Any], tuple[type[BaseException], ...]
     ("decode_header", codec.decode_header, ()),
     ("decode_response_header", codec.decode_response_header, ()),
     ("decode_pvalue_to_bytes", lambda data: codec.decode_pvalue_to_bytes(data, 0), ()),
+    ("decode_pvalue_sparse_array", lambda data: codec.decode_pvalue_sparse_array(data, 0), ()),
     ("parse_create_object_attributes", codec.parse_create_object_attributes, ()),
     ("parse_create_object_session_id", codec.parse_create_object_session_id, ()),
     ("parse_or_raise_for_return_value", lambda data: codec.parse_or_raise_for_return_value(data, "test"), ()),

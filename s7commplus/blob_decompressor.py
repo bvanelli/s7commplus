@@ -69,6 +69,25 @@ def decompress_blob(data: bytes, offset: int = 0) -> str:
     return result.decode("utf-8")
 
 
+def compress_blob(text: str, dictionary: int) -> bytes:
+    """Compress ``text`` against a preset dictionary, the inverse of :func:`decompress_blob`.
+
+    Args:
+        text: The document to compress.
+        dictionary: Adler-32 of the preset dictionary, a key of ``ZLIB_DICTIONARIES``.
+
+    Returns:
+        The 6-byte zlib header (magic and dictionary Adler-32) followed by the raw deflate stream.
+
+    Raises:
+        ValueError: If ``dictionary`` is not a known preset dictionary.
+    """
+    if dictionary not in ZLIB_DICTIONARIES:
+        raise ValueError(f"Unknown preset dictionary {dictionary:#010x}")
+    compressor = zlib.compressobj(wbits=-15, zdict=ZLIB_DICTIONARIES[dictionary])
+    return b"\x78\x7d" + dictionary.to_bytes(4, "big") + compressor.compress(text.encode("utf-8")) + compressor.flush()
+
+
 @dataclass(frozen=True)
 class PresetStream:
     """A decompressed preset-dictionary zlib stream.

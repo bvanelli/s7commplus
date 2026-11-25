@@ -874,6 +874,29 @@ class TestSkipTypedValue:
         # Unknown type should return same offset (can't skip)
         assert skip_typed_value(bytes([0xFF]), 0, 0xFF, 0x00) == 0
 
+    @pytest.mark.parametrize(
+        "datatype, data",
+        [
+            # key 1, plain BLOB of 2 bytes, key 11, plain BLOB of 1 byte, closing key 0
+            (DataType.BLOB, bytes([0x01, 0x00, 0x02, 0xAA, 0xBB, 0x0B, 0x00, 0x01, 0xCC, 0x00])),
+            # key 1034, WString of 2 bytes, closing key 0
+            (DataType.WSTRING, bytes([0x88, 0x0A, 0x02, 0x41, 0x42, 0x00])),
+        ],
+    )
+    def test_sparse_array(self, datatype: DataType, data: bytes) -> None:
+        # the elements after the 0x40 header, followed by the next tag
+        assert skip_typed_value(data + b"\xff", 0, datatype, 0x40) == len(data)
+
+    @pytest.mark.parametrize(
+        "datatype, flags",
+        [
+            (DataType.UDINT, 0x40),  # a datatype never seen in a sparse array
+            (DataType.USINT, 0x50),  # two array kinds at once
+        ],
+    )
+    def test_value_of_unknown_layout_is_not_skipped(self, datatype: DataType, flags: int) -> None:
+        assert skip_typed_value(bytes([0x01, 0x02, 0x00]), 0, datatype, flags) == 0
+
     # -- Array tests --
 
     def test_array_fixed_size(self) -> None:
@@ -1179,6 +1202,24 @@ class TestExploreDatablocks:
         ]
         # A data block without the attribute keeps the number from its RelationId
         assert _parse_explore_datablocks(encode_uint64_vlq(0) + self._db_object(7))[0].number == 7
+
+    def test_program_objects_walk_past_a_sparse_line_comments_attribute(self) -> None:
+        # LineComm arrives as a sparse BLOB array: flags 0x40, then key, root id, length, data, up to key 0.
+        # Its data holds a TerminatingObject byte, which a walker that lost its place reads as the end of the FB.
+        line_comments = bytes([0x40, DataType.BLOB, 0x01, 0x00, 0x02, ElementID.TERMINATING_OBJECT, 0xBB, 0x00])
+        fb = (
+            bytearray([ElementID.START_OF_OBJECT])
+            + struct.pack(">I", 0x8A120005)
+            + encode_uint32_vlq(Ids.FB_CLASS_RID)
+            + b"\x00\x00"
+        )
+        fb += bytes([ElementID.ATTRIBUTE]) + encode_uint32_vlq(Ids.DATA_INTERFACE_LINE_COMMENTS) + line_comments
+        fb += (
+            bytes([ElementID.ATTRIBUTE]) + encode_uint32_vlq(Ids.BLOCK_BLOCK_NUMBER) + bytes([0x00, DataType.UINT]) + b"\x00\x05"
+        )
+        fb += bytes([ElementID.TERMINATING_OBJECT])
+        objects = _parse_program_objects(encode_uint64_vlq(0) + bytes(fb))
+        assert [(obj.rid, obj.block_number) for obj in objects] == [(0x8A120005, 5)]
 
     def test_parse_explore_datablocks_warns_on_an_undecodable_attribute(self, caplog: pytest.LogCaptureFixture) -> None:
         # Attribute 0x9DF with datatype 0xFF, which the codec does not know

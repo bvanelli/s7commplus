@@ -46,11 +46,11 @@ def _alarm_object(with_texts: bool = True) -> bytes:
     coming = bytearray(struct.pack(">I", Ids.ALARM_DAI_COMING))
     coming += encode_uint32_vlq(3475) + bytes([0, DataType.TIMESTAMP]) + struct.pack(">Q", 123456789)
     associated_values = [
-        _blob(1, b"type-info"),
+        _blob(0, b"type-info"),
         _blob(0x02000005, struct.pack(">h", 4)),
-        _blob(1, b""),
-        _blob(1, b""),
-        _blob(1, b""),
+        _blob(0, b""),
+        _blob(0, b""),
+        _blob(0, b""),
         _blob(0x020A00FE, b"\xfe\x09=F6+S2-G1"),
     ]
     coming += encode_uint32_vlq(3476) + bytes([0x10, DataType.BLOB]) + encode_uint32_vlq(len(associated_values))
@@ -280,6 +280,13 @@ def test_parse_alarm_explore_response_error_return_value() -> None:
 def test_parse_alarm_explore_response_truncated_explore_id() -> None:
     with pytest.raises(ValueError, match="truncated"):
         parse_alarm_explore_response(b"\x00\x00")
+
+
+def test_parse_alarm_explore_response_rejects_an_associated_value_with_root_id_1() -> None:
+    # root id 1 is not decoded; it used to be read as a plain BLOB
+    response = _explore_response().replace(b"\x00\x09type-info", b"\x01\x09type-info")
+    with pytest.raises(ValueError, match="Unsupported BLOB root id 1"):
+        parse_alarm_explore_response(response)
 
 
 def test_parse_alarm_notification() -> None:

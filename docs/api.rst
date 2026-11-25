@@ -94,6 +94,9 @@ Protocol enums
 .. autoclass:: s7commplus.protocol.AccessLevel
    :members:
 
+.. autoclass:: s7commplus.protocol.ArrayKind
+   :members:
+
 Return values
 -------------
 

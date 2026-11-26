@@ -519,9 +519,9 @@ def _is_packed_struct(struct_id: int) -> bool:
 def decode_blob_element(data: bytes, offset: int) -> tuple[int, bytes, int]:
     """Decode a BLOB value after its PValue header.
 
-    Root id 0 is a plain BLOB. Root id 2 or more is a type-safe BLOB, whose 8-byte
-    modification time and flags come before the length. Root id 1 is not decoded: it is not
-    a plain BLOB, and no captured reply has used it, so its layout is unconfirmed.
+    Root ids 0 and 1 are plain BLOBs. Root id 2 or more is a type-safe BLOB, whose 8-byte
+    modification time and flags come before the length. No captured reply has used root id 1,
+    so its layout is unconfirmed.
 
     Args:
         data: Response buffer
@@ -531,19 +531,17 @@ def decode_blob_element(data: bytes, offset: int) -> tuple[int, bytes, int]:
         Tuple of (root_id, blob, bytes_consumed)
 
     Raises:
-        ValueError: If the BLOB has root id 1, has unknown flags, or is cut short.
+        ValueError: If the BLOB has unknown flags or is cut short.
     """
     root_id, consumed = decode_uint32_vlq(data, offset)
-    if root_id == 1:
-        raise ValueError("Unsupported BLOB root id 1")
     if root_id > 1:
         if offset + consumed + 8 > len(data):
             raise ValueError("Truncated type-safe BLOB header")
         consumed += 8
         blob_flags, c = decode_uint32_vlq(data, offset + consumed)
         consumed += c
-        if blob_flags & 0x410:
-            # 0x10 and 0x400 select layouts that are not known (only 0x02 has been captured)
+        if blob_flags not in (0x02, 0x03):
+            # only 0x02 has been captured; 0x03 with the same layout is unverified
             raise ValueError(f"Unsupported type-safe BLOB flags: {blob_flags:#x}")
     length, c = decode_uint32_vlq(data, offset + consumed)
     consumed += c
@@ -557,9 +555,10 @@ def decode_pvalue_sparse_array(data: bytes, offset: int) -> tuple[list[tuple[int
 
     The elements are (key, element) pairs up to a key of 0. The ``LineComm`` attribute of a program
     EXPLORE and alarm texts send BLOB elements, and an object's comment sends WString elements; no
-    other datatype has been seen in a sparse array. Keys must rise strictly: every sparse array seen
-    from a real PLC had ascending keys, and a repeated or falling key has never been seen, so it is
-    treated as a malformed reply.
+    other datatype has been seen in a sparse array. Keys come in no particular order. A repeated key
+    has never been seen, so it is treated as a malformed reply. Every captured BLOB element had root
+    id 0; an element with a type-safe root id is read with the type-safe header, which is unverified
+    inside a sparse array.
 
     Args:
         data: Response buffer
@@ -569,7 +568,7 @@ def decode_pvalue_sparse_array(data: bytes, offset: int) -> tuple[list[tuple[int
         Tuple of ([(key, element data), ...] in the order sent, bytes_consumed)
 
     Raises:
-        ValueError: If the PValue is not a sparse array of BLOBs or WStrings, or is cut short.
+        ValueError: If the PValue is not a sparse array of BLOBs or WStrings, repeats a key, or is cut short.
     """
     if offset + 2 > len(data) or ArrayKind.from_flags(data[offset]) is not ArrayKind.SPARSE:
         raise ValueError("Not a sparse array PValue")
@@ -588,16 +587,17 @@ def _decode_sparse_elements(data: bytes, offset: int, datatype: int) -> Optional
     if datatype not in (DataType.BLOB, DataType.WSTRING):
         return None
     elements: list[tuple[int, bytes]] = []
+    seen_keys: set[int] = set()
     consumed = 0
-    previous_key = 0
     while True:
         key, c = decode_uint32_vlq(data, offset + consumed)
         consumed += c
         if key == 0:
             return elements, consumed
-        if key <= previous_key:
-            raise ValueError(f"Sparse array key {key} does not follow key {previous_key}")
-        previous_key = key
+        # keys are not expected in any order, only once each
+        if key in seen_keys:
+            raise ValueError(f"Repeated sparse array key {key}")
+        seen_keys.add(key)
         if datatype == DataType.BLOB:
             _, element, c = decode_blob_element(data, offset + consumed)
             consumed += c

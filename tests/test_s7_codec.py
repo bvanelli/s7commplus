@@ -679,15 +679,14 @@ class TestDecodePValue:
         data = bytes.fromhex("90808213 0000000000000000 02 04 01010000")
         assert decode_blob_element(data, 0) == (0x02000113, b"\x01\x01\x00\x00", len(data))
 
-    @pytest.mark.parametrize("flags", [b"\x00", b"\x03"])
-    def test_type_safe_blob_flags_that_keep_the_length_layout(self, flags: bytes) -> None:
-        data = b"\x02" + bytes(8) + flags + b"\x02\xaa\xbb"
+    def test_type_safe_blob_flags_0x03_keep_the_length_layout(self) -> None:
+        data = b"\x02" + bytes(8) + b"\x03" + b"\x02\xaa\xbb"
         assert decode_blob_element(data, 0) == (2, b"\xaa\xbb", len(data))
 
     @pytest.mark.parametrize(
         "data, message",
         [
-            (bytes([0x01, 0x02, 0xAA, 0xBB, 0x00]), "Unsupported BLOB root id 1"),
+            (bytes([0x02] + [0] * 8 + [0x00, 0x00]), "Unsupported type-safe BLOB flags: 0x0"),
             (bytes([0x02] + [0] * 8 + [0x12, 0x00]), "Unsupported type-safe BLOB flags: 0x12"),
             (bytes([0x02] + [0] * 8 + [0x88, 0x02, 0x00]), "Unsupported type-safe BLOB flags: 0x402"),
             (bytes([0x02] + [0] * 7), "Truncated type-safe BLOB header"),
@@ -697,13 +696,23 @@ class TestDecodePValue:
         with pytest.raises(ValueError, match=message):
             decode_blob_element(data, 0)
 
-    @pytest.mark.parametrize("keys", [(2, 2), (2, 1)])
-    def test_sparse_blob_array_rejects_keys_out_of_order(self, keys: tuple[int, int]) -> None:
-        data = bytes([0x40, DataType.BLOB, keys[0], 0x00, 0x00, keys[1], 0x00, 0x00, 0x00])
-        with pytest.raises(ValueError, match=f"Sparse array key {keys[1]} does not follow key {keys[0]}"):
+    def test_sparse_wstring_array_keeps_keys_in_the_order_sent(self) -> None:
+        # S7-1500 reply to TIA Portal: the languages of attribute 0x1247, keys not in ascending order
+        data = bytes.fromhex("4015040265730202656e06026a6101026465030266720502697408026b6f07027a680a027472090272750b02707400")
+        elements, consumed = decode_pvalue_sparse_array(data + b"\xff", 0)
+        assert consumed == len(data)
+        assert elements == [
+            (4, b"es"), (2, b"en"), (6, b"ja"), (1, b"de"), (3, b"fr"), (5, b"it"),
+            (8, b"ko"), (7, b"zh"), (10, b"tr"), (9, b"ru"), (11, b"pt"),
+        ]  # fmt: skip
+
+    def test_sparse_blob_array_rejects_a_repeated_key(self) -> None:
+        data = bytes([0x40, DataType.BLOB, 0x02, 0x00, 0x00, 0x01, 0x00, 0x00, 0x02, 0x00, 0x00, 0x00])
+        with pytest.raises(ValueError, match="Repeated sparse array key 2"):
             decode_pvalue_sparse_array(data, 0)
 
     def test_sparse_blob_array_with_a_type_safe_element(self) -> None:
+        # synthetic: no captured sparse array has had a type-safe element
         data = bytes([0x40, DataType.BLOB, 0x01, 0x02] + [0] * 8 + [0x02, 0x01, 0xAA, 0x00])
         assert decode_pvalue_sparse_array(data, 0) == ([(1, b"\xaa")], len(data))
 
@@ -861,13 +870,14 @@ class TestDecodePValue:
         result, consumed = decode_pvalue_to_bytes(data, 0)
         assert result == struct.pack(">I", 306)
 
-    def test_blob(self) -> None:
+    @pytest.mark.parametrize("root_id", [0, 1])
+    def test_blob(self, root_id: int) -> None:
         blob_data = bytes([0xDE, 0xAD, 0xBE, 0xEF])
-        blob_root_id = encode_uint32_vlq(0)
+        blob_root_id = encode_uint32_vlq(root_id)
         vlq_len = encode_uint32_vlq(len(blob_data))
-        data = bytes([0x00, DataType.BLOB]) + blob_root_id + vlq_len + blob_data
-        result, consumed = decode_pvalue_to_bytes(data, 0)
-        assert result == blob_data
+        data = bytes([0x00, DataType.BLOB]) + blob_root_id + vlq_len + blob_data + b"\xff"
+        assert decode_pvalue_to_bytes(data, 0) == (blob_data, len(data) - 1)
+        assert skip_typed_value(data, 2, DataType.BLOB, 0x00) == len(data) - 1
 
     def test_type_safe_blob(self) -> None:
         # the S7-1500 V2.9 alarm associated value as a scalar: root id, 8-byte modification time, flags 0x02, length 4
@@ -875,19 +885,11 @@ class TestDecodePValue:
         assert decode_pvalue_to_bytes(data, 0) == (b"\x01\x01\x00\x00", len(data) - 1)
         assert skip_typed_value(data, 2, DataType.BLOB, 0x00) == len(data) - 1
 
-    @pytest.mark.parametrize(
-        "value, message",
-        [
-            (bytes([0x00, 0x05, 0xDE, 0xAD]), "Not enough data for a BLOB"),
-            (bytes([0x01, 0x02, 0xDE, 0xAD]), "Unsupported BLOB root id 1"),
-        ],
-        ids=["cut", "root-id-1"],
-    )
-    def test_blob_rejected(self, value: bytes, message: str) -> None:
-        data = bytes([0x00, DataType.BLOB]) + value
-        with pytest.raises(ValueError, match=message):
+    def test_blob_cut_short(self) -> None:
+        data = bytes([0x00, DataType.BLOB, 0x00, 0x05, 0xDE, 0xAD])
+        with pytest.raises(ValueError, match="Not enough data for a BLOB"):
             decode_pvalue_to_bytes(data, 0)
-        with pytest.raises(ValueError, match=message):
+        with pytest.raises(ValueError, match="Not enough data for a BLOB"):
             skip_typed_value(data, 2, DataType.BLOB, 0x00)
 
     def test_wstring(self) -> None:

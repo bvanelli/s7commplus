@@ -17,7 +17,7 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Any, Optional
 
-from .error import S7ProtocolError, S7ReturnValueError
+from .error import S7ReturnValueError
 from .protocol import PROTOCOL_ID, ArrayKind, DataType, ElementID, Ids, ObjectId, ProtocolVersion, ReturnValue
 from .vlq import (
     decode_int32_vlq,
@@ -573,33 +573,20 @@ def decode_pvalue_sparse_array(data: bytes, offset: int) -> tuple[list[tuple[int
     """
     if offset + 2 > len(data) or ArrayKind.from_flags(data[offset]) is not ArrayKind.SPARSE:
         raise ValueError("Not a sparse array PValue")
-    read_element = _sparse_element_reader(data[offset + 1])
-    if read_element is None:
+    decoded = _decode_sparse_elements(data, offset + 2, data[offset + 1])
+    if decoded is None:
         raise ValueError(f"Unsupported sparse array PValue datatype: {data[offset + 1]:#04x}")
-    elements, consumed = _decode_sparse_elements(data, offset + 2, read_element)
+    elements, consumed = decoded
     return elements, consumed + 2
 
 
-def _sparse_element_reader(datatype: int) -> Optional[Callable[[bytes, int], tuple[bytes, int]]]:
-    """The reader of one element of a sparse array of `datatype`, or None for a datatype not seen in one."""
-    if datatype == DataType.BLOB:
-        return lambda data, offset: decode_blob_element(data, offset)[1:]  # drop the root id
-    if datatype == DataType.WSTRING:
-        return _decode_wstring_element
-    return None
+def _decode_sparse_elements(data: bytes, offset: int, datatype: int) -> Optional[tuple[list[tuple[int, bytes]], int]]:
+    """The (key, element) pairs of a sparse array, from just after its PValue header to its closing key.
 
-
-def _decode_wstring_element(data: bytes, offset: int) -> tuple[bytes, int]:
-    length, consumed = decode_uint32_vlq(data, offset)
-    if offset + consumed + length > len(data):
-        raise ValueError("Not enough data for a WString")
-    return bytes(data[offset + consumed : offset + consumed + length]), consumed + length
-
-
-def _decode_sparse_elements(
-    data: bytes, offset: int, read_element: Callable[[bytes, int], tuple[bytes, int]]
-) -> tuple[list[tuple[int, bytes]], int]:
-    """The (key, element) pairs of a sparse array, from just after its PValue header to its closing key."""
+    Returns None for a datatype not seen in a sparse array.
+    """
+    if datatype not in (DataType.BLOB, DataType.WSTRING):
+        return None
     elements: list[tuple[int, bytes]] = []
     consumed = 0
     previous_key = 0
@@ -611,9 +598,17 @@ def _decode_sparse_elements(
         if key <= previous_key:
             raise ValueError(f"Sparse array key {key} does not follow key {previous_key}")
         previous_key = key
-        element, c = read_element(data, offset + consumed)
+        if datatype == DataType.BLOB:
+            _, element, c = decode_blob_element(data, offset + consumed)
+            consumed += c
+        else:
+            length, c = decode_uint32_vlq(data, offset + consumed)
+            consumed += c
+            if offset + consumed + length > len(data):
+                raise ValueError("Not enough data for a WString")
+            element = bytes(data[offset + consumed : offset + consumed + length])
+            consumed += length
         elements.append((key, element))
-        consumed += c
 
 
 def decode_pvalue_to_bytes(data: bytes, offset: int) -> tuple[bytes, int]:
@@ -819,11 +814,10 @@ def skip_typed_value(data: bytes, offset: int, datatype: int, flags: int) -> int
         return offset  # like an unknown type: the value's layout is not known
 
     if kind is ArrayKind.SPARSE:
-        read_element = _sparse_element_reader(datatype)
-        if read_element is None:
+        decoded = _decode_sparse_elements(data, offset, datatype)
+        if decoded is None:
             return offset  # like an unknown type: a datatype never seen in a sparse array
-        _, consumed = _decode_sparse_elements(data, offset, read_element)
-        return offset + consumed
+        return offset + decoded[1]
 
     if kind in (ArrayKind.FIXED, ArrayKind.DYNAMIC):
         if offset >= len(data):
@@ -993,10 +987,7 @@ def parse_create_object_attributes(payload: bytes) -> CreateObjectAttributes:
 
             if attr_id == ObjectId.SERVER_SESSION_VERSION:
                 value_start = offset
-                try:
-                    end = skip_typed_value(payload, offset + 2, datatype, flags)
-                except ValueError as exc:
-                    raise S7ProtocolError(f"CreateObject attribute {attr_id} cannot be skipped: {exc}") from exc
+                end = skip_typed_value(payload, offset + 2, datatype, flags)
                 result.server_session_version = bytes(payload[value_start:end])
                 offset = end
 
@@ -1022,10 +1013,7 @@ def parse_create_object_attributes(payload: bytes) -> CreateObjectAttributes:
                     result.session_challenge = bytes(payload[offset : offset + count])
                     offset += count
                 else:
-                    try:
-                        offset = skip_typed_value(payload, offset, datatype, flags)
-                    except ValueError as exc:
-                        raise S7ProtocolError(f"CreateObject attribute {attr_id} cannot be skipped: {exc}") from exc
+                    offset = skip_typed_value(payload, offset, datatype, flags)
 
             elif attr_id in (SERVER_SESSION_ROLE_ID, SERVER_SESSION_ROLES_ID) and datatype == DataType.UDINT and not flags & 0x10:
                 offset += 2
@@ -1042,10 +1030,7 @@ def parse_create_object_attributes(payload: bytes) -> CreateObjectAttributes:
                     result.server_session_roles = value
 
             else:
-                try:
-                    offset = skip_typed_value(payload, offset + 2, datatype, flags)
-                except ValueError as exc:
-                    raise S7ProtocolError(f"CreateObject attribute {attr_id} cannot be skipped: {exc}") from exc
+                offset = skip_typed_value(payload, offset + 2, datatype, flags)
 
         elif tag == ElementID.START_OF_OBJECT:
             offset += 1

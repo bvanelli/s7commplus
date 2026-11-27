@@ -18,7 +18,7 @@ from dataclasses import dataclass
 from typing import Any, Optional
 
 from .error import S7ReturnValueError
-from .protocol import PROTOCOL_ID, DataType, ElementID, Ids, ObjectId, ProtocolVersion, ReturnValue
+from .protocol import PROTOCOL_ID, ArrayKind, DataType, ElementID, Ids, ObjectId, ProtocolVersion, ReturnValue
 from .vlq import (
     decode_int32_vlq,
     decode_int64_vlq,
@@ -516,11 +516,108 @@ def _is_packed_struct(struct_id: int) -> bool:
     return 0x90000000 < struct_id < 0x9FFFFFFF or 0x02000000 < struct_id < 0x02FFFFFF
 
 
+def decode_blob_element(data: bytes, offset: int) -> tuple[int, bytes, int]:
+    """Decode a BLOB value after its PValue header.
+
+    Root ids 0 and 1 are plain BLOBs. Root id 2 or more is a type-safe BLOB, whose 8-byte
+    modification time and flags come before the length. No captured reply has used root id 1,
+    so its layout is unconfirmed.
+
+    Args:
+        data: Response buffer
+        offset: Position of the BLOB root id
+
+    Returns:
+        Tuple of (root_id, blob, bytes_consumed)
+
+    Raises:
+        ValueError: If the BLOB has unknown flags or is cut short.
+    """
+    root_id, consumed = decode_uint32_vlq(data, offset)
+    if root_id > 1:
+        if offset + consumed + 8 > len(data):
+            raise ValueError("Truncated type-safe BLOB header")
+        consumed += 8
+        blob_flags, c = decode_uint32_vlq(data, offset + consumed)
+        consumed += c
+        if blob_flags not in (0x02, 0x03):
+            # only 0x02 has been captured; 0x03 with the same layout is unverified
+            raise ValueError(f"Unsupported type-safe BLOB flags: {blob_flags:#x}")
+    length, c = decode_uint32_vlq(data, offset + consumed)
+    consumed += c
+    if offset + consumed + length > len(data):
+        raise ValueError("Not enough data for a BLOB")
+    return root_id, bytes(data[offset + consumed : offset + consumed + length]), consumed + length
+
+
+def decode_pvalue_sparse_array(data: bytes, offset: int) -> tuple[list[tuple[int, bytes]], int]:
+    """Decode a sparse array of BLOBs or WStrings into its elements.
+
+    The elements are (key, element) pairs up to a key of 0. The ``LineComm`` attribute of a program
+    EXPLORE and alarm texts send BLOB elements, and an object's comment sends WString elements; no
+    other datatype has been seen in a sparse array. Keys come in no particular order. A repeated key
+    has never been seen, so it is treated as a malformed reply. Every captured BLOB element had root
+    id 0; an element with a type-safe root id is read with the type-safe header, which is unverified
+    inside a sparse array.
+
+    Args:
+        data: Response buffer
+        offset: Position of the PValue
+
+    Returns:
+        Tuple of ([(key, element data), ...] in the order sent, bytes_consumed)
+
+    Raises:
+        ValueError: If the PValue is not a sparse array of BLOBs or WStrings, repeats a key, or is cut short.
+    """
+    if offset + 2 > len(data) or ArrayKind.from_flags(data[offset]) is not ArrayKind.SPARSE:
+        raise ValueError("Not a sparse array PValue")
+    decoded = _decode_sparse_elements(data, offset + 2, data[offset + 1])
+    if decoded is None:
+        raise ValueError(f"Unsupported sparse array PValue datatype: {data[offset + 1]:#04x}")
+    elements, consumed = decoded
+    return elements, consumed + 2
+
+
+def _decode_sparse_elements(data: bytes, offset: int, datatype: int) -> Optional[tuple[list[tuple[int, bytes]], int]]:
+    """The (key, element) pairs of a sparse array, from just after its PValue header to its closing key.
+
+    Returns None for a datatype not seen in a sparse array.
+    """
+    if datatype not in (DataType.BLOB, DataType.WSTRING):
+        return None
+    elements: list[tuple[int, bytes]] = []
+    seen_keys: set[int] = set()
+    consumed = 0
+    while True:
+        key, c = decode_uint32_vlq(data, offset + consumed)
+        consumed += c
+        if key == 0:
+            return elements, consumed
+        # keys are not expected in any order, only once each
+        if key in seen_keys:
+            raise ValueError(f"Repeated sparse array key {key}")
+        seen_keys.add(key)
+        if datatype == DataType.BLOB:
+            _, element, c = decode_blob_element(data, offset + consumed)
+            consumed += c
+        else:
+            length, c = decode_uint32_vlq(data, offset + consumed)
+            consumed += c
+            if offset + consumed + length > len(data):
+                raise ValueError("Not enough data for a WString")
+            element = bytes(data[offset + consumed : offset + consumed + length])
+            consumed += length
+        elements.append((key, element))
+
+
 def decode_pvalue_to_bytes(data: bytes, offset: int) -> tuple[bytes, int]:
     """Decode a PValue from S7CommPlus response to raw bytes.
 
     Supports scalar types and BLOBs. Returns the raw big-endian bytes
-    of the value regardless of type.
+    of the value regardless of type. A sparse array of BLOBs or WStrings returns its
+    elements' data joined in order, without their keys; ``decode_pvalue_sparse_array``
+    keeps them. A sparse array of any other datatype is not decoded.
 
     Args:
         data: Response buffer
@@ -528,20 +625,34 @@ def decode_pvalue_to_bytes(data: bytes, offset: int) -> tuple[bytes, int]:
 
     Returns:
         Tuple of (raw_bytes, bytes_consumed)
+
+    Raises:
+        ValueError: If the header, a length or other VLQ field, or a sparse array is cut short, or the
+            PValue is a sparse array of a datatype other than BLOB or WString. A fixed-size value that is cut short
+            is returned short.
     """
     if offset + 2 > len(data):
         raise ValueError("Not enough data for PValue header")
 
-    flags = data[offset]
+    kind = ArrayKind.from_flags(data[offset])
     datatype = data[offset + 1]
     consumed = 2
 
-    is_array = bool(flags & 0x10)
+    if kind is ArrayKind.SPARSE:
+        elements, consumed = decode_pvalue_sparse_array(data, offset)
+        return b"".join(element for _, element in elements), consumed
 
-    if is_array:
+    if kind in (ArrayKind.FIXED, ArrayKind.DYNAMIC):
         # Array: read count then elements
         count, c = decode_uint32_vlq(data, offset + consumed)
         consumed += c
+        if datatype == DataType.BLOB:
+            blobs = bytearray()
+            for _ in range(count):
+                _root_id, blob, c = decode_blob_element(data, offset + consumed)
+                blobs += blob
+                consumed += c
+            return bytes(blobs), consumed
         elem_size = _pvalue_element_size(datatype)
         if elem_size > 0:
             raw = data[offset + consumed : offset + consumed + count * elem_size]
@@ -606,13 +717,8 @@ def decode_pvalue_to_bytes(data: bytes, offset: int) -> tuple[bytes, int]:
         consumed += c
         return _pack_decoded(">I", val), consumed
     elif datatype == DataType.BLOB:
-        _blob_root_id, c = decode_uint32_vlq(data, offset + consumed)
-        consumed += c
-        length, c = decode_uint32_vlq(data, offset + consumed)
-        consumed += c
-        raw = data[offset + consumed : offset + consumed + length]
-        consumed += length
-        return bytes(raw), consumed
+        _root_id, blob, c = decode_blob_element(data, offset + consumed)
+        return blob, consumed + c
     elif datatype in (DataType.WSTRING, DataType.S7STRING):
         length, c = decode_uint32_vlq(data, offset + consumed)
         consumed += c
@@ -642,7 +748,7 @@ def decode_pvalue_to_bytes(data: bytes, offset: int) -> tuple[bytes, int]:
             consumed += c
             count, c = decode_uint32_vlq(data, offset + consumed)
             consumed += c
-            if transport_flags & 0x400:  # Count2Present: a second count follows
+            if transport_flags & 0x400:  # Count2Present: a second count follows (a sender sets 0x400 only when it writes it)
                 count, c = decode_uint32_vlq(data, offset + consumed)
                 consumed += c
             raw = data[offset + consumed : offset + consumed + count]
@@ -702,13 +808,27 @@ def _vlq_element_codec(datatype: int) -> tuple[Callable[[bytes, int], tuple[int,
 
 def skip_typed_value(data: bytes, offset: int, datatype: int, flags: int) -> int:
     """Skip over a typed value in the PObject tree (best-effort). Returns the new offset."""
-    is_array = bool(flags & 0x10)
+    try:
+        kind = ArrayKind.from_flags(flags)
+    except ValueError:
+        return offset  # like an unknown type: the value's layout is not known
 
-    if is_array:
+    if kind is ArrayKind.SPARSE:
+        decoded = _decode_sparse_elements(data, offset, datatype)
+        if decoded is None:
+            return offset  # like an unknown type: a datatype never seen in a sparse array
+        return offset + decoded[1]
+
+    if kind in (ArrayKind.FIXED, ArrayKind.DYNAMIC):
         if offset >= len(data):
             return offset
         count, consumed = decode_uint32_vlq(data, offset)
         offset += consumed
+        if datatype == DataType.BLOB:
+            for _ in range(count):
+                _, _, consumed = decode_blob_element(data, offset)
+                offset += consumed
+            return offset
         elem_size = _pvalue_element_size(datatype)
         if elem_size > 0:
             offset += count * elem_size
@@ -753,10 +873,8 @@ def skip_typed_value(data: bytes, offset: int, datatype: int, flags: int) -> int
     elif datatype == DataType.RID:
         return offset + 4
     elif datatype == DataType.BLOB:
-        _blob_root_id, consumed = decode_uint32_vlq(data, offset)
-        offset += consumed
-        length, consumed = decode_uint32_vlq(data, offset)
-        return offset + consumed + length
+        _, _, consumed = decode_blob_element(data, offset)
+        return offset + consumed
     elif datatype in (DataType.WSTRING, DataType.S7STRING):
         length, consumed = decode_uint32_vlq(data, offset)
         return offset + consumed + length
@@ -770,7 +888,7 @@ def skip_typed_value(data: bytes, offset: int, datatype: int, flags: int) -> int
             offset += consumed
             count, consumed = decode_uint32_vlq(data, offset)
             offset += consumed
-            if transport_flags & 0x400:  # Count2Present: a second count follows
+            if transport_flags & 0x400:  # Count2Present: a second count follows (a sender sets 0x400 only when it writes it)
                 count, consumed = decode_uint32_vlq(data, offset)
                 offset += consumed
             return offset + count

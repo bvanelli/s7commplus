@@ -52,6 +52,13 @@ class TestParseServerSessionRole:
         attrs = parse_create_object_attributes(payload)
         assert attrs.server_session_role is None
 
+    def test_attribute_that_cannot_be_skipped_raises(self) -> None:
+        type_safe_blob_with_unknown_flags = bytes([0x00, DataType.BLOB, 0x02] + [0] * 8 + [0x12, 0x00])
+        payload = _attribute(12345, type_safe_blob_with_unknown_flags) + b"\x00"
+
+        with pytest.raises(ValueError):
+            parse_create_object_attributes(payload)
+
     def test_truncated_attribute_header_does_not_crash(self) -> None:
         # An attribute cut off right after its id leaves no room for the
         # typed-value header; the parser must not crash or misread.
